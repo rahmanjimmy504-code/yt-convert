@@ -359,7 +359,7 @@ export default function Home() {
               </div>
               <div className="flex flex-col items-center gap-1.5 group">
                 <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-pink-500 via-purple-500 to-orange-400 flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
-                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><rect x="2" y="2" width="20" height="20" rx="5" stroke="white" strokeWidth="2"/><circle cx="12" cy="12" r="5" stroke="white" strokeWidth="2"/><circle cx="17.5" cy="6.5" r="1.5" fill="white"/></svg>
+                                    <img src="https://cdn.simpleicons.org/instagram/ffffff" width="24" height="24" alt="Instagram" />
                 </div>
                 <span className="text-[11px] font-medium text-gray-500">Instagram</span>
               </div>
