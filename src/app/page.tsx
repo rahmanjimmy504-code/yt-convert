@@ -391,7 +391,6 @@ export default function Home() {
                 <span className="text-[11px] font-medium text-gray-500">TikTok</span>
               </div>
             </div>
-              </div>
             </div>
           </div>
         )}
