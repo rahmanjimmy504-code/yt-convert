@@ -5,9 +5,9 @@ import { useState, useCallback, useEffect } from 'react';
 const sGet = (k: string) => (typeof window === 'undefined' ? '' : localStorage.getItem(k) || '');
 const sSet = (k: string, v: string) => { if (typeof window !== 'undefined') localStorage.setItem(k, v) };
 const sGetJ = (k: string) => { try { return typeof window === 'undefined' ? null : JSON.parse(localStorage.getItem(k) || 'null') } catch { return null } };
-const sSetJ = (k: string, v: unknown) => { if (typeof window !== 'undefined') localStorage.setItem(k, JSON.stringify(v)) };
+const sSetJ = (k: string, v: any) => { if (typeof window !== 'undefined') localStorage.setItem(k, JSON.stringify(v)) };
 
-function getPlatform(u) {
+function getPlatform(u: string) {
   if (/youtu\.?be|youtube\.com/i.test(u)) return 'youtube';
   if (/soundcloud\.com/i.test(u)) return 'soundcloud';
   if (/twitter\.com|x\.com/i.test(u)) return 'twitter';
@@ -15,13 +15,13 @@ function getPlatform(u) {
   if (/spotify\.com|open\.spotify\.com/i.test(u)) return 'spotify';
   return null;
 }
-function extractVideoId(url) {
+function extractVideoId(url: string) {
   const m = url.match(/(?:v=|youtu\.be\/|shorts\/|live\/)([a-zA-Z0-9_-]{11})/);
   return m ? m[1] : null;
 }
-function pLabel(p) { return { youtube: 'YouTube', soundcloud: 'SoundCloud', twitter: 'X', instagram: 'Instagram', spotify: 'Spotify' }[p] || ''; }
-function pColor(p) {
-  return { youtube: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400', soundcloud: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400', twitter: 'bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-400', instagram: 'bg-pink-100 text-pink-700 dark:bg-pink-900/30 dark:text-pink-400', spotify: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' }[p] || 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400';
+function pLabel(p: string) { return ({ youtube: 'YouTube', soundcloud: 'SoundCloud', twitter: 'X', instagram: 'Instagram', spotify: 'Spotify' } as any)[p] || ''; }
+function pColor(p: string) {
+  return ({ youtube: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400', soundcloud: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400', twitter: 'bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-400', instagram: 'bg-pink-100 text-pink-700 dark:bg-pink-900/30 dark:text-pink-400', spotify: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' } as any)[p] || 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400';
 }
 
 const tips = ['Paste any YouTube, SoundCloud, X, Instagram, or Spotify link.', 'Your URL is auto-copied when you pick a converter.', 'If one converter has ads, try another.', 'All converters are free, no sign-up needed.', 'Press Enter after pasting to fetch info instantly.'];
@@ -32,11 +32,11 @@ export default function Home() {
   const [format, setFormat] = useState('video');
   const [phase, setPhase] = useState('input');
   const [error, setError] = useState('');
-  const [videoInfo, setVideoInfo] = useState(null);
-  const [launched, setLaunched] = useState(null);
+  const [videoInfo, setVideoInfo] = useState<any>(null);
+  const [launched, setLaunched] = useState<string | null>(null);
   const [tipIdx, setTipIdx] = useState(0);
   const [dark, setDark] = useState(false);
-  const [history, setHistory] = useState([]);
+  const [history, setHistory] = useState<any[]>([]);
   const [favorite, setFavorite] = useState('');
 
   useEffect(() => {
@@ -69,14 +69,18 @@ export default function Home() {
     setError(''); setPhase('loading'); setVideoInfo(null); setLaunched(null);
     try {
       const r = await fetch('/api/video-info?url=' + encodeURIComponent(url.trim()));
-      if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.error || 'Failed'); }
+      if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error((d as any).error || 'Failed'); }
       const data = await r.json();
       const vid = extractVideoId(url.trim());
-      setVideoInfo({ title: data.title || 'Unknown', author: data.author || '', thumbnail: plat === 'youtube' && vid ? `https://i.ytimg.com/vi/${vid}/hqdefault.jpg` : (data.thumbnail || ''), duration: data.duration || '', views: data.views || '', published: data.published || '', platform: data.platform || plat });
-      const h = [{ title: data.title || 'Unknown', url: url.trim(), platform: plat, time: Date.now() }, ...history.filter(x => x.url !== url.trim())].slice(0, 6);
-      setHistory(h); sSetJ('yt-convert-history', h); setPhase('ready');
-    } catch (e) { setError(e.message || 'Failed.'); setPhase('error'); }
-  }, [url, history]);
+      setVideoInfo({ title: data.title || 'Unknown', author: data.author || '', thumbnail: plat === 'youtube' && vid ? 'https://i.ytimg.com/vi/' + vid + '/hqdefault.jpg' : (data.thumbnail || ''), duration: data.duration || '', views: data.views || '', published: data.published || '', platform: data.platform || plat });
+      setHistory(prev => {
+        const h = [{ title: data.title || 'Unknown', url: url.trim(), platform: plat, time: Date.now() }, ...prev.filter((x: any) => x.url !== url.trim())].slice(0, 6);
+        sSetJ('yt-convert-history', h);
+        return h;
+      });
+      setPhase('ready');
+    } catch (e: any) { setError(e.message || 'Failed.'); setPhase('error'); }
+  }, [url]);
 
   const videoId = videoInfo ? extractVideoId(url.trim()) : null;
 
@@ -99,11 +103,11 @@ export default function Home() {
     return all.filter(c => c.platform.includes(plat)).sort((a, b) => { if (a.name === favorite) return -1; if (b.name === favorite) return 1; if (a.recommended && !b.recommended) return -1; return 0; });
   }, [videoInfo, url, favorite]);
 
-  const openConverter = (c) => { navigator.clipboard.writeText(url.trim()).catch(() => {}); setLaunched(c.name); window.open(c.url, '_blank', 'noopener'); };
-  const toggleFav = (n) => { const v = favorite === n ? '' : n; setFavorite(v); sSet('yt-convert-fav', v); };
+  const openConverter = (c: any) => { navigator.clipboard.writeText(url.trim()).catch(() => {}); setLaunched(c.name); window.open(c.url, '_blank', 'noopener'); };
+  const toggleFav = (n: string) => { const v = favorite === n ? '' : n; setFavorite(v); sSet('yt-convert-fav', v); };
   const clearHist = () => { setHistory([]); if (typeof window !== 'undefined') localStorage.removeItem('yt-convert-history'); };
   const handleReset = () => { setPhase('input'); setError(''); setVideoInfo(null); setLaunched(null); };
-  const handleKeyDown = (e) => { if (e.key === 'Enter' && (phase === 'input' || phase === 'error')) handleGetInfo(); };
+  const handleKeyDown = (e: any) => { if (e.key === 'Enter' && (phase === 'input' || phase === 'error')) handleGetInfo(); };
 
   if (!mounted) {
     return (
@@ -152,15 +156,15 @@ export default function Home() {
               </button>
             )}
           </div>
-          {dp && phase === 'input' && <span className={`text-xs font-medium px-2.5 py-0.5 rounded-full ${pColor(dp)}`}>{pLabel(dp)}</span>}
+          {dp && phase === 'input' && <span className={'text-xs font-medium px-2.5 py-0.5 rounded-full ' + pColor(dp)}>{pLabel(dp)}</span>}
           {phase === 'input' && (
             <div className="space-y-2">
               <label className="text-sm font-semibold">Format</label>
               <div className="grid grid-cols-2 h-11 rounded-xl bg-gray-100 dark:bg-gray-800 p-1">
-                <button onClick={() => setFormat('audio')} className={`rounded-lg text-sm font-medium transition-all flex items-center justify-center gap-2 ${format === 'audio' ? 'bg-white dark:bg-gray-700 shadow-sm' : 'text-gray-500'}`}>
+                <button onClick={() => setFormat('audio')} className={'rounded-lg text-sm font-medium transition-all flex items-center justify-center gap-2 ' + (format === 'audio' ? 'bg-white dark:bg-gray-700 shadow-sm' : 'text-gray-500')}>
                   <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg> MP3
                 </button>
-                <button onClick={() => setFormat('video')} className={`rounded-lg text-sm font-medium transition-all flex items-center justify-center gap-2 ${format === 'video' ? 'bg-white dark:bg-gray-700 shadow-sm' : 'text-gray-500'}`}>
+                <button onClick={() => setFormat('video')} className={'rounded-lg text-sm font-medium transition-all flex items-center justify-center gap-2 ' + (format === 'video' ? 'bg-white dark:bg-gray-700 shadow-sm' : 'text-gray-500')}>
                   <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m22 8-6 4 6 4V8Z"/><rect width="14" height="12" x="2" y="6" rx="2"/></svg> MP4
                 </button>
               </div>
@@ -181,7 +185,7 @@ export default function Home() {
             <div className="bg-white dark:bg-gray-900 rounded-2xl border-2 border-red-200 dark:border-red-900 overflow-hidden p-5 space-y-4 mb-5">
               {videoInfo.thumbnail && (
                 <div className="relative rounded-xl overflow-hidden bg-black group cursor-pointer" onClick={() => window.open(videoId ? 'https://www.youtube.com/watch?v=' + videoId : url.trim(), '_blank')}>
-                  <img src={videoInfo.thumbnail} alt={videoInfo.title} className="w-full object-cover" style={{ maxHeight: '360px' }} onError={(e) => { if (videoId) e.currentTarget.src = `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`; }} />
+                  <img src={videoInfo.thumbnail} alt={videoInfo.title} className="w-full object-cover" style={{ maxHeight: '360px' }} onError={(e: any) => { if (videoId) e.currentTarget.src = 'https://i.ytimg.com/vi/' + videoId + '/mqdefault.jpg'; }} />
                   <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                     <div className="w-14 h-14 rounded-full bg-red-600 flex items-center justify-center"><svg className="w-6 h-6 text-white ml-0.5" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></div>
                   </div>
@@ -197,7 +201,7 @@ export default function Home() {
                     {videoInfo.published && <span className="text-[11px] text-gray-400">{videoInfo.published}</span>}
                   </div>
                 </div>
-                {videoInfo.platform && <span className={`text-xs font-medium px-2.5 py-1 rounded-full flex-shrink-0 ${pColor(videoInfo.platform)}`}>{pLabel(videoInfo.platform)}</span>}
+                {videoInfo.platform && <span className={'text-xs font-medium px-2.5 py-1 rounded-full flex-shrink-0 ' + pColor(videoInfo.platform)}>{pLabel(videoInfo.platform)}</span>}
               </div>
             </div>
 
@@ -210,7 +214,7 @@ export default function Home() {
               </div>
               <div className="bg-gray-50 dark:bg-gray-800 rounded-xl p-3 space-y-1.5">
                 <p className="text-xs font-semibold text-gray-700 dark:text-gray-300">How to download:</p>
-                <ol className="text-[11px] text-gray-500 list-decimal list-inside pl-1"><li>Click a converter {'\u2014'} opens in new tab</li><li>Your URL is <strong>auto-copied</strong></li><li>Press Ctrl+V to paste, convert {'&'} download</li></ol>
+                <ol className="text-[11px] text-gray-500 list-decimal list-inside pl-1"><li>Click a converter {'\u2014'} opens in new tab</li><li>Your URL is <strong>auto-copied</strong></li><li>Press Ctrl+V to paste, convert & download</li></ol>
               </div>
               {launched && (
                 <div className="flex items-center gap-2 text-xs text-green-700 bg-green-50 dark:bg-green-950/30 dark:text-green-400 px-3 py-2 rounded-lg">
@@ -219,9 +223,9 @@ export default function Home() {
                 </div>
               )}
               <div className="space-y-2.5">
-                {getConverters().map((svc) => (
+                {getConverters().map((svc: any) => (
                   <button key={svc.name} onClick={() => openConverter(svc)} className="w-full flex items-center gap-3 p-3.5 rounded-xl border-2 border-gray-200 dark:border-gray-700 hover:border-red-300 dark:hover:border-red-800 transition-all text-left group hover:shadow-md">
-                    <div className={`w-11 h-11 rounded-lg bg-gradient-to-br ${svc.color} flex items-center justify-center text-white flex-shrink-0 shadow-md`}>
+                    <div className={'w-11 h-11 rounded-lg bg-gradient-to-br ' + svc.color + ' flex items-center justify-center text-white flex-shrink-0 shadow-md'}>
                       <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
                     </div>
                     <div className="flex-1 min-w-0">
@@ -234,7 +238,7 @@ export default function Home() {
                     <div className="flex flex-col items-center gap-1.5 flex-shrink-0">
                       <svg className="w-4 h-4 text-gray-400 group-hover:text-red-500 transition-colors" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
                       <button onClick={(e) => { e.stopPropagation(); toggleFav(svc.name); }} className="p-0.5">
-                        <svg className={`w-3.5 h-3.5 ${svc.name === favorite ? 'text-yellow-500' : 'text-gray-300'}`} viewBox="0 0 24 24" fill={svc.name === favorite ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+                        <svg className={'w-3.5 h-3.5 ' + (svc.name === favorite ? 'text-yellow-500' : 'text-gray-300')} viewBox="0 0 24 24" fill={svc.name === favorite ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
                       </button>
                     </div>
                   </button>
@@ -260,7 +264,7 @@ export default function Home() {
               { icon: '<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>', t: 'Audio', d: 'Convert to MP3' },
               { icon: '<path d="m22 8-6 4 6 4V8Z"/><rect width="14" height="12" x="2" y="6" rx="2"/>', t: 'Video', d: 'Download MP4' },
               { icon: '<path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/>', t: 'Fast', d: 'Paste & go' },
-            ].map(f => (
+            ].map((f: any) => (
               <div key={f.t} className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-3 text-center hover:shadow-md transition-shadow">
                 <div className="w-9 h-9 rounded-lg bg-red-50 dark:bg-red-900/20 flex items-center justify-center mx-auto mb-2">
                   <svg className="w-5 h-5 text-red-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" dangerouslySetInnerHTML={{ __html: f.icon }} />
@@ -272,7 +276,7 @@ export default function Home() {
           </div>
         )}
 
-                {phase === 'input' && (
+        {phase === 'input' && (
           <div className="mt-6">
             <h3 className="text-xs font-semibold text-center mb-3 text-gray-400 uppercase tracking-wider">Supported Platforms</h3>
             <div className="flex flex-wrap justify-center gap-3">
@@ -316,7 +320,7 @@ export default function Home() {
               <h3 className="text-xs font-semibold text-gray-500">Recent</h3>
               <button onClick={clearHist} className="text-[11px] text-gray-400 hover:text-red-500">Clear</button>
             </div>
-            {history.slice(0, 4).map((h, i) => (
+            {history.slice(0, 4).map((h: any, i: number) => (
               <button key={i} onClick={() => setUrl(h.url)} className="w-full flex items-center gap-2.5 p-2 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors text-left">
                 <div className="w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 bg-gray-200 dark:bg-gray-700"><span className="text-[8px] font-bold text-gray-600 dark:text-gray-300">{pLabel(h.platform).charAt(0)}</span></div>
                 <span className="text-xs text-gray-500 truncate flex-1">{h.title}</span>
