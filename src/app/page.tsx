@@ -108,7 +108,7 @@ export default function Home() {
     if (autoTimer.current) clearTimeout(autoTimer.current);
     if (phase === 'input' || phase === 'error') {
       const plat = getPlatform(url.trim());
-      if (plat && url.trim().length > 15) {
+            if (plat && url.trim().length > 15 && /^https?:\/\//i.test(url.trim())) {
         autoTimer.current = setTimeout(() => { if (phase === 'input') handleGetInfo(); }, 800);
       }
     }
