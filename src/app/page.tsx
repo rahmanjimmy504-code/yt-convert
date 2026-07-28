@@ -270,7 +270,7 @@ export default function Home() {
               </div>
               <div className="flex flex-col items-center gap-1.5 group">
                 <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-orange-500 to-orange-600 flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
-                  <img src="https://a-v2.sndcdn.com/assets/images/sc_LOGO_white-8bf76150785f81eb497336d7566355db5bfaa9e3ad5d02598ed7e328229f9d5e.svg" width="24" height="24" alt="SoundCloud"/>
+                  <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/8/82/SoundCloud_logo.svg/200px-SoundCloud_logo.svg.png" width="20" height="20" alt="SoundCloud"/>
                 </div>
                 <span className="text-[11px] font-medium text-gray-500">SoundCloud</span>
               </div>
