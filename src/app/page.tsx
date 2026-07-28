@@ -16,6 +16,7 @@ function getPlatform(u: string) {
   if (/instagram\.com/i.test(u)) return 'instagram';
   if (/spotify\.com|open\.spotify\.com/i.test(u)) return 'spotify';
   if (/deezer\.com/i.test(u)) return 'deezer';
+  if (/tiktok\.com/i.test(u)) return 'tk';
   if (/music\.apple\.com/i.test(u)) return 'applemusic';
   return null;
 }
@@ -28,8 +29,8 @@ function pColor(p: string) {
   return ({ youtube: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400', youtubemusic: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400', soundcloud: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400', twitter: 'bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-400', instagram: 'bg-pink-100 text-pink-700 dark:bg-pink-900/30 dark:text-pink-400', spotify: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400', deezer: 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400', applemusic: 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300' } as any)[p] || 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400';
 }
 
-const tips = ['Paste any link from YouTube, Spotify, SoundCloud, X, Instagram, Deezer, or Apple Music.', 'Your URL is auto-copied when you pick a converter.', 'If one converter has ads, try another.', 'All converters are free, no sign-up needed.', 'Press Enter after pasting to fetch info instantly.'];
-const placeholders = ['https://www.youtube.com/watch?v=...', 'https://open.spotify.com/track/...', 'https://soundcloud.com/...', 'https://x.com/user/status/...', 'https://www.instagram.com/reel/...', 'https://music.apple.com/...', 'https://www.deezer.com/track/...', 'https://music.youtube.com/watch?v=...'];
+const tips = ['Paste any link from YouTube, Spotify, SoundCloud, X, Instagram, Deezer, Apple Music, or TikTok', 'Your URL is auto-copied when you pick a converter.', 'If one converter has ads, try another.', 'All converters are free, no sign-up needed.', 'Press Enter after pasting to fetch info instantly.'];
+const placeholders = ['https://www.youtube.com/watch?v=...', 'https://open.spotify.com/track/...', 'https://soundcloud.com/...', 'https://x.com/user/status/...', 'https://www.instagram.com/reel/...', 'https://music.apple.com/...', 'https://www.deezer.com/track/...', 'https://music.youtube.com/watch?v=...', 'https://www.tiktok.com/...'];
 
 export default function Home() {
   const [mounted, setMounted] = useState(false);
