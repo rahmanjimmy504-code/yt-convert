@@ -1,230 +1,490 @@
 'use client';
-import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
-import { Download, Music, Video, Link2, XCircle, ArrowRight, Zap, ExternalLink, Play, CheckCircle2, Sun, Moon, Check, Shield, Eye, Calendar, Star } from 'lucide-react';
 
-function ytId(u: string) { const m = u.match(/(?:v=|youtu\.be\/|shorts\/|live\/|embed\/|clip\/)([a-zA-Z0-9_-]{11})/); return m ? m[1] : null; }
-function getPlat(u: string) { if (/youtu\.?be|youtube\.com/.test(u)) return 'yt'; if (/soundcloud\.com/.test(u)) return 'sc'; if (/(?:twitter\.com|x\.com)\/\w+\/status/.test(u)) return 'tw'; if (/instagram\.com\/(p|reel|tv)\//.test(u)) return 'ig'; return ''; }
-function fD(s: number) { if (!s) return ''; const h = Math.floor(s/3600), m = Math.floor((s%3600)/60), sc = s%60; return h > 0 ? `${h}:${String(m).padStart(2,'0')}:${String(sc).padStart(2,'0')}` : `${m}:${String(sc).padStart(2,'0')}`; }
-function fV(n: number) { if (!n) return ''; if (n >= 1e9) return (n/1e9).toFixed(1).replace(/\.0$/,'')+'B'; if (n >= 1e6) return (n/1e6).toFixed(1).replace(/\.0$/,'')+'M'; if (n >= 1e3) return (n/1e3).toFixed(1).replace(/\.0$/,'')+'K'; return n.toLocaleString(); }
-function fT(ts: number) { if (!ts) return ''; return new Date(ts*1000).toLocaleDateString('en-US',{year:'numeric',month:'short',day:'numeric'}); }
-function tAgo(ts: number) { const s = Math.floor((Date.now()-ts)/1000); if (s<60) return 'just now'; if (s<3600) return Math.floor(s/60)+'m ago'; if (s<86400) return Math.floor(s/3600)+'h ago'; return Math.floor(s/86400)+'d ago'; }
+import { useState, useCallback } from 'react';
+import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent } from '@/components/ui/card';
+import { Label } from '@/components/ui/label';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { useToast } from '@/hooks/use-toast';
+import {
+  Download, Music, Video, Link2, Loader2,
+  XCircle, AlertCircle, ArrowRight, Zap,
+  ExternalLink, ClipboardCheck, Play, Info,
+  CheckCircle2, Star, Clock, Trash2
+} from 'lucide-react';
 
-const PLAT: Record<string,{n:string,c:string}> = { yt:{n:'YouTube',c:'bg-red-500'}, sc:{n:'SoundCloud',c:'bg-orange-500'}, tw:{n:'X',c:'bg-sky-500'}, ig:{n:'Instagram',c:'bg-pink-500'} };
-const CVTS = [
-  {n:'9Convert',u:'https://9convert.org/',d:'MP4 144p-1080p, MP3 128-320k',g:'from-rose-500 to-pink-600',i:'d',b:true,p:'yt'},
-  {n:'Y2Mate alt',u:'https://en.y2mate.so/youtube-converter/',d:'Alt Y2Mate domain',g:'from-orange-500 to-amber-600',i:'z',b:false,p:'yt'},
-  {n:'AudioConverter',u:'https://audioconverter.ai/youtube-to-mp4-converter',d:'MP4 HD and 4K',g:'from-sky-500 to-blue-600',i:'v',b:false,p:'yt'},
-  {n:'Hicoo',u:'https://hicoo.ai/mp4-converter/youtube-to-mp4',d:'MP4 360p to 4K',g:'from-emerald-500 to-teal-600',i:'z',b:false,p:'yt'},
-  {n:'SCDownloader',u:'https://scdownloader.io/',d:'SoundCloud to MP3',g:'from-orange-500 to-yellow-500',i:'d',b:true,p:'sc'},
-  {n:'KlickAud',u:'https://klickaud.co/',d:'SC to MP3 fast',g:'from-amber-500 to-orange-600',i:'z',b:false,p:'sc'},
-  {n:'SSSTwitter',u:'https://ssstwitter.com/',d:'Twitter/X video dl',g:'from-sky-400 to-blue-500',i:'d',b:true,p:'tw'},
-  {n:'TwitSave',u:'https://twitsave.com/',d:'Save tweet videos',g:'from-blue-500 to-indigo-600',i:'z',b:false,p:'tw'},
-  {n:'SnapInsta',u:'https://snapinsta.app/',d:'Reels & stories',g:'from-pink-500 to-purple-600',i:'d',b:true,p:'ig'},
-  {n:'SaveInsta',u:'https://saveinsta.app/',d:'Photos & video',g:'from-purple-500 to-fuchsia-600',i:'z',b:false,p:'ig'},
+/* ── helpers ── */
+function getPlatform(u: string): 'youtube' | 'soundcloud' | 'twitter' | 'instagram' | null {
+  if (/youtu\.?be|youtube\.com/i.test(u)) return 'youtube';
+  if (/soundcloud\.com/i.test(u)) return 'soundcloud';
+  if (/twitter\.com|x\.com/i.test(u)) return 'twitter';
+  if (/instagram\.com/i.test(u)) return 'instagram';
+  return null;
+}
+function extractVideoId(url: string): string | null {
+  const m = url.match(/(?:v=|youtu\.be\/|shorts\/|live\/)([a-zA-Z0-9_-]{11})/);
+  return m ? m[1] : null;
+}
+function platformLabel(p: string | null) {
+  if (p === 'youtube') return 'YouTube';
+  if (p === 'soundcloud') return 'SoundCloud';
+  if (p === 'twitter') return 'X / Twitter';
+  if (p === 'instagram') return 'Instagram';
+  return 'Supported Platform';
+}
+function platformColor(p: string | null) {
+  if (p === 'youtube') return 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400';
+  if (p === 'soundcloud') return 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400';
+  if (p === 'twitter') return 'bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-400';
+  if (p === 'instagram') return 'bg-pink-100 text-pink-700 dark:bg-pink-900/30 dark:text-pink-400';
+  return 'bg-muted text-muted-foreground';
+}
+function platformIconUrl(p: string | null) {
+  if (p === 'youtube') return 'https://www.google.com/s2/favicons?domain=youtube.com&sz=64';
+  if (p === 'soundcloud') return 'https://www.google.com/s2/favicons?domain=soundcloud.com&sz=64';
+  if (p === 'twitter') return 'https://www.google.com/s2/favicons?domain=x.com&sz=64';
+  if (p === 'instagram') return 'https://www.google.com/s2/favicons?domain=instagram.com&sz=64';
+  return '';
+}
+
+type Phase = 'input' | 'loading' | 'ready' | 'error';
+
+interface VideoInfo {
+  title: string;
+  author: string;
+  thumbnail: string;
+  duration?: string;
+  views?: string;
+  published?: string;
+  platform?: string;
+}
+
+interface ConverterService {
+  name: string;
+  url: string;
+  desc: string;
+  color: string;
+  icon: 'download' | 'zap' | 'video';
+  platform: string[];
+  recommended?: boolean;
+  note?: string;
+}
+
+interface HistoryItem {
+  title: string;
+  url: string;
+  platform: string;
+  time: number;
+}
+
+/* ── rotating tips ── */
+const tips = [
+  'Paste any YouTube, SoundCloud, X, or Instagram link to get started.',
+  'Your URL is auto-copied when you click a converter.',
+  'If one converter has ads, try another — they all work!',
+  'All converters are free and require no sign-up.',
+  'Press Enter after pasting your URL to fetch info instantly.',
 ];
-interface VI { title: string; author: string; thumbnail: string; duration: number; views: number; published: number; }
-interface HE { u: string; t: string; p: string; c: string; d: number; }
 
 export default function Home() {
   const [url, setUrl] = useState('');
-  const [fmt, setFmt] = useState<'audio'|'video'>('video');
-  const [phase, setPhase] = useState<'input'|'loading'|'ready'|'error'>('input');
-  const [err, setErr] = useState('');
-  const [info, setInfo] = useState<VI|null>(null);
-  const [copied, setCopied] = useState(false);
-  const [dk, setDk] = useState(false);
-  const [launched, setLaunched] = useState<string|null>(null);
-  const [thOk, setThOk] = useState(false);
-  const [tip, setTip] = useState(0);
-  const [hist, setHist] = useState<HE[]>([]);
-  const [fav, setFav] = useState('');
-  const ir = useRef<HTMLInputElement>(null);
-  const ar = useRef<AbortController|null>(null);
-  const plat = useMemo(() => getPlat(url), [url]);
-  const valid = useMemo(() => { const t = url.trim(); return t.length > 5 && !!getPlat(t); }, [url]);
-  const tips = ['Supports YouTube, SoundCloud, X, and Instagram', 'URL auto-copies when you pick a converter', 'Press Enter to fetch, Escape to start over'];
+  const [format, setFormat] = useState<'audio' | 'video'>('video');
+  const [phase, setPhase] = useState<Phase>('input');
+  const [error, setError] = useState('');
+  const [videoInfo, setVideoInfo] = useState<VideoInfo | null>(null);
+  const [launched, setLaunched] = useState<string | null>(null);
+  const [tipIndex, setTipIndex] = useState(0);
+  const [history, setHistory] = useState<HistoryItem[]>(() => {
+    if (typeof window === 'undefined') return [];
+    try { return JSON.parse(localStorage.getItem('yt-convert-history') || '[]'); } catch { return []; }
+  });
+  const [favorite, setFavorite] = useState<string>(() => {
+    if (typeof window === 'undefined') return '';
+    return localStorage.getItem('yt-convert-fav') || '';
+  });
+  const { toast } = useToast();
 
-  useEffect(() => {
-    const i = setInterval(() => setTip(p => (p+1)%tips.length), 4000);
-    try { setHist(JSON.parse(localStorage.getItem('hist')||'[]')); setFav(localStorage.getItem('fav')||''); const v = localStorage.getItem('dk')==='1'; setDk(v); document.documentElement.classList.toggle('dark',v); } catch {}
-    ir.current?.focus();
-    const esc = (e: KeyboardEvent) => { if (e.key==='Escape'&&phase!=='loading') { setPhase('input'); setInfo(null); setUrl(''); setCopied(false); setLaunched(null); setThOk(false); ir.current?.focus(); } };
-    window.addEventListener('keydown',esc); return () => { clearInterval(i); window.removeEventListener('keydown',esc); };
+  // rotate tips
+  useState(() => {
+    const i = setInterval(() => setTipIndex(t => (t + 1) % tips.length), 5000);
+    return () => clearInterval(i);
+  });
+
+  const detectedPlatform = url.trim() ? getPlatform(url.trim()) : null;
+
+  const handleGetInfo = useCallback(async () => {
+    if (!url.trim()) { toast({ title: 'Enter a URL', variant: 'destructive' }); return; }
+    const plat = getPlatform(url.trim());
+    if (!plat) { toast({ title: 'Unsupported URL', description: 'Paste a YouTube, SoundCloud, X, or Instagram link.', variant: 'destructive' }); return; }
+    setError('');
+    setPhase('loading');
+    setVideoInfo(null);
+    setLaunched(null);
+    try {
+      const resp = await fetch('/api/video-info?url=' + encodeURIComponent(url.trim()));
+      if (!resp.ok) {
+        const d = await resp.json().catch(() => ({}));
+        throw new Error(d.error || 'Failed to load info');
+      }
+      const data = await resp.json();
+      const thumb = plat === 'youtube' && extractVideoId(url.trim())
+        ? `https://i.ytimg.com/vi/${extractVideoId(url.trim())}/hqdefault.jpg`
+        : (data.thumbnail || '');
+      setVideoInfo({
+        title: data.title || 'Unknown',
+        author: data.author || '',
+        thumbnail: thumb,
+        duration: data.duration || '',
+        views: data.views || '',
+        published: data.published || '',
+        platform: data.platform || plat,
+      });
+      // save to history
+      const newItem: HistoryItem = { title: data.title || 'Unknown', url: url.trim(), platform: plat, time: Date.now() };
+      const h = [newItem, ...history.filter(x => x.url !== url.trim())].slice(0, 6);
+      setHistory(h);
+      try { localStorage.setItem('yt-convert-history', JSON.stringify(h)); } catch {}
+      setPhase('ready');
+    } catch (e: any) {
+      setError(e.message || 'Failed to load info.');
+      setPhase('error');
+    }
+  }, [url, toast, history]);
+
+  const videoId = videoInfo ? extractVideoId(url.trim()) : null;
+
+  const allConverters: ConverterService[] = [
+    { name: 'Y2Mate', url: 'https://v27.www-y2mate.com/', desc: 'MP4 (144p-1080p) & MP3 (128-320kbps). No sign-up.', color: 'bg-rose-600 hover:bg-rose-700', icon: 'download', platform: ['youtube'], recommended: true },
+    { name: 'Y2Mate (alt)', url: 'https://en.y2mate.so/youtube-converter/', desc: 'Alt Y2Mate domain. May show verification.', color: 'bg-orange-600 hover:bg-orange-700', icon: 'zap', platform: ['youtube'], note: 'May need Cloudflare check' },
+    { name: 'AudioConverter', url: 'https://audioconverter.ai/youtube-to-mp4-converter', desc: 'YouTube to MP4. Supports HD and 4K.', color: 'bg-sky-600 hover:bg-sky-700', icon: 'video', platform: ['youtube'] },
+    { name: 'Hicoo', url: 'https://hicoo.ai/mp4-converter/youtube-to-mp4', desc: 'YouTube to MP4. 360p to 4K UHD.', color: 'bg-emerald-600 hover:bg-emerald-700', icon: 'zap', platform: ['youtube'] },
+    { name: 'KlickAud', url: 'https://www.klickaud.co/', desc: 'SoundCloud to MP3. Fast and simple.', color: 'bg-orange-500 hover:bg-orange-600', icon: 'download', platform: ['soundcloud'], recommended: true },
+    { name: 'SC Downloader', url: 'https://soundcloudmp3.org/', desc: 'Download SoundCloud tracks as MP3.', color: 'bg-amber-600 hover:bg-amber-700', icon: 'zap', platform: ['soundcloud'] },
+    { name: 'SSSTik', url: 'https://ssstik.io/', desc: 'Download X/Twitter videos. No watermark.', color: 'bg-sky-500 hover:bg-sky-600', icon: 'download', platform: ['twitter'], recommended: true },
+    { name: 'Twitsave', url: 'https://twitsave.com/', desc: 'Save X/Twitter videos in HD.', color: 'bg-indigo-600 hover:bg-indigo-700', icon: 'video', platform: ['twitter'] },
+    { name: 'SaveInsta', url: 'https://www.saveinsta.app/', desc: 'Download Instagram photos & videos.', color: 'bg-pink-500 hover:bg-pink-600', icon: 'download', platform: ['instagram'], recommended: true },
+    { name: 'iGram', url: 'https://igram.io/', desc: 'Instagram downloader for reels & stories.', color: 'bg-purple-600 hover:bg-purple-700', icon: 'zap', platform: ['instagram'] },
+  ];
+
+  const getConverters = useCallback((): ConverterService[] => {
+    const plat = videoInfo?.platform || getPlatform(url.trim());
+    if (!plat) return allConverters.slice(0, 4);
+    const filtered = allConverters.filter(c => c.platform.includes(plat));
+    // sort: favorite first, then recommended
+    return filtered.sort((a, b) => {
+      if (a.name === favorite) return -1;
+      if (b.name === favorite) return 1;
+      if (a.recommended && !b.recommended) return -1;
+      if (!a.recommended && b.recommended) return 1;
+      return 0;
+    });
+  }, [videoInfo, url, favorite]);
+
+  const openConverter = useCallback((converter: ConverterService) => {
+    navigator.clipboard.writeText(url.trim()).then(() => {
+      toast({ title: 'URL copied!', description: 'Go to the converter tab and press Ctrl+V to paste.', duration: 8000 });
+      setLaunched(converter.name);
+    }).catch(() => {
+      toast({ title: 'Open converter', description: 'Copy the URL manually and paste on the converter page.', duration: 6000 });
+      setLaunched(converter.name);
+    });
+    window.open(converter.url, '_blank', 'noopener');
+  }, [url, toast]);
+
+  const toggleFavorite = useCallback((name: string) => {
+    const next = favorite === name ? '' : name;
+    setFavorite(next);
+    try { localStorage.setItem('yt-convert-fav', next); } catch {}
+  }, [favorite]);
+
+  const clearHistory = useCallback(() => {
+    setHistory([]);
+    try { localStorage.removeItem('yt-convert-history'); } catch {}
   }, []);
 
-  const toggleDk = () => { const n=!dk; setDk(n); try{localStorage.setItem('dk',n?'1':'0');}catch{} document.documentElement.classList.toggle('dark',n); };
-  const fetchInfo = useCallback(async (ou?:string) => {
-    const t = (ou||url).trim();
-    if (!t||!getPlat(t)) { setErr('Paste a valid URL (YouTube, SoundCloud, X, or Instagram)'); setPhase('error'); return; }
-    setErr(''); setPhase('loading'); setInfo(null); setCopied(false); setLaunched(null); setThOk(false);
-    ar.current?.abort(); const ac = new AbortController(); ar.current = ac;
-    const timer = setTimeout(() => ac.abort(), 10000);
-    try {
-      const r = await fetch('/api/video-info?url='+encodeURIComponent(t),{signal:ac.signal}); clearTimeout(timer);
-      if (!r.ok) { const d = await r.json().catch(()=>({})); throw new Error(d.error||'Not found'); }
-      const d = await r.json(); if (!d?.title) throw new Error('Could not load info');
-      setInfo({title:String(d.title),author:String(d.author||''),thumbnail:String(d.thumbnail||''),duration:Number(d.duration)||0,views:Number(d.views)||0,published:Number(d.published)||0});
-      setPhase('ready');
-    } catch(e:any) { clearTimeout(timer); setErr(e.name==='AbortError'?'Request timed out.':(e.message||'Error')); setPhase('error'); }
-  }, [url]);
-
-  const vid = (info&&plat==='yt') ? ytId(url.trim()) : null;
-  const thUrl = vid ? `https://i.ytimg.com/vi/${vid}/hqdefault.jpg` : (info?.thumbnail||'');
-  const cvts = useMemo(() => {
-    let list = CVTS.filter(c => c.p === (plat||'yt'));
-    if (fav&&list.some(c=>c.n===fav)) { const f=list.find(c=>c.n===fav)!; list=[f,...list.filter(c=>c.n!==fav)]; }
-    return list;
-  }, [plat, fav]);
-
-  const go = useCallback((x: typeof CVTS[0]) => {
-    if (launched===x.n) return; setLaunched(x.n); setCopied(false);
-    navigator.clipboard.writeText(url.trim()).then(()=>setCopied(true)).catch(()=>{});
-    window.open(x.u,'_blank','noopener,noreferrer');
-    const h: HE = {u:url.trim(),t:info?.title||'Untitled',p:plat,c:x.n,d:Date.now()};
-    setHist(p => { const n=[h,...p.filter(e=>e.u!==h.u)].slice(0,8); try{localStorage.setItem('hist',JSON.stringify(n));}catch{}; return n; });
-  }, [url,launched,info,plat]);
-
-  const toggleFav = useCallback((name:string,e:React.MouseEvent) => { e.stopPropagation(); const n=fav===name?'':name; setFav(n); try{localStorage.setItem('fav',n);}catch{}; }, [fav]);
-  const loadHist = useCallback((h:HE) => { setUrl(h.u); fetchInfo(h.u); }, [fetchInfo]);
-  const clearHist = useCallback(() => { setHist([]); try{localStorage.removeItem('hist');}catch{}; }, []);
-  const sel = () => ir.current?.select();
-
-  if (phase==='loading') return (
-    <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-br from-gray-50 via-white to-gray-100 dark:from-gray-950 dark:via-gray-900 dark:to-gray-950 gap-4" role="status" aria-label="Loading">
-      <div className="relative"><div className="w-16 h-16 rounded-full border-4 border-gray-200 dark:border-gray-700"/><div className="w-16 h-16 rounded-full border-4 border-t-red-500 border-r-transparent border-b-transparent border-l-transparent absolute top-0 left-0 animate-spin"/></div>
-      <p className="text-sm text-gray-400 animate-pulse">Finding your link...</p>
-    </div>
-  );
+  const handleReset = useCallback(() => { setPhase('input'); setError(''); setVideoInfo(null); setLaunched(null); }, []);
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => { if (e.key === 'Enter' && (phase === 'input' || phase === 'error')) handleGetInfo(); }, [phase, handleGetInfo]);
 
   return (
-    <div className="min-h-screen flex flex-col bg-gradient-to-br from-gray-50 via-white to-gray-100 dark:from-gray-950 dark:via-gray-900 dark:to-gray-950 text-gray-900 dark:text-gray-100 transition-colors">
-      <header className="border-b border-gray-200/80 dark:border-gray-800 bg-white/80 dark:bg-gray-900/80 backdrop-blur-xl sticky top-0 z-50">
-        <div className="max-w-2xl mx-auto px-4 py-3.5 flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-red-500 to-red-600 text-white flex items-center justify-center shadow-lg shadow-red-500/25"><Video className="w-5 h-5" /></div>
-          <div className="flex-1"><h1 className="text-lg font-bold tracking-tight">YT Convert</h1><p className="text-[11px] text-gray-400 dark:text-gray-500 font-medium">YouTube, SoundCloud, X & more</p></div>
-          <button onClick={toggleDk} aria-label={dk?'Switch to light mode':'Switch to dark mode'} className="w-9 h-9 rounded-xl border border-gray-200 dark:border-gray-700 flex items-center justify-center hover:bg-gray-100 dark:hover:bg-gray-800 transition-all active:scale-95">{dk?<Sun className="w-4 h-4"/>:<Moon className="w-4 h-4"/>}</button>
+    <div className="min-h-screen flex flex-col bg-gradient-to-br from-background via-background to-muted/30">
+      {/* Header */}
+      <header className="border-b bg-background/80 backdrop-blur-md sticky top-0 z-50">
+        <div className="max-w-3xl mx-auto px-4 py-4 flex items-center gap-3">
+          <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-gradient-to-br from-red-500 to-red-600 text-white shadow-lg shadow-red-500/20">
+            <Video className="w-5 h-5" />
+          </div>
+          <div>
+            <h1 className="text-lg font-bold tracking-tight">YT Convert</h1>
+            <p className="text-xs text-muted-foreground">YouTube &bull; SoundCloud &bull; X &bull; Instagram</p>
+          </div>
         </div>
       </header>
 
-      <main className="flex-1 max-w-2xl mx-auto w-full px-4 py-5 space-y-4">
-        <div className="bg-white dark:bg-gray-800/80 rounded-2xl border border-gray-200/80 dark:border-gray-700/60 shadow-sm shadow-gray-200/50 dark:shadow-black/20 p-5 space-y-4">
-          <div className="flex items-center justify-between">
-            <label htmlFor="yt-url" className="text-sm font-semibold flex items-center gap-2"><Link2 className="w-4 h-4 text-red-500" /> Paste Link</label>
-            {plat&&<span className={"text-[10px] font-bold text-white px-2 py-0.5 rounded-full "+PLAT[plat]?.c}>{PLAT[plat]?.n}</span>}
-          </div>
-          <div className="flex gap-2">
-            <div className="relative flex-1">
-              <input ref={ir} id="yt-url" type="url" placeholder="YouTube, SoundCloud, X, or Instagram link..." value={url} onChange={e=>setUrl(e.target.value)} onFocus={sel} onKeyDown={e=>{if(e.key==='Enter')fetchInfo();}} className={"w-full pl-4 pr-10 py-3 border-2 rounded-xl text-base bg-gray-50 dark:bg-gray-900/60 text-gray-900 dark:text-gray-100 placeholder:text-gray-300 dark:placeholder:text-gray-600 focus:outline-none transition-all duration-200 "+(valid?'border-green-500 dark:border-green-400 focus:ring-4 focus:ring-green-500/10':url.trim()?'border-red-300 dark:border-red-500/60':'border-gray-200 dark:border-gray-600 focus:ring-4 focus:ring-gray-300')} aria-label="Video or audio URL" />
-              {url.trim()&&<div className="absolute right-3 top-1/2 -translate-y-1/2">{valid?<Check className="w-4 h-4 text-green-500"/>:<XCircle className="w-4 h-4 text-red-400"/>}</div>}
-            </div>
-            {(phase==='input'||phase==='error')&&<button onClick={()=>fetchInfo()} disabled={!valid} className="px-5 py-3 bg-gradient-to-r from-red-500 to-red-600 text-white rounded-xl font-medium disabled:opacity-30 disabled:cursor-not-allowed shadow-lg shadow-red-500/25 active:scale-95 transition-all" aria-label="Get info"><ArrowRight className="w-4 h-4"/></button>}
-          </div>
-          {phase==='input'&&(
-            <div className="flex gap-2">
-              <button onClick={()=>setFmt('audio')} aria-pressed={fmt==='audio'} className={"flex-1 py-2.5 rounded-xl text-sm font-medium border-2 flex items-center justify-center gap-2 transition-all active:scale-[0.97] "+(fmt==='audio'?'bg-gradient-to-r from-red-500 to-red-600 text-white border-transparent shadow-md shadow-red-500/20':'bg-white dark:bg-gray-900/40 border-gray-200 dark:border-gray-600 hover:border-red-300')}><Music className="w-4 h-4"/>MP3</button>
-              <button onClick={()=>setFmt('video')} aria-pressed={fmt==='video'} className={"flex-1 py-2.5 rounded-xl text-sm font-medium border-2 flex items-center justify-center gap-2 transition-all active:scale-[0.97] "+(fmt==='video'?'bg-gradient-to-r from-red-500 to-red-600 text-white border-transparent shadow-md shadow-red-500/20':'bg-white dark:bg-gray-900/40 border-gray-200 dark:border-gray-600 hover:border-red-300')}><Video className="w-4 h-4"/>MP4</button>
-            </div>
-          )}
-        </div>
-
-        {phase==='input'&&!url.trim()&&<p key={tip} className="text-xs text-gray-400 dark:text-gray-500 text-center">{tips[tip]}</p>}
-
-        {phase==='error'&&(
-          <div className="bg-red-50 dark:bg-red-950/30 rounded-2xl border border-red-200/80 dark:border-red-800/40 p-5 space-y-3" role="alert">
-            <p className="text-red-600 dark:text-red-400 text-sm flex items-start gap-2"><XCircle className="w-4 h-4 shrink-0 mt-0.5"/>{err}</p>
-            <button onClick={()=>{setPhase('input');setErr('');ir.current?.focus();}} className="text-sm text-red-600 dark:text-red-400 font-medium hover:underline">Try again</button>
-          </div>
-        )}
-
-        {phase==='ready'&&info&&(
-          <>
-            <div className="bg-white dark:bg-gray-800/80 rounded-2xl border border-gray-200/80 dark:border-gray-700/60 shadow-sm overflow-hidden">
-              {thUrl ? (
-                <div className="relative bg-black cursor-pointer group" onClick={()=>window.open(plat==='yt'&&vid?'https://www.youtube.com/watch?v='+vid:url.trim(),'_blank','noopener')} role="link" aria-label={'Open '+info.title}>
-                  {!thOk&&<div className="w-full bg-gray-800 animate-pulse" style={{minHeight:210}}/>}
-                  <img src={thUrl} alt={info.title} className={thOk?'w-full group-hover:scale-105 transition-transform duration-500':'hidden'} style={{maxHeight:300}} onLoad={()=>setThOk(true)} onError={e=>{const img=e.currentTarget;if(vid&&!img.src.includes('mqdefault'))img.src=`https://i.ytimg.com/vi/${vid}/mqdefault.jpg`;else setThOk(true);}} />
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-black/20"/>
-                  <div className="absolute bottom-3 left-3 right-3"><h3 className="font-semibold text-sm text-white leading-snug drop-shadow-lg line-clamp-2">{info.title}</h3></div>
-                  <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-200"><div className="w-14 h-14 rounded-full bg-red-600/90 flex items-center justify-center shadow-xl shadow-black/40"><Play className="w-6 h-6 text-white ml-0.5" fill="white"/></div></div>
-                  {info.duration>0&&<div className="absolute top-3 right-3 bg-black/70 text-white text-xs font-medium px-2 py-1 rounded-lg backdrop-blur-sm">{fD(info.duration)}</div>}
+      <main className="flex-1 max-w-3xl mx-auto w-full px-4 py-8 space-y-6">
+        {/* URL Input Card */}
+        <Card className="border-2 border-dashed border-muted-foreground/20 hover:border-primary/40 transition-colors">
+          <CardContent className="p-6 space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="url-input" className="text-sm font-medium">Paste any link</Label>
+              <div className="flex gap-2">
+                <div className="relative flex-1">
+                  <Link2 className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
+                  <Input
+                    id="url-input" type="url"
+                    placeholder="https://www.youtube.com/watch?v=..."
+                    value={url} onChange={(e) => setUrl(e.target.value)}
+                    onKeyDown={handleKeyDown} disabled={phase === 'loading'}
+                    className="pl-10 h-12 text-base"
+                  />
                 </div>
-              ) : (
-                <div className={"h-40 flex items-center justify-center "+(PLAT[plat]?.c||'bg-gray-700')}><div className="text-center text-white"><Video className="w-10 h-10 mx-auto mb-2 opacity-80"/><p className="text-sm font-medium opacity-90 px-4">{info.title}</p></div></div>
+                {(phase === 'input' || phase === 'error') && (
+                  <Button onClick={handleGetInfo} disabled={!url.trim() || phase === 'loading'} className="h-12 px-6 gap-2 bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white shadow-lg shadow-red-500/20">
+                    <ArrowRight className="w-4 h-4" /> Go
+                  </Button>
+                )}
+              </div>
+              {detectedPlatform && phase === 'input' && (
+                <div className="flex items-center gap-2">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={platformIconUrl(detectedPlatform)} alt="" className="w-4 h-4 rounded-sm" />
+                  <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${platformColor(detectedPlatform)}`}>
+                    {platformLabel(detectedPlatform)}
+                  </span>
+                </div>
               )}
-              <div className="p-4 space-y-2.5">
-                {info.author&&<p className="text-sm font-medium text-gray-700 dark:text-gray-300">{info.author}</p>}
-                <div className="flex flex-wrap gap-3 text-xs text-gray-500 dark:text-gray-400">
-                  {info.views>0&&<span className="flex items-center gap-1"><Eye className="w-3.5 h-3.5"/>{fV(info.views)} views</span>}
-                  {info.published>0&&<span className="flex items-center gap-1"><Calendar className="w-3.5 h-3.5"/>{fT(info.published)}</span>}
-                </div>
-              </div>
             </div>
+            {phase === 'input' && (
+              <div className="space-y-3">
+                <Label className="text-sm font-medium">Preferred Format</Label>
+                <Tabs value={format} onValueChange={(v) => setFormat(v as 'audio' | 'video')}>
+                  <TabsList className="w-full grid grid-cols-2 h-12">
+                    <TabsTrigger value="audio" className="gap-2 h-full"><Music className="w-4 h-4" />Audio (MP3)</TabsTrigger>
+                    <TabsTrigger value="video" className="gap-2 h-full"><Video className="w-4 h-4" />Video (MP4)</TabsTrigger>
+                  </TabsList>
+                </Tabs>
+              </div>
+            )}
+            {/* Rotating tip */}
+            {phase === 'input' && (
+              <p className="text-xs text-muted-foreground text-center animate-pulse">{tips[tipIndex]}</p>
+            )}
+          </CardContent>
+        </Card>
 
-            <div className="bg-white dark:bg-gray-800/80 rounded-2xl border border-gray-200/80 dark:border-gray-700/60 shadow-sm p-5 space-y-4">
-              <div className="flex items-center justify-between">
-                <h2 className="font-semibold text-sm">Download as {fmt==='audio'?'MP3':'MP4'}</h2>
-                <button onClick={()=>{setPhase('input');setInfo(null);setCopied(false);setLaunched(null);setThOk(false);ir.current?.focus();}} className="text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 font-medium">+ New</button>
+        {/* Loading */}
+        {phase === 'loading' && (
+          <Card className="border-2 border-primary/30">
+            <CardContent className="p-8 text-center space-y-3">
+              <Loader2 className="w-8 h-8 animate-spin mx-auto text-primary" />
+              <p className="text-sm text-muted-foreground">Fetching info...</p>
+              <div className="max-w-xs mx-auto space-y-2">
+                <div className="h-3 bg-muted rounded animate-pulse" />
+                <div className="h-3 bg-muted rounded w-3/4 animate-pulse" />
               </div>
-              {copied&&<div role="status" aria-live="polite" className="flex items-center gap-2 text-sm text-green-700 dark:text-green-400 bg-green-50 dark:bg-green-950/30 border border-green-200/60 dark:border-green-800/40 px-3.5 py-2.5 rounded-xl"><CheckCircle2 className="w-4 h-4"/>URL copied — paste it in the converter</div>}
-              <div className="space-y-2.5">
-                {cvts.map(x=>{const op=launched===x.n,isFav=fav===x.n;return(
-                  <button key={x.n} onClick={()=>go(x)} disabled={op} aria-label={'Open '+x.n} className={"w-full flex items-center gap-3.5 p-3.5 rounded-xl border text-left transition-all duration-200 group "+(op?'border-green-300 dark:border-green-600/60 bg-green-50 dark:bg-green-950/20':'border-gray-100 dark:border-gray-700/50 hover:border-gray-300 dark:hover:border-gray-600 hover:shadow-sm active:scale-[0.98]')}>
-                    <div className={"w-10 h-10 rounded-xl bg-gradient-to-br "+x.g+" text-white flex items-center justify-center shrink-0 shadow-md "+(op?'scale-105':'group-hover:scale-105 transition-transform duration-200')}>
-                      {op?<Check className="w-5 h-5"/>:<>{x.i==='d'&&<Download className="w-5 h-5"/>}{x.i==='z'&&<Zap className="w-5 h-5"/>}{x.i==='v'&&<Video className="w-5 h-5"/>}</>}
-                    </div>
-                    <div className="flex-1 min-w-0"><div className="flex items-center gap-1.5"><span className="font-semibold text-sm">{x.n}</span>{x.b&&<span className="text-[10px] font-bold bg-gradient-to-r from-amber-100 to-amber-200 dark:from-amber-900/60 dark:to-amber-800/60 text-amber-700 dark:text-amber-300 px-1.5 py-0.5 rounded-full">BEST</span>}{isFav&&<Star className="w-3 h-3 text-amber-500 fill-amber-500"/>}</div><p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{op?'Opened — paste URL':x.d}</p></div>
-                    {!op&&<div className="flex items-center gap-0.5 shrink-0"><button onClick={e=>toggleFav(x.n,e)} className="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors" aria-label={isFav?'Unfavorite':'Favorite'}><Star className={"w-4 h-4 transition-colors "+(isFav?'text-amber-500 fill-amber-500':'text-gray-300 dark:text-gray-600 hover:text-amber-400')}/></button><ExternalLink className="w-4 h-4 text-gray-300 dark:text-gray-600 group-hover:text-gray-500 transition-colors"/></div>}
-                  </button>
-                );})}
-              </div>
-            </div>
-          </>
+            </CardContent>
+          </Card>
         )}
 
-        {phase==='input'&&(
-          <div className="space-y-4">
-            {hist.length>0&&(
-              <div className="bg-white dark:bg-gray-800/80 rounded-2xl border border-gray-200/80 dark:border-gray-700/60 shadow-sm p-4 space-y-3">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Recent</h3>
-                  <button onClick={clearHist} className="text-xs text-gray-400 hover:text-gray-600 transition-colors">Clear</button>
+        {/* Video Info + Converters */}
+        {phase === 'ready' && videoInfo && (
+          <>
+            <Card className="border-2 border-primary/30 overflow-hidden">
+              <CardContent className="p-6 space-y-4">
+                {videoInfo.thumbnail && (
+                  <div
+                    className="relative rounded-xl overflow-hidden bg-black group cursor-pointer"
+                    onClick={() => {
+                      if (videoInfo.platform === 'youtube' && videoId) window.open('https://www.youtube.com/watch?v=' + videoId, '_blank', 'noopener');
+                      else window.open(url.trim(), '_blank', 'noopener');
+                    }}
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={videoInfo.thumbnail} alt={videoInfo.title} className="w-full object-cover"
+                      style={{ maxHeight: '360px' }}
+                      onError={(e) => { const t = e.target as HTMLImageElement; if (videoId) t.src = `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`; }}
+                    />
+                    <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                      <div className="w-16 h-16 rounded-full bg-red-600 flex items-center justify-center shadow-lg">
+                        <Play className="w-7 h-7 text-white ml-1" fill="white" />
+                      </div>
+                    </div>
+                    {videoInfo.duration && (
+                      <span className="absolute bottom-2 right-2 bg-black/80 text-white text-xs px-2 py-0.5 rounded">{videoInfo.duration}</span>
+                    )}
+                  </div>
+                )}
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0 flex-1">
+                    <h3 className="font-semibold text-sm line-clamp-2">{videoInfo.title}</h3>
+                    {videoInfo.author && <p className="text-xs text-muted-foreground mt-1">{videoInfo.author}</p>}
+                    <div className="flex items-center gap-3 mt-1.5 flex-wrap">
+                      {videoInfo.views && <span className="text-[11px] text-muted-foreground">{videoInfo.views} views</span>}
+                      {videoInfo.published && <span className="text-[11px] text-muted-foreground">{videoInfo.published}</span>}
+                    </div>
+                  </div>
+                  {videoInfo.platform && (
+                    <span className={`text-xs font-medium px-2.5 py-1 rounded-full flex-shrink-0 ${platformColor(videoInfo.platform)}`}>
+                      {platformLabel(videoInfo.platform)}
+                    </span>
+                  )}
                 </div>
-                <div className="space-y-1.5">
-                  {hist.slice(0,6).map((h,i)=>(
-                    <button key={i} onClick={()=>loadHist(h)} className="w-full flex items-center gap-3 p-2.5 rounded-xl hover:bg-gray-50 dark:hover:bg-gray-700/50 text-left transition-colors">
-                      <div className={"w-8 h-8 rounded-lg flex items-center justify-center text-white text-[10px] font-bold shrink-0 "+(PLAT[h.p]?.c||'bg-gray-500')}>{PLAT[h.p]?.n?.slice(0,2).toUpperCase()||'??'}</div>
-                      <div className="flex-1 min-w-0"><p className="text-sm font-medium truncate">{h.t}</p><p className="text-[11px] text-gray-400">{h.c} · {tAgo(h.d)}</p></div>
+              </CardContent>
+            </Card>
+
+            {/* Converter Buttons */}
+            <Card className="border-2">
+              <CardContent className="p-6 space-y-5">
+                <div className="flex items-center justify-between">
+                  <h2 className="font-semibold text-lg">Converters</h2>
+                  <Button variant="outline" size="sm" onClick={handleReset} className="gap-1.5 text-xs">
+                    <ArrowRight className="w-3 h-3 rotate-180" /> New
+                  </Button>
+                </div>
+                <div className="bg-muted/50 rounded-lg p-3 space-y-2">
+                  <div className="flex items-center gap-2 text-sm font-medium"><Info className="w-4 h-4 text-primary" />How to download:</div>
+                  <ol className="text-xs text-muted-foreground space-y-1 list-decimal list-inside pl-1">
+                    <li>Click a converter below — opens in a new tab</li>
+                    <li>Your URL is <strong>auto-copied</strong> to clipboard</li>
+                    <li>Press <kbd className="px-1.5 py-0.5 bg-muted rounded text-xs font-mono">Ctrl+V</kbd> to paste, then convert &amp; download</li>
+                  </ol>
+                </div>
+                {launched && (
+                  <div className="flex items-center gap-2 text-sm text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-950/30 px-3 py-2.5 rounded-lg">
+                    <ClipboardCheck className="w-4 h-4 flex-shrink-0" />
+                    <span>URL copied! Paste in {launched} tab with <kbd className="px-1.5 py-0.5 bg-green-100 dark:bg-green-900/50 rounded text-xs font-mono">Ctrl+V</kbd></span>
+                  </div>
+                )}
+                <div className="space-y-3">
+                  {getConverters().map((svc) => (
+                    <button
+                      key={svc.name} type="button" onClick={() => openConverter(svc)}
+                      className="w-full flex items-center gap-4 p-4 rounded-xl border-2 border-muted hover:border-primary/50 transition-all text-left group hover:shadow-md"
+                    >
+                      <div className={"w-12 h-12 rounded-lg flex items-center justify-center text-white flex-shrink-0 " + svc.color}>
+                        {svc.icon === 'download' && <Download className="w-6 h-6" />}
+                        {svc.icon === 'zap' && <Zap className="w-6 h-6" />}
+                        {svc.icon === 'video' && <Video className="w-6 h-6" />}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="font-semibold text-sm">{svc.name}</span>
+                          {svc.recommended && <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-primary/10 text-primary">Best</span>}
+                          {svc.name === favorite && <Star className="w-3.5 h-3.5 text-yellow-500 fill-yellow-500" />}
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-0.5">{svc.desc}</p>
+                        {svc.note && <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-0.5">{svc.note}</p>}
+                      </div>
+                      <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                        <ExternalLink className="w-4 h-4 text-muted-foreground group-hover:text-primary transition-colors" />
+                        <button
+                          onClick={(e) => { e.stopPropagation(); toggleFavorite(svc.name); }}
+                          className="p-1 rounded hover:bg-muted transition-colors"
+                          title={svc.name === favorite ? 'Unfavorite' : 'Set as favorite'}
+                        >
+                          <Star className={`w-3.5 h-3.5 ${svc.name === favorite ? 'text-yellow-500 fill-yellow-500' : 'text-muted-foreground'}`} />
+                        </button>
+                      </div>
                     </button>
                   ))}
                 </div>
-              </div>
-            )}
-            <div className="bg-white dark:bg-gray-800/80 rounded-2xl border border-gray-200/80 dark:border-gray-700/60 shadow-sm p-4 space-y-3">
-              <h3 className="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider">How it works</h3>
-              <ol className="space-y-3">
-                {[{s:'1',t:'Paste your link above'},{s:'2',t:'Preview the info'},{s:'3',t:'Pick a converter & download'}].map((step,i)=>(
-                  <li key={i} className="flex items-center gap-3">
-                    <div className="w-7 h-7 rounded-full bg-gradient-to-br from-red-500 to-red-600 text-white flex items-center justify-center text-xs font-bold shrink-0 shadow-sm shadow-red-500/20">{step.s}</div>
-                    <span className="text-sm text-gray-700 dark:text-gray-300">{step.t}</span>
-                  </li>
-                ))}
-              </ol>
-            </div>
-            <div className="grid grid-cols-4 gap-2">
-              {[{t:'YouTube',c:'from-red-500 to-red-600'},{t:'SoundCloud',c:'from-orange-500 to-amber-500'},{t:'X',c:'from-sky-400 to-blue-500'},{t:'Instagram',c:'from-pink-500 to-purple-500'}].map(f=>(
-                <div key={f.t} className="bg-white dark:bg-gray-800/80 rounded-xl border border-gray-200/80 dark:border-gray-700/60 shadow-sm p-2.5 text-center hover:shadow-md transition-all group">
-                  <div className={"w-8 h-8 rounded-lg bg-gradient-to-br "+f.c+" flex items-center justify-center mx-auto mb-1.5 text-white shadow-sm group-hover:scale-110 transition-transform text-xs font-bold"}>{f.t.slice(0,2)}</div>
-                  <p className="text-[10px] text-gray-500 dark:text-gray-400 font-medium">{f.t}</p>
+                <div className="border-t pt-3 mt-1">
+                  <p className="text-[11px] text-muted-foreground flex items-center gap-1.5">
+                    <CheckCircle2 className="w-3 h-3" />Tip: Star a converter to pin it to the top. If one doesn&apos;t work, try another.
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
+          </>
+        )}
+
+        {/* Error */}
+        {phase === 'error' && (
+          <Card><CardContent className="p-6 space-y-4">
+            <div className="flex items-start gap-2 text-destructive"><XCircle className="w-5 h-5 mt-0.5 flex-shrink-0" /><p className="text-sm">{error}</p></div>
+            <Button variant="outline" onClick={handleReset} className="gap-2"><AlertCircle className="w-4 h-4" />Try Again</Button>
+          </CardContent></Card>
+        )}
+
+        {/* Initial Features */}
+        {phase === 'input' && (
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-4">
+            {[
+              { icon: <Music className="w-5 h-5 text-primary" />, title: 'Audio', desc: 'Convert to MP3 audio from any platform.' },
+              { icon: <Video className="w-5 h-5 text-primary" />, title: 'Video', desc: 'Download videos in MP4 format.' },
+              { icon: <Zap className="w-5 h-5 text-primary" />, title: 'Fast & Easy', desc: 'Paste link, pick converter, download.' },
+            ].map(f => (
+              <Card key={f.title} className="hover:shadow-md transition-shadow">
+                <CardContent className="p-4 text-center">
+                  <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center mx-auto mb-3">{f.icon}</div>
+                  <h3 className="font-semibold text-sm">{f.title}</h3>
+                  <p className="text-xs text-muted-foreground mt-1">{f.desc}</p>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        )}
+
+        {/* Supported Platforms */}
+        {phase === 'input' && (
+          <div className="mt-8">
+            <h3 className="text-sm font-semibold text-center mb-4 text-muted-foreground">Supported Platforms</h3>
+            <div className="grid grid-cols-4 gap-3">
+              {[
+                { name: 'YouTube', gradient: 'from-red-500 to-red-600', domain: 'youtube.com' },
+                { name: 'SoundCloud', gradient: 'from-orange-400 to-orange-600', domain: 'soundcloud.com' },
+                { name: 'X', gradient: 'from-gray-700 to-gray-900', domain: 'x.com' },
+                { name: 'Instagram', gradient: 'from-pink-500 to-purple-600', domain: 'instagram.com' },
+              ].map(p => (
+                <div key={p.name} className="flex flex-col items-center gap-2 group">
+                  <div className={`w-14 h-14 rounded-2xl bg-gradient-to-br ${p.gradient} flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform`}>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={`https://www.google.com/s2/favicons?domain=${p.domain}&sz=64`}
+                      alt={p.name}
+                      className="w-8 h-8 rounded-lg bg-white/20 p-1"
+                    />
+                  </div>
+                  <p className="text-xs font-medium text-muted-foreground group-hover:text-foreground transition-colors">{p.name}</p>
                 </div>
               ))}
             </div>
           </div>
         )}
+
+        {/* History */}
+        {phase === 'input' && history.length > 0 && (
+          <Card className="mt-4">
+            <CardContent className="p-5 space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-semibold flex items-center gap-2"><Clock className="w-4 h-4" />Recent</h3>
+                <button onClick={clearHistory} className="text-xs text-muted-foreground hover:text-destructive flex items-center gap-1 transition-colors">
+                  <Trash2 className="w-3 h-3" />Clear
+                </button>
+              </div>
+              <div className="space-y-2">
+                {history.slice(0, 4).map((h, i) => (
+                  <button
+                    key={i} type="button"
+                    onClick={() => { setUrl(h.url); }}
+                    className="w-full flex items-center gap-3 p-2.5 rounded-lg hover:bg-muted/50 transition-colors text-left group"
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={platformIconUrl(h.platform)} alt="" className="w-4 h-4 rounded-sm flex-shrink-0" />
+                    <span className="text-xs text-muted-foreground truncate flex-1">{h.title}</span>
+                    <span className="text-[10px] text-muted-foreground/60 flex-shrink-0">{new Date(h.time).toLocaleDateString()}</span>
+                  </button>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
       </main>
 
-      <footer className="border-t border-gray-200/80 dark:border-gray-800 py-4 mt-auto">
-        <div className="max-w-2xl mx-auto px-4 flex items-center justify-center gap-2 text-xs text-gray-400 dark:text-gray-600">
-          <Shield className="w-3.5 h-3.5"/><span>YT Convert — For personal use only</span>
+      <footer className="border-t py-4 mt-auto">
+        <div className="max-w-3xl mx-auto px-4 text-center text-xs text-muted-foreground">
+          YT Convert — YouTube, SoundCloud, X &amp; Instagram converter. For personal use only.
         </div>
       </footer>
     </div>
