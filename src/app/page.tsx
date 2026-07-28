@@ -296,7 +296,7 @@ export default function Home() {
               </div>
               <div className="flex flex-col items-center gap-1.5 group">
                 <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-red-600 to-red-700 flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="white" strokeWidth="2"/><path d="M12 2v4m0 12v4m-7.07-3.93 2.83-2.83m8.48-8.48 2.83-2.83M2 12h4m12 0h4m-3.93 7.07-2.83-2.83M6.76 6.76 3.93 3.93" stroke="white" strokeWidth="2" strokeLinecap="round"/><circle cx="12" cy="12" r="3" fill="white"/><circle cx="12" cy="12" r="7" stroke="white" strokeWidth="1.5" strokeDasharray="3 3"/></svg>
+                                    <svg width="22" height="22" viewBox="0 0 24 24"><circle cx="12" cy="12" r="11" fill="#FF0000"/><circle cx="8.5" cy="16.5" r="2.2" fill="white"/><rect x="10" y="5.5" width="1.8" height="11" fill="white"/><rect x="10" y="5.5" width="5" height="1.8" fill="white"/><path d="M15 7.3l4 2.7-4 2.7z" fill="white"/></svg>
                 </div>
                 <span className="text-[11px] font-medium text-gray-500">YT Music</span>
               </div>
@@ -326,13 +326,13 @@ export default function Home() {
               </div>
               <div className="flex flex-col items-center gap-1.5 group">
                 <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-purple-500 to-purple-700 flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
-                  <svg width="22" height="22" viewBox="0 0 24 24" fill="white"><rect x="2" y="2" width="20" height="20" rx="4"/><rect x="5" y="7" width="3" height="10" rx="1.5" fill="black"/><rect x="10" y="5" width="3" height="12" rx="1.5" fill="black"/><rect x="15" y="9" width="3" height="8" rx="1.5" fill="black"/></svg>
+                                    <svg width="22" height="22" viewBox="0 0 24 24"><rect x="1" y="1" width="22" height="22" rx="5" fill="white"/><rect x="4.5" y="14" width="2.5" height="7" rx="1.25" fill="#A238FF"/><rect x="8.5" y="9" width="2.5" height="12" rx="1.25" fill="#6C3CE0"/><rect x="12.5" y="5" width="2.5" height="16" rx="1.25" fill="#E8115B"/><rect x="16.5" y="8" width="2.5" height="13" rx="1.25" fill="#FF6B35"/></svg>
                 </div>
                 <span className="text-[11px] font-medium text-gray-500">Deezer</span>
               </div>
               <div className="flex flex-col items-center gap-1.5 group">
                 <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-pink-500 to-red-600 flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="white"><path d="M12 3v10.55A4 4 0 1014 17V7h4V3h-6z"/></svg>
+                                    <svg width="20" height="20" viewBox="0 0 24 24" fill="white"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
                 </div>
                 <span className="text-[11px] font-medium text-gray-500">Apple Music</span>
               </div>
