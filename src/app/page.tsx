@@ -16,7 +16,7 @@ function getPlatform(u: string) {
   if (/instagram\.com/i.test(u)) return 'instagram';
   if (/spotify\.com|open\.spotify\.com/i.test(u)) return 'spotify';
   if (/deezer\.com/i.test(u)) return 'deezer';
-  if (/tiktok\.com/i.test(u)) return 'tk';
+  if (/tiktok\.com/i.test(u)) return 'tiktok';
   if (/music\.apple\.com/i.test(u)) return 'applemusic';
   return null;
 }
@@ -24,9 +24,9 @@ function extractVideoId(url: string) {
   const m = url.match(/(?:v=|youtu\.be\/|shorts\/|live\/)([a-zA-Z0-9_-]{11})/);
   return m ? m[1] : null;
 }
-function pLabel(p: string) { return ({ youtube: 'YouTube', youtubemusic: 'YT Music', soundcloud: 'SoundCloud', twitter: 'X', instagram: 'Instagram', spotify: 'Spotify', deezer: 'Deezer', applemusic: 'Apple Music' } as any)[p] || ''; }
+function pLabel(p: string) { return ({ youtube: 'YouTube', youtubemusic: 'YT Music', soundcloud: 'SoundCloud', twitter: 'X', instagram: 'Instagram', spotify: 'Spotify', deezer: 'Deezer', applemusic: 'Apple Music', tiktok: 'TikTok' } as any)[p] || ''; }
 function pColor(p: string) {
-  return ({ youtube: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400', youtubemusic: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400', soundcloud: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400', twitter: 'bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-400', instagram: 'bg-pink-100 text-pink-700 dark:bg-pink-900/30 dark:text-pink-400', spotify: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400', deezer: 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400', applemusic: 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300' } as any)[p] || 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400';
+  return ({ youtube: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400', youtubemusic: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400', soundcloud: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400', twitter: 'bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-400', instagram: 'bg-pink-100 text-pink-700 dark:bg-pink-900/30 dark:text-pink-400', spotify: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400', deezer: 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400', applemusic: 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300' } as any)[p] || 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400', tiktok: 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300' } as any)[p];
 }
 
 const tips = ['Paste any link from YouTube, Spotify, SoundCloud, X, Instagram, Deezer, Apple Music, or TikTok', 'Your URL is auto-copied when you pick a converter.', 'If one converter has ads, try another.', 'All converters are free, no sign-up needed.', 'Press Enter after pasting to fetch info instantly.'];
@@ -137,6 +137,8 @@ export default function Home() {
     { name: 'SpotDown', url: 'https://spotdown.org/', desc: 'Spotify tracks to MP3.', color: 'from-green-500 to-green-600', platform: ['spotify'], recommended: true },
     { name: 'DeezLoad', url: 'https://deezerdownloader.net/', desc: 'Deezer tracks to MP3.', color: 'from-purple-500 to-purple-600', platform: ['deezer'], recommended: true },
     { name: 'AM Downloader', url: 'https://apple-music-downloader.com/', desc: 'Apple Music to MP3.', color: 'from-gray-600 to-gray-800', platform: ['applemusic'], recommended: true },
+    { name: 'SSSTik', url: 'https://ssstik.io/', desc: 'TikTok videos without watermark.', color: 'from-pink-500 to-pink-600', platform: ['tiktok'], recommended: true },
+    { name: 'SnapTik', url: 'https://snaptik.app/', desc: 'TikTok to MP4, no watermark.', color: 'from-cyan-500 to-cyan-600', platform: ['tiktok'] },
   ];
 
   const getConverters = useCallback(() => {
@@ -380,7 +382,15 @@ export default function Home() {
                 <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-pink-500 to-red-600 flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
                   <img src="https://cdn.simpleicons.org/applemusic/ffffff" width="24" height="24" alt="Apple Music" />
                 </div>
-                <span className="text-[11px] font-medium text-gray-500">Apple Music</span>
+                                <span className="text-[11px] font-medium text-gray-500">Apple Music</span>
+              </div>
+              <div className="flex flex-col items-center gap-1.5 group">
+                <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-gray-900 to-black flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
+                  <img src="https://cdn.simpleicons.org/tiktok/ffffff" width="24" height="24" alt="TikTok" />
+                </div>
+                <span className="text-[11px] font-medium text-gray-500">TikTok</span>
+              </div>
+            </div>
               </div>
             </div>
           </div>
