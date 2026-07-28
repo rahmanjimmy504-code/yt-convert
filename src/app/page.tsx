@@ -392,7 +392,6 @@ export default function Home() {
               </div>
             </div>
             </div>
-          </div>
         )}
 
         {phase === 'input' && history.length > 0 && (
