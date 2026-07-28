@@ -8,6 +8,7 @@ const sGetJ = (k: string) => { try { return typeof window === 'undefined' ? null
 const sSetJ = (k: string, v: any) => { if (typeof window !== 'undefined') localStorage.setItem(k, JSON.stringify(v)) };
 
 function getPlatform(u: string) {
+  if (!/^https?:\/\//i.test(u) && !/^\w+\.\w{2,}/i.test(u)) return null;
   if (/music\.youtube\.com/i.test(u)) return 'youtubemusic';
   if (/youtu\.?be|youtube\.com/i.test(u)) return 'youtube';
   if (/soundcloud\.com/i.test(u)) return 'soundcloud';
