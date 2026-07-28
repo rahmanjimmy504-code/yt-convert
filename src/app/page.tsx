@@ -55,6 +55,7 @@ export default function Home() {
     } catch (e: any) { clearTimeout(timer); setErr(e.name === 'AbortError' ? 'Request timed out. Check your connection.' : (e.message || 'Something went wrong.')); setPhase('error'); }
   }, [url]);
   const vid = info ? getId(url.trim()) : null;
+  const thUrl = vid ? `https://i.ytimg.com/vi/${vid}/hqdefault.jpg` : '';
   const go = useCallback((x: typeof CVTS[0]) => { if (launched === x.n) return; setLaunched(x.n); navigator.clipboard.writeText(url.trim()).then(() => setCopied(true)).catch(() => {}); window.open(x.u, '_blank', 'noopener,noreferrer'); }, [url, launched]);
   const sel = () => ir.current?.select();
 
@@ -107,9 +108,9 @@ export default function Home() {
         {phase === 'ready' && info && vid && (
           <>
             <div className="bg-white dark:bg-gray-800/80 rounded-2xl border border-gray-200/80 dark:border-gray-700/60 shadow-sm overflow-hidden">
-              <div className="relative rounded-t-2xl overflow-hidden bg-black cursor-pointer group" onClick={() => window.open('https://www.youtube.com/watch?v='+vid,'_blank','noopener,noreferrer')} role="link" aria-label={'Watch '+info.title}>
+              <div className="relative bg-black cursor-pointer group" onClick={() => window.open('https://www.youtube.com/watch?v='+vid,'_blank','noopener,noreferrer')} role="link" aria-label={'Watch '+info.title}>
                 {!thOk && <div className="w-full bg-gray-800 animate-pulse" style={{minHeight:210}}/>}
-                <img src={info.thumbnail} alt={info.title} className={thOk?'w-full group-hover:scale-105 transition-transform duration-500':'hidden'} style={{maxHeight:300}} loading="lazy" onLoad={() => setThOk(true)} />
+                <img src={thUrl} alt={info.title} className={thOk?'w-full group-hover:scale-105 transition-transform duration-500':'hidden'} style={{maxHeight:300}} onLoad={() => setThOk(true)} onError={(e) => { const img = e.currentTarget; if (!img.src.includes('mqdefault')) { img.src = `https://i.ytimg.com/vi/${vid}/mqdefault.jpg`; } else { setThOk(true); } }} />
                 <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-black/20"/>
                 <div className="absolute bottom-3 left-3 right-3"><h3 className="font-semibold text-sm text-white leading-snug drop-shadow-lg line-clamp-2">{info.title}</h3></div>
                 <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-200"><div className="w-14 h-14 rounded-full bg-red-600/90 flex items-center justify-center shadow-xl shadow-black/40"><Play className="w-6 h-6 text-white ml-0.5" fill="white"/></div></div>
@@ -178,4 +179,4 @@ export default function Home() {
       </footer>
     </div>
   );
-              }
+}
