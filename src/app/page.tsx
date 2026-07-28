@@ -284,7 +284,7 @@ export default function Home() {
               </div>
               <div className="flex flex-col items-center gap-1.5 group">
                 <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-orange-500 to-orange-600 flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
-                  <img src="https://www.google.com/s2/favicons?domain=soundcloud.com&sz=128" alt="SoundCloud" style={{ filter: 'brightness(0) invert(1)' }} className="w-7 h-7" />
+                  <div className="w-7 h-7" style={{ WebkitMaskImage: "url('https://www.google.com/s2/favicons?domain=soundcloud.com&sz=128')", maskImage: "url('https://www.google.com/s2/favicons?domain=soundcloud.com&sz=128')", WebkitMaskSize: 'contain', maskSize: 'contain', WebkitMaskRepeat: 'no-repeat', maskRepeat: 'no-repeat', WebkitMaskPosition: 'center', maskPosition: 'center', backgroundColor: 'white' }} />
                 </div>
                 <span className="text-[11px] font-medium text-gray-500">SoundCloud</span>
               </div>
