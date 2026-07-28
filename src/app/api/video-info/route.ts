@@ -31,16 +31,16 @@ export async function GET(request: Request) {
         fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`, { headers: { 'User-Agent': 'Mozilla/5.0' } }),
         fetch(`https://inv.nadeko.net/api/v1/videos/${id}`, { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(5000) }),
       ]);
-      if (oR.status === 'fulfilled' &amp;&amp; oR.value.ok) { const d = await oR.value.json(); title = d.title || ''; author = d.author_name || ''; thumbnail = d.thumbnail_url || ''; }
-      if (iR.status === 'fulfilled' &amp;&amp; iR.value.ok) { const d = await iR.value.json(); duration = d.lengthSeconds || 0; views = d.viewCount || 0; published = d.published || 0; if (!title) title = d.title || ''; if (!author) author = d.author || ''; }
+      if (oR.status === 'fulfilled' && oR.value.ok) { const d = await oR.value.json(); title = d.title || ''; author = d.author_name || ''; thumbnail = d.thumbnail_url || ''; }
+      if (iR.status === 'fulfilled' && iR.value.ok) { const d = await iR.value.json(); duration = d.lengthSeconds || 0; views = d.viewCount || 0; published = d.published || 0; if (!title) title = d.title || ''; if (!author) author = d.author || ''; }
     } else if (platform === 'sp') {
       title = 'Spotify Track';
       author = 'Spotify';
       thumbnail = '';
     } else {
       let apiUrl = '';
-      if (platform === 'sc') apiUrl = `https://soundcloud.com/oembed?url=${encodeURIComponent(url)}&amp;format=json`;
-      else if (platform === 'tw') apiUrl = `https://publish.twitter.com/oembed?url=${encodeURIComponent(url)}&amp;format=json`;
+      if (platform === 'sc') apiUrl = `https://soundcloud.com/oembed?url=${encodeURIComponent(url)}&format=json`;
+      else if (platform === 'tw') apiUrl = `https://publish.twitter.com/oembed?url=${encodeURIComponent(url)}&format=json`;
       else if (platform === 'ig') apiUrl = `https://www.instagram.com/oembed?url=${encodeURIComponent(url)}`;
       if (apiUrl) {
         const r = await fetch(apiUrl, { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(8000) });
