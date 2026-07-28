@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 
 const sGet = (k: string) => (typeof window === 'undefined' ? '' : localStorage.getItem(k) || '');
 const sSet = (k: string, v: string) => { if (typeof window !== 'undefined') localStorage.setItem(k, v) };
@@ -28,6 +28,7 @@ function pColor(p: string) {
 }
 
 const tips = ['Paste any link from YouTube, Spotify, SoundCloud, X, Instagram, Deezer, or Apple Music.', 'Your URL is auto-copied when you pick a converter.', 'If one converter has ads, try another.', 'All converters are free, no sign-up needed.', 'Press Enter after pasting to fetch info instantly.'];
+const placeholders = ['https://www.youtube.com/watch?v=...', 'https://open.spotify.com/track/...', 'https://soundcloud.com/...', 'https://x.com/user/status/...', 'https://www.instagram.com/reel/...', 'https://music.apple.com/...', 'https://www.deezer.com/track/...', 'https://music.youtube.com/watch?v=...'];
 
 export default function Home() {
   const [mounted, setMounted] = useState(false);
@@ -41,6 +42,9 @@ export default function Home() {
   const [dark, setDark] = useState(false);
   const [history, setHistory] = useState<any[]>([]);
   const [favorite, setFavorite] = useState('');
+  const [phIdx, setPhIdx] = useState(0);
+  const convertersRef = useRef<HTMLDivElement>(null);
+  const autoTimer = useRef<any>(null);
 
   useEffect(() => {
     setMounted(true);
@@ -50,6 +54,8 @@ export default function Home() {
     document.documentElement.classList.toggle('dark', d);
     setHistory(sGetJ('yt-convert-history') || []);
     setFavorite(sGet('yt-convert-fav'));
+    const f = sGet('yt-convert-format');
+    if (f === 'audio' || f === 'video') setFormat(f);
   }, []);
 
   const toggleDark = useCallback(() => {
@@ -62,6 +68,7 @@ export default function Home() {
   }, []);
 
   useEffect(() => { const i = setInterval(() => setTipIdx(t => (t + 1) % tips.length), 5000); return () => clearInterval(i); }, []);
+  useEffect(() => { const i = setInterval(() => setPhIdx(p => (p + 1) % placeholders.length), 4000); return () => clearInterval(i); }, []);
 
   const dp = url.trim() ? getPlatform(url.trim()) : null;
 
@@ -82,11 +89,36 @@ export default function Home() {
         return h;
       });
       setPhase('ready');
+      setTimeout(() => convertersRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
     } catch (e: any) {
       setVideoInfo({ title: 'Could not load info', author: '', thumbnail: '', duration: '', views: '', published: '', platform: plat });
       setPhase('ready');
+      setTimeout(() => convertersRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
     }
   }, [url]);
+
+  const handlePaste = useCallback(async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (text) { setUrl(text); setPhase('input'); setError(''); setVideoInfo(null); }
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    if (autoTimer.current) clearTimeout(autoTimer.current);
+    if (phase === 'input' || phase === 'error') {
+      const plat = getPlatform(url.trim());
+      if (plat && url.trim().length > 15) {
+        autoTimer.current = setTimeout(() => { if (phase === 'input') handleGetInfo(); }, 800);
+      }
+    }
+    return () => { if (autoTimer.current) clearTimeout(autoTimer.current); };
+  }, [url]);
+
+  const handleFormatChange = useCallback((f: string) => {
+    setFormat(f);
+    sSet('yt-convert-format', f);
+  }, []);
 
   const videoId = videoInfo ? extractVideoId(url.trim()) : null;
 
@@ -116,6 +148,8 @@ export default function Home() {
   const clearHist = () => { setHistory([]); if (typeof window !== 'undefined') localStorage.removeItem('yt-convert-history'); };
   const handleReset = () => { setPhase('input'); setError(''); setVideoInfo(null); setLaunched(null); };
   const handleKeyDown = (e: any) => { if (e.key === 'Enter' && (phase === 'input' || phase === 'error')) handleGetInfo(); };
+
+  const convList = getConverters();
 
   if (!mounted) {
     return (
@@ -156,7 +190,7 @@ export default function Home() {
           <div className="flex gap-2">
             <div className="relative flex-1">
               <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
-              <input id="url-input" type="url" placeholder="https://www.youtube.com/watch?v=..." value={url} onChange={(e) => setUrl(e.target.value)} onKeyDown={handleKeyDown} disabled={phase === 'loading'} className="w-full pl-10 pr-3 h-11 text-sm rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent placeholder:text-gray-400 dark:text-white" />
+              <input id="url-input" type="url" placeholder={placeholders[phIdx]} value={url} onChange={(e) => setUrl(e.target.value)} onKeyDown={handleKeyDown} disabled={phase === 'loading'} className="w-full pl-10 pr-3 h-11 text-sm rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent placeholder:text-gray-400 dark:text-white" />
             </div>
             {(phase === 'input' || phase === 'error') && (
               <button onClick={handleGetInfo} disabled={!url.trim() || phase === 'loading'} className="h-11 px-5 rounded-xl bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white text-sm font-semibold shadow-lg shadow-red-500/20 disabled:opacity-40 disabled:cursor-not-allowed transition-all flex items-center gap-2">
@@ -164,15 +198,22 @@ export default function Home() {
               </button>
             )}
           </div>
-          {dp && phase === 'input' && <span className={'text-xs font-medium px-2.5 py-0.5 rounded-full ' + pColor(dp)}>{pLabel(dp)}</span>}
+          <div className="flex items-center gap-2">
+            {(phase === 'input' || phase === 'error') && (
+              <button onClick={handlePaste} className="text-xs text-gray-400 hover:text-red-500 flex items-center gap-1 transition-colors">
+                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> Paste from clipboard
+              </button>
+            )}
+            {dp && phase === 'input' && <span className={'text-xs font-medium px-2.5 py-0.5 rounded-full ' + pColor(dp)}>{pLabel(dp)}</span>}
+          </div>
           {phase === 'input' && (
             <div className="space-y-2">
               <label className="text-sm font-semibold">Format</label>
               <div className="grid grid-cols-2 h-11 rounded-xl bg-gray-100 dark:bg-gray-800 p-1">
-                <button onClick={() => setFormat('audio')} className={'rounded-lg text-sm font-medium transition-all flex items-center justify-center gap-2 ' + (format === 'audio' ? 'bg-white dark:bg-gray-700 shadow-sm' : 'text-gray-500')}>
+                <button onClick={() => handleFormatChange('audio')} className={'rounded-lg text-sm font-medium transition-all flex items-center justify-center gap-2 ' + (format === 'audio' ? 'bg-white dark:bg-gray-700 shadow-sm' : 'text-gray-500')}>
                   <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg> MP3
                 </button>
-                <button onClick={() => setFormat('video')} className={'rounded-lg text-sm font-medium transition-all flex items-center justify-center gap-2 ' + (format === 'video' ? 'bg-white dark:bg-gray-700 shadow-sm' : 'text-gray-500')}>
+                <button onClick={() => handleFormatChange('video')} className={'rounded-lg text-sm font-medium transition-all flex items-center justify-center gap-2 ' + (format === 'video' ? 'bg-white dark:bg-gray-700 shadow-sm' : 'text-gray-500')}>
                   <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m22 8-6 4 6 4V8Z"/><rect width="14" height="12" x="2" y="6" rx="2"/></svg> MP4
                 </button>
               </div>
@@ -213,9 +254,12 @@ export default function Home() {
               </div>
             </div>
 
-            <div className="bg-white dark:bg-gray-900 rounded-2xl border-2 border-gray-200 dark:border-gray-800 p-5 space-y-4">
+            <div ref={convertersRef} className="bg-white dark:bg-gray-900 rounded-2xl border-2 border-gray-200 dark:border-gray-800 p-5 space-y-4">
               <div className="flex items-center justify-between">
-                <h2 className="font-semibold text-base">Converters</h2>
+                <div className="flex items-center gap-2">
+                  <h2 className="font-semibold text-base">Converters</h2>
+                  <span className="text-[11px] text-gray-400 bg-gray-100 dark:bg-gray-800 px-2 py-0.5 rounded-full">{convList.length}</span>
+                </div>
                 <button onClick={handleReset} className="text-xs text-gray-500 hover:text-red-500 flex items-center gap-1">
                   <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></svg> New
                 </button>
@@ -231,7 +275,7 @@ export default function Home() {
                 </div>
               )}
               <div className="space-y-2.5">
-                {getConverters().map((svc: any) => (
+                {convList.map((svc: any) => (
                   <button key={svc.name} onClick={() => openConverter(svc)} className="w-full flex items-center gap-3 p-3.5 rounded-xl border-2 border-gray-200 dark:border-gray-700 hover:border-red-300 dark:hover:border-red-800 transition-all text-left group hover:shadow-md">
                     <div className={'w-11 h-11 rounded-lg bg-gradient-to-br ' + svc.color + ' flex items-center justify-center text-white flex-shrink-0 shadow-md'}>
                       <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
@@ -296,13 +340,13 @@ export default function Home() {
               </div>
               <div className="flex flex-col items-center gap-1.5 group">
                 <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-red-600 to-red-700 flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
-                                    <img src="https://cdn.simpleicons.org/youtubemusic/ffffff" width="24" height="24" alt="YT Music" />                  
+                  <img src="https://cdn.simpleicons.org/youtubemusic/ffffff" width="24" height="24" alt="YT Music" />
                 </div>
                 <span className="text-[11px] font-medium text-gray-500">YT Music</span>
               </div>
               <div className="flex flex-col items-center gap-1.5 group">
                 <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-orange-500 to-orange-600 flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
-                                    <img src="https://cdn.simpleicons.org/soundcloud/ffffff" width="24" height="24" alt="SoundCloud" />
+                  <img src="https://cdn.simpleicons.org/soundcloud/ffffff" width="24" height="24" alt="SoundCloud" />
                 </div>
                 <span className="text-[11px] font-medium text-gray-500">SoundCloud</span>
               </div>
@@ -326,13 +370,13 @@ export default function Home() {
               </div>
               <div className="flex flex-col items-center gap-1.5 group">
                 <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-purple-500 to-purple-700 flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
-                                   <img src="https://cdn.simpleicons.org/deezer/ffffff" width="24" height="24" alt="Deezer" />                   
+                  <img src="https://cdn.simpleicons.org/deezer/ffffff" width="24" height="24" alt="Deezer" />
                 </div>
                 <span className="text-[11px] font-medium text-gray-500">Deezer</span>
               </div>
               <div className="flex flex-col items-center gap-1.5 group">
                 <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-pink-500 to-red-600 flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
-                                   <img src="https://cdn.simpleicons.org/applemusic/ffffff" width="24" height="24" alt="Apple Music" />                   
+                  <img src="https://cdn.simpleicons.org/applemusic/ffffff" width="24" height="24" alt="Apple Music" />
                 </div>
                 <span className="text-[11px] font-medium text-gray-500">Apple Music</span>
               </div>
