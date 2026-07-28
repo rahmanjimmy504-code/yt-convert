@@ -137,7 +137,7 @@ export default function Home() {
     { name: 'SpotDown', url: 'https://spotdown.org/', desc: 'Spotify tracks to MP3.', color: 'from-green-500 to-green-600', platform: ['spotify'], recommended: true },
     { name: 'DeezLoad', url: 'https://deezerdownloader.net/', desc: 'Deezer tracks to MP3.', color: 'from-purple-500 to-purple-600', platform: ['deezer'], recommended: true },
     { name: 'AM Downloader', url: 'https://apple-music-downloader.com/', desc: 'Apple Music to MP3.', color: 'from-gray-600 to-gray-800', platform: ['applemusic'], recommended: true },
-    { name: 'SSSTik', url: 'https://ssstik.io/', desc: 'TikTok videos without watermark.', color: 'from-pink-500 to-pink-600', platform: ['tiktok'], recommended: true },
+    { name: 'TTSave', url: 'https://ttsave.app/', desc: 'TikTok videos without watermark.', color: 'from-pink-500 to-pink-600', platform: ['tiktok'], recommended: true },
     { name: 'SnapTik', url: 'https://snaptik.app/', desc: 'TikTok to MP4, no watermark.', color: 'from-cyan-500 to-cyan-600', platform: ['tiktok'] },
   ];
 
@@ -150,7 +150,7 @@ export default function Home() {
   const openConverter = (c: any) => { navigator.clipboard.writeText(url.trim()).catch(() => {}); setLaunched(c.name); window.open(c.url, '_blank', 'noopener'); };
   const toggleFav = (n: string) => { const v = favorite === n ? '' : n; setFavorite(v); sSet('yt-convert-fav', v); };
   const clearHist = () => { setHistory([]); if (typeof window !== 'undefined') localStorage.removeItem('yt-convert-history'); };
-    const handleReset = () => { setUrl(''); setPhase('input'); setError(''); setVideoInfo(null); setPlatform(null); setSelectedFormat('mp4'); setLaunched(null); window.scrollTo({ top: 0, behavior: 'smooth' }); };
+      const handleReset = () => { setUrl(''); setPhase('input'); setError(''); setVideoInfo(null); setLaunched(null); setFormat('video'); window.scrollTo({ top: 0, behavior: 'smooth' }); };
   const handleKeyDown = (e: any) => { if (e.key === 'Enter' && (phase === 'input' || phase === 'error')) handleGetInfo(); };
 
   const convList = getConverters();
