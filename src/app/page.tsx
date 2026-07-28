@@ -147,7 +147,7 @@ export default function Home() {
   const openConverter = (c: any) => { navigator.clipboard.writeText(url.trim()).catch(() => {}); setLaunched(c.name); window.open(c.url, '_blank', 'noopener'); };
   const toggleFav = (n: string) => { const v = favorite === n ? '' : n; setFavorite(v); sSet('yt-convert-fav', v); };
   const clearHist = () => { setHistory([]); if (typeof window !== 'undefined') localStorage.removeItem('yt-convert-history'); };
-  const handleReset = () => { setPhase('input'); setError(''); setVideoInfo(null); setLaunched(null); };
+    const handleReset = () => { setUrl(''); setPhase('input'); setError(''); setVideoInfo(null); setPlatform(null); setSelectedFormat('mp4'); setLaunched(null); window.scrollTo({ top: 0, behavior: 'smooth' }); };
   const handleKeyDown = (e: any) => { if (e.key === 'Enter' && (phase === 'input' || phase === 'error')) handleGetInfo(); };
 
   const convList = getConverters();
@@ -165,7 +165,7 @@ export default function Home() {
 
       <header className="border-b border-gray-200 dark:border-gray-800 bg-white/80 dark:bg-gray-950/80 backdrop-blur-md sticky top-0 z-50">
         <div className="max-w-2xl mx-auto px-4 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-3">
+                      <div className="flex items-center gap-3 cursor-pointer select-none" onClick={handleReset}>
             <div className="flex items-center justify-center w-9 h-9 rounded-xl bg-gradient-to-br from-red-500 to-red-600 shadow-lg shadow-red-500/20">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M23.5 6.2a3 3 0 0 0-2.1-2.1C19.5 3.5 12 3.5 12 3.5s-7.5 0-9.4.6A3 3 0 0 0 .5 6.2 31.4 31.4 0 0 0 0 12a31.4 31.4 0 0 0 .5 5.8 3 3 0 0 0 2.1 2.1c1.9.6 9.4.6 9.4.6s7.5 0 9.4-.6a3 3 0 0 0 2.1-2.1A31.4 31.4 0 0 0 24 12a31.4 31.4 0 0 0-.5-5.8Z" fill="white"/><path d="m9.75 15.02 5.75-3.02-5.75-3.02v6.04Z" fill="#FF0000"/></svg>
             </div>
