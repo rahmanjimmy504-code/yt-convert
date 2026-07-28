@@ -124,7 +124,7 @@ export default function Home() {
             </div>
             <div>
               <h1 className="text-base font-bold tracking-tight">YT Convert</h1>
-              <p className="text-[11px] text-gray-500 dark:text-gray-400">YouTube &middot; SoundCloud &middot; X &middot; Instagram &middot; Spotify</p>
+              <p className="text-[11px] text-gray-500 dark:text-gray-400">YouTube {'\u00B7'} SoundCloud {'\u00B7'} X {'\u00B7'} Instagram {'\u00B7'} Spotify</p>
             </div>
           </div>
           <button onClick={toggleDark} className="w-9 h-9 rounded-xl bg-gray-100 dark:bg-gray-800 flex items-center justify-center hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors" title="Toggle dark mode">
@@ -210,7 +210,7 @@ export default function Home() {
               </div>
               <div className="bg-gray-50 dark:bg-gray-800 rounded-xl p-3 space-y-1.5">
                 <p className="text-xs font-semibold text-gray-700 dark:text-gray-300">How to download:</p>
-                <ol className="text-[11px] text-gray-500 list-decimal list-inside pl-1"><li>Click a converter &mdash; opens in new tab</li><li>Your URL is <strong>auto-copied</strong></li><li>Press Ctrl+V to paste, convert &amp; download</li></ol>
+                <ol className="text-[11px] text-gray-500 list-decimal list-inside pl-1"><li>Click a converter {'\u2014'} opens in new tab</li><li>Your URL is <strong>auto-copied</strong></li><li>Press Ctrl+V to paste, convert {'&'} download</li></ol>
               </div>
               {launched && (
                 <div className="flex items-center gap-2 text-xs text-green-700 bg-green-50 dark:bg-green-950/30 dark:text-green-400 px-3 py-2 rounded-lg">
@@ -259,7 +259,7 @@ export default function Home() {
             {[
               { icon: '<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>', t: 'Audio', d: 'Convert to MP3' },
               { icon: '<path d="m22 8-6 4 6 4V8Z"/><rect width="14" height="12" x="2" y="6" rx="2"/>', t: 'Video', d: 'Download MP4' },
-              { icon: '<path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/>', t: 'Fast', d: 'Paste &amp; go' },
+              { icon: '<path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/>', t: 'Fast', d: 'Paste & go' },
             ].map(f => (
               <div key={f.t} className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-3 text-center hover:shadow-md transition-shadow">
                 <div className="w-9 h-9 rounded-lg bg-red-50 dark:bg-red-900/20 flex items-center justify-center mx-auto mb-2">
@@ -327,7 +327,7 @@ export default function Home() {
       </main>
 
       <footer className="border-t border-gray-200 dark:border-gray-800 py-3 mt-auto">
-        <p className="text-center text-[11px] text-gray-400">YT Convert &mdash; For personal use only</p>
+        <p className="text-center text-[11px] text-gray-400">YT Convert {'\u2014'} For personal use only</p>
       </footer>
     </div>
   );
