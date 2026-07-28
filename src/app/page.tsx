@@ -399,6 +399,7 @@ export default function Home() {
                 <span className="text-[11px] font-medium text-gray-500">Facebook</span>
               </div>
             </div>
+          </div>
         )}
 
         {phase === 'input' && history.length > 0 && (
