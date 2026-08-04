@@ -15,6 +15,7 @@ function getPlatform(u: string) {
   if (/deezer\.com/i.test(u)) return 'dz';
   if (/facebook\.com|fb\.watch/i.test(u)) return 'fb';
   if (/tiktok\.com/i.test(u)) return 'tk';
+  if (/bereal\.com/i.test(u)) return 'br';
   if (/music\.apple\.com/i.test(u)) return 'am';
   return '';
 }
@@ -54,12 +55,15 @@ export async function GET(request: Request) {
       else if (platform === 'ig') apiUrl = 'https://www.instagram.com/oembed?url=' + encodeURIComponent(url);
       else if (platform === 'tk') { title = 'TikTok Video'; author = 'TikTok'; }
       else if (platform === 'fb') { title = 'Facebook Video'; author = 'Facebook'; }
+      if (p === 'br') {
+  return NextResponse.json({ title: 'BeReal Post', author: 'BeReal User', thumbnail: '' });
+}
       if (apiUrl) {
         const r = await fetch(apiUrl, { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(8000) });
         if (r.ok) { const d = await r.json(); title = d.title || (platform === 'tw' ? (d.author_name || '') + ' on X' : ''); author = d.author_name || ''; thumbnail = d.thumbnail_url || ''; }
       }
     }
-    const platMap: any = { yt: 'youtube', ym: 'youtube', sc: 'soundcloud', tw: 'twitter', ig: 'instagram', sp: 'spotify', dz: 'deezer', am: 'applemusic', tk: 'tiktok', fb: 'facebook' };
+    const platMap: any = { yt: 'youtube', ym: 'youtube', sc: 'soundcloud', tw: 'twitter', ig: 'instagram', sp: 'spotify', dz: 'deezer', am: 'applemusic', tk: 'tiktok', fb: 'facebook', br: 'bereal', };
     return NextResponse.json({ title: title || 'Media', author, thumbnail, duration, views, published, platform: platMap[platform] || platform });
   } catch (err: any) {
     return NextResponse.json({ error: err.message || 'Failed to fetch' }, { status: 500 });
