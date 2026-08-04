@@ -19,19 +19,20 @@ function getPlatform(u: string) {
   if (/facebook\.com|fb\.watch/i.test(u)) return 'facebook';
   if (/tiktok\.com/i.test(u)) return 'tiktok';
   if (/music\.apple\.com/i.test(u)) return 'applemusic';
+  if (/bereal\.com/i.test(u)) return 'br';
   return null;
 }
 function extractVideoId(url: string) {
   const m = url.match(/(?:v=|youtu\.be\/|shorts\/|live\/)([a-zA-Z0-9_-]{11})/);
   return m ? m[1] : null;
 }
-function pLabel(p: string) { return ({ youtube: 'YouTube', youtubemusic: 'YT Music', soundcloud: 'SoundCloud', twitter: 'X', instagram: 'Instagram', spotify: 'Spotify', deezer: 'Deezer', applemusic: 'Apple Music', tiktok: 'TikTok', facebook: 'Facebook' } as any)[p] || ''; }
+function pLabel(p: string) { return ({ youtube: 'YouTube', youtubemusic: 'YT Music', soundcloud: 'SoundCloud', twitter: 'X', instagram: 'Instagram', spotify: 'Spotify', deezer: 'Deezer', applemusic: 'Apple Music', tiktok: 'TikTok', facebook: 'Facebook', br: 'BeReal' } as any)[p] || ''; }
 function pColor(p: string) {
-        return ({ youtube: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400', youtubemusic: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400', soundcloud: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400', twitter: 'bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-400', instagram: 'bg-pink-100 text-pink-700 dark:bg-pink-900/30 dark:text-pink-400', spotify: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400', deezer: 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400', applemusic: 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300', tiktok: 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300', facebook: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' } as any)[p] || 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400';
+        return ({ youtube: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400', youtubemusic: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400', soundcloud: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400', twitter: 'bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-400', instagram: 'bg-pink-100 text-pink-700 dark:bg-pink-900/30 dark:text-pink-400', spotify: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400', deezer: 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400', applemusic: 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300', tiktok: 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300', facebook: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400', br: 'bg-gray-900 text-white dark:bg-gray-100 dark:text-gray-900', } as any)[p] || 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400';
 }
 
-const tips = ['Paste any link from YouTube, Spotify, SoundCloud, X, Instagram, Deezer, Apple Music, TikTok or Facebook', 'Your URL is auto-copied when you pick a converter.', 'If one converter has ads, try another.', 'All converters are free, no sign-up needed.', 'Press Enter after pasting to fetch info instantly.'];
-const placeholders = ['https://www.youtube.com/watch?v=...', 'https://open.spotify.com/track/...', 'https://soundcloud.com/...', 'https://x.com/user/status/...', 'https://www.instagram.com/reel/...', 'https://music.apple.com/...', 'https://www.deezer.com/track/...', 'https://music.youtube.com/watch?v=...', 'https://www.tiktok.com/...', 'https://www.facebook.com/...'];
+const tips = ['Paste any link from YouTube, Spotify, SoundCloud, X, Instagram, Deezer, Apple Music, TikTok, Facebook or Bereal.', 'Your URL is auto-copied when you pick a converter.', 'If one converter has ads, try another.', 'All converters are free, no sign-up needed.', 'Press Enter after pasting to fetch info instantly.'];
+const placeholders = ['https://www.youtube.com/watch?v=...', 'https://open.spotify.com/track/...', 'https://soundcloud.com/...', 'https://x.com/user/status/...', 'https://www.instagram.com/reel/...', 'https://music.apple.com/...', 'https://www.deezer.com/track/...', 'https://music.youtube.com/watch?v=...', 'https://www.tiktok.com/...', 'https://www.facebook.com/...', 'https://bereal.com/...'];
 
 export default function Home() {
   const [mounted, setMounted] = useState(false);
@@ -141,6 +142,13 @@ export default function Home() {
     { name: 'TTSave', url: 'https://ttsave.app/', desc: 'TikTok videos without watermark.', color: 'from-pink-500 to-pink-600', platform: ['tiktok'], recommended: true },
     { name: 'SnapTik', url: 'https://snaptik.app/', desc: 'TikTok to MP4, no watermark.', color: 'from-cyan-500 to-cyan-600', platform: ['tiktok'] },
     { name: 'FBDown', url: 'https://fbdown.net/', desc: 'Facebook videos in HD.', color: 'from-blue-600 to-blue-700', platform: ['facebook'], recommended: true },
+    {
+  name: 'BeReal Saver',
+  url: 'https://beRealdownloader.com/',
+  desc: 'Download BeReal photos and videos. No sign-up required.',
+  color: 'bg-gray-900 hover:bg-gray-800',
+  icon: 'download',
+},
   ];
 
   const getConverters = useCallback(() => {
@@ -176,7 +184,7 @@ export default function Home() {
             </div>
             <div>
               <h1 className="text-base font-bold tracking-tight">YT Convert</h1>
-              <p className="text-[11px] text-gray-500 dark:text-gray-400">YouTube {'\u00B7'} YT Music {'\u00B7'} SoundCloud {'\u00B7'} X {'\u00B7'} Instagram {'\u00B7'} Spotify {'\u00B7'} Deezer {'\u00B7'} Apple Music {'\u00B7'} TikTok {'\u00B7'} Facebook</p>
+              <p className="text-[11px] text-gray-500 dark:text-gray-400">YouTube {'\u00B7'} YT Music {'\u00B7'} SoundCloud {'\u00B7'} X {'\u00B7'} Instagram {'\u00B7'} Spotify {'\u00B7'} Deezer {'\u00B7'} Apple Music {'\u00B7'} TikTok {'\u00B7'} Facebook {'\u00B7'} BeReal</p>
             </div>
           </div>
           <button onClick={toggleDark} className="w-9 h-9 rounded-xl bg-gray-100 dark:bg-gray-800 flex items-center justify-center hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors" title="Toggle dark mode">
@@ -398,7 +406,7 @@ export default function Home() {
                 </div>
                 <span className="text-[11px] font-medium text-gray-500">Facebook</span>
               </div>
-            </div>
+            </div> <div className="flex flex-col items-center gap-1"><img src="https://cdn.simpleicons.org/bereal/ffffff" width="24" height="24" alt="BeReal" /><span className="text-[10px] text-muted-foreground">BeReal</span></div>
           </div>
         )}
 
