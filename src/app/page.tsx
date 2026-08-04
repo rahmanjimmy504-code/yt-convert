@@ -410,6 +410,7 @@ export default function Home() {
                                 <span className="text-[11px] font-medium text-gray-500">BeReal</span>
               </div>
             </div>
+            </div>
         )}
 
         {phase === 'input' && history.length > 0 && (
