@@ -142,14 +142,7 @@ export default function Home() {
     { name: 'TTSave', url: 'https://ttsave.app/', desc: 'TikTok videos without watermark.', color: 'from-pink-500 to-pink-600', platform: ['tiktok'], recommended: true },
     { name: 'SnapTik', url: 'https://snaptik.app/', desc: 'TikTok to MP4, no watermark.', color: 'from-cyan-500 to-cyan-600', platform: ['tiktok'] },
     { name: 'FBDown', url: 'https://fbdown.net/', desc: 'Facebook videos in HD.', color: 'from-blue-600 to-blue-700', platform: ['facebook'], recommended: true },
-    { name: 'BeReal Saver',
-  url: 'https://beRealdownloader.com/',
-  desc: 'Download BeReal photos and videos. No sign-up required.',
-  color: 'bg-gray-900 hover:bg-gray-800',
-  icon: 'download',
-},
-  
-  ];
+    { name: 'BeReal Saver', url: 'https://berealsaver.com/', desc: 'Download BeReal photos and videos.', color: 'from-gray-900 to-black', platform: ['br'] },
 
   const getConverters = useCallback(() => {
     const plat = videoInfo?.platform || getPlatform(url.trim());
