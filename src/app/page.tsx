@@ -411,7 +411,8 @@ export default function Home() {
                   <img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAACH0lEQVR4nLWVzaraUBSFv2NujqlFMQiCZCAKDhQqZCa0s4KTTiz4GD5Fx84diHOHHXTYPoRUHIgUX6BEpNxrr/fmdOBJmpsffwpdcAjZ2WutnX1OsgUgSEIAPvAeGACvYnlKXx+Az8A3IKc5CT0RW3c6/hF40mLn1pMuAs2N6yUCArCArRZ41CJp61HnbDUnTSu1+nea+HzFGwQ5bzXXiLYnl9IugDea5HMZvs7tRjTDouMGASqkb34WhOYkkGUgbxAPYN5iAIAQ4ux9PP1mA6VU4v6CyW0GjuNgGKdDIaWkWq2+MDUMAynPdzNhEFRYqVSYTCYMh0MMw8B1XabTKZ1OByEEuVyObrdLv98HwDRfbEF4jO/iBtHqfN/HcRzG4zG73Y7VasVgMGA0GrFYLOj1eszn8zR62MfMFuXzedbrNe12m1arhWVZNBoNyuUytm1Tq9VoNptYlnVbiwLc399Tr9dZLpfhms1meJ7HZrPBNE222y2u61IsFjkej5kHIPqrCBr5CVC2bR8BZVmWKhQKClBCCFUqlZRpmkpKqaSURyGE0hy0RqiZuQcAnuchhOBwOIQxpRT7/f5sW6K4+KHFv4UgHr3+s0GaeDSe9fwag98XmVdysgx+8ncsXgOlORcNAtHvnE7B2RZGNASwjGmEiI+4HJAHfvAfRmZ0bA64bmTGh35q9Wmv/Qz0gQ/A65Q8BfwCvgBfOc3ixIj9A/T9u8aW50KCAAAAAElFTkSuQmCC" width="24" height="24" alt="BeReal" />
                 </div>
                 <span className="text-[11px] font-medium text-gray-500">BeReal</span>
-              </div>
+                            </div>
+            </div>
           </div>
         )}
 
