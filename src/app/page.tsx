@@ -406,7 +406,13 @@ export default function Home() {
                 </div>
                 <span className="text-[11px] font-medium text-gray-500">Facebook</span>
               </div>
-            </div> <div className="flex flex-col items-center gap-1"><img src="https://cdn.simpleicons.org/bereal/ffffff" width="24" height="24" alt="BeReal" /><span className="text-[10px] text-muted-foreground">BeReal</span></div>
+            </div> <div className="flex flex-col items-center gap-1">
+  <svg width="24" height="24" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+    <rect width="512" height="512" rx="108" fill="#000" />
+    <text x="256" y="295" font-family="system-ui,sans-serif" font-size="95" font-weight="800" fill="#fff" text-anchor="middle" letter-spacing="-1">BeReal.</text>
+  </svg>
+  <span className="text-[10px] text-muted-foreground">BeReal</span>
+</div>
           </div>
         )}
 
