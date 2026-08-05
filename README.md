@@ -25,10 +25,10 @@ A clean, fast multi-platform converter website built with Next.js. Supports conv
 
 ## Tech Stack
 
-- **Next.js 16** (App Router)
+- **Next.js 15** (App Router)
 - **TypeScript**
-- **Tailwind CSS 4** + **shadcn/ui**
-- **YouTube oEmbed API** for video info
+- **Tailwind CSS 4**
+- **YouTube oEmbed API** + **Invidious API** for video info
 
 ## Live Site
 
