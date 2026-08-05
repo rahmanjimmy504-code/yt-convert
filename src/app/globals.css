@@ -1,3 +1,8 @@
-
 @import "tailwindcss";
 @custom-variant dark (&:where(.dark, .dark *));
+
+/* Map the vendored Geist font (see src/app/fonts) onto Tailwind's default
+   sans-serif stack so the `font-sans` utility actually uses it. */
+@theme inline {
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+}
