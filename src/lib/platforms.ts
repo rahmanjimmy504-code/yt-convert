@@ -72,28 +72,38 @@ export function platformColor(p: string): string {
  * Detect which supported platform a pasted link belongs to.
  * Accepts full URLs ("https://youtu.be/...") as well as bare domains
  * ("youtube.com") typed without a scheme.
+ *
+ * Order matters: more specific hosts (music.youtube.com) must be checked
+ * before their broader parent domains (youtube.com).
  */
 export function detectPlatform(input: string): PlatformKey | null {
   const u = input.trim();
   if (!u) return null;
   // Must look like a URL (with scheme) or a bare domain before any matching.
   if (!/^https?:\/\//i.test(u) && !/^\w+\.\w{2,}/i.test(u)) return null;
-  if (/music\.youtube\.com/i.test(u)) return 'youtubemusic';
-  if (/youtu\.?be|youtube\.com/i.test(u)) return 'youtube';
-  if (/soundcloud\.com/i.test(u)) return 'soundcloud';
-  if (/twitter\.com|x\.com/i.test(u)) return 'twitter';
-  if (/instagram\.com/i.test(u)) return 'instagram';
-  if (/spotify\.com|open\.spotify\.com/i.test(u)) return 'spotify';
-  if (/deezer\.com/i.test(u)) return 'deezer';
-  if (/facebook\.com|fb\.watch/i.test(u)) return 'facebook';
-  if (/tiktok\.com/i.test(u)) return 'tiktok';
-  if (/music\.apple\.com/i.test(u)) return 'applemusic';
-  if (/bereal\.com/i.test(u)) return 'br';
+  // Normalize to a bare host so subdomain checks are exact and we never match
+  // lookalike domains such as "youtube.com.evil.com".
+  const host = u.replace(/^https?:\/\//i, '').split(/[/?#]/)[0].toLowerCase();
+
+  if (host === 'music.youtube.com') return 'youtubemusic';
+  if (host === 'youtube.com' || host === 'youtu.be' || host === 'm.youtube.com' || host === 'youtube-nocookie.com' || host.endsWith('.youtube.com') || host.endsWith('.youtu.be') || host.endsWith('.youtube-nocookie.com')) return 'youtube';
+  if (host === 'soundcloud.com' || host.endsWith('.soundcloud.com')) return 'soundcloud';
+  if (host === 'twitter.com' || host === 'x.com' || host.endsWith('.twitter.com') || host.endsWith('.x.com')) return 'twitter';
+  if (host === 'instagram.com' || host === 'instagr.am' || host.endsWith('.instagram.com')) return 'instagram';
+  if (host === 'spotify.com' || host === 'open.spotify.com' || host === 'play.spotify.com' || host.endsWith('.spotify.com')) return 'spotify';
+  if (host === 'deezer.com' || host === 'deezer.page.link' || host.endsWith('.deezer.com')) return 'deezer';
+  if (host === 'facebook.com' || host === 'fb.watch' || host.endsWith('.facebook.com')) return 'facebook';
+  if (host === 'tiktok.com' || host.endsWith('.tiktok.com')) return 'tiktok';
+  if (host === 'music.apple.com' || host === 'itunes.apple.com' || host === 'geo.itunes.apple.com') return 'applemusic';
+  if (host === 'bereal.com' || host.endsWith('.bereal.com')) return 'br';
   return null;
 }
 
 /** Extract an 11-character YouTube video id from common URL shapes. */
 export function extractYouTubeId(url: string): string | null {
-  const m = url.match(/(?:v=|youtu\.be\/|shorts\/|live\/|embed\/|clip\/)([a-zA-Z0-9_-]{11})/);
+  // Require a non-ID character (or end of string) after the 11-char id so a
+  // longer run of ID characters can't false-match. Case-insensitive markers
+  // handle URLs pasted with uppercase query keys (/WATCH?V=...).
+  const m = url.match(/(?:v=|youtu\.be\/|shorts\/|live\/|embed\/|clip\/|\/v\/)([a-zA-Z0-9_-]{11})(?![\w-])/i);
   return m ? m[1] : null;
 }
