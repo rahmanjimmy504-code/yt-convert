@@ -506,7 +506,7 @@ export default function Home() {
               </div>
               <div className="flex flex-col items-center gap-1.5 group">
                 <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-[#FFFC00] to-[#E6E200] flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
-                  <img src="https://cdn.simpleicons.org/snapchat/000000" width="24" height="24" alt="Snapchat" />
+                  <img src="/snapchat-logo.png" width="24" height="24" alt="Snapchat" />
                 </div>
                 <span className="text-[11px] font-medium text-gray-500">Snapchat</span>
               </div>
