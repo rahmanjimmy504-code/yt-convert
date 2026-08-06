@@ -1,6 +1,6 @@
 # YT Convert
 
-A clean, fast multi-platform converter website built with Next.js. Supports converting videos and audio from 11 platforms to MP3 & MP4.
+A clean, fast multi-platform converter website built with Next.js. Supports converting videos and audio from 12 platforms to MP3 & MP4.
 
 ## How It Works
 
@@ -21,6 +21,7 @@ A clean, fast multi-platform converter website built with Next.js. Supports conv
 - Apple Music
 - TikTok
 - Facebook
+- Snapchat
 - BeReal
 
 ## Tech Stack
