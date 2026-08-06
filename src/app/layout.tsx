@@ -16,7 +16,7 @@ const geistSans = localFont({
 const SITE_URL = (process.env.NEXT_PUBLIC_SITE_URL || "https://yt-convert-xi.vercel.app").replace(/\/+$/, "");
 const SITE_TITLE = "YT Convert - YouTube to MP3 & MP4";
 const SITE_DESCRIPTION =
-  "Convert videos and audio from 11 platforms (YouTube, Spotify, SoundCloud, X, Instagram, TikTok and more) to MP3 & MP4. Free, no sign-up needed.";
+  "Convert videos and audio from 12 platforms (YouTube, Spotify, SoundCloud, X, Instagram, TikTok and more) to MP3 & MP4. Free, no sign-up needed.";
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
@@ -42,7 +42,7 @@ export const metadata: Metadata = {
     description: SITE_DESCRIPTION,
   },
   twitter: {
-    card: "summary",
+    card: "summary_large_image",
     title: SITE_TITLE,
     description: SITE_DESCRIPTION,
   },

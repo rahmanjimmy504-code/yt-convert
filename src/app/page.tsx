@@ -16,6 +16,7 @@ import {
   Play,
   Star,
   Sun,
+  X,
   Zap,
 } from 'lucide-react';
 import {
@@ -73,8 +74,41 @@ function sSetJ(k: string, v: unknown) {
   if (typeof window !== 'undefined') localStorage.setItem(k, JSON.stringify(v));
 }
 
-const tips = ['Paste any link from YouTube, Spotify, SoundCloud, X, Instagram, Deezer, Apple Music, TikTok, Facebook, Snapchat or BeReal.', 'Your URL is auto-copied when you pick a converter.', 'If one converter has ads, try another.', 'All converters are free, no sign-up needed.', 'Press Enter after pasting to fetch info instantly.'];
+const tips = ['Paste any link from YouTube, Spotify, SoundCloud, X, Instagram, Deezer, Apple Music, TikTok, Facebook, Snapchat or BeReal.', 'Your URL is auto-copied when you pick a converter.', 'If one converter has ads, try another.', 'All converters are free, no sign-up needed.', 'Press Enter after pasting to fetch info instantly.', 'Shortcuts: press / to jump to the link box, Esc to start over.'];
 const placeholders = ['https://www.youtube.com/watch?v=...', 'https://open.spotify.com/track/...', 'https://soundcloud.com/...', 'https://x.com/user/status/...', 'https://www.instagram.com/reel/...', 'https://music.apple.com/...', 'https://www.deezer.com/track/...', 'https://music.youtube.com/watch?v=...', 'https://www.tiktok.com/...', 'https://www.facebook.com/...', 'https://www.snapchat.com/add/...', 'https://bereal.com/...'];
+
+// Converter catalog lives at module scope: it never changes at runtime, so
+// there is no reason to rebuild the array on every render.
+const ALL_CONVERTERS: Converter[] = [
+  { name: '9Convert', url: 'https://9convert.org/', desc: 'YouTube to MP3 and MP4. Fast and reliable.', color: 'from-rose-500 to-rose-600', platforms: ['youtube', 'youtubemusic'], formats: ['mp3', 'mp4'], recommended: true },
+  { name: 'Y2Mate', url: 'https://v30.www-y2mate.com/', desc: 'MP4 (144p-1080p) and MP3 (128-320kbps).', color: 'from-orange-500 to-orange-600', platforms: ['youtube', 'youtubemusic'], formats: ['mp3', 'mp4'] },
+  { name: 'AudioConverter', url: 'https://audioconverter.ai/youtube-to-mp4-converter', desc: 'YouTube to MP4. HD and 4K.', color: 'from-sky-500 to-sky-600', platforms: ['youtube', 'youtubemusic'], formats: ['mp4'] },
+  { name: 'Hicoo', url: 'https://hicoo.ai/mp4-converter/youtube-to-mp4', desc: 'YouTube to MP4. 360p to 4K.', color: 'from-emerald-500 to-emerald-600', platforms: ['youtube', 'youtubemusic'], formats: ['mp4'] },
+  { name: 'KlickAud', url: 'https://klickaud.org/en15', desc: 'SoundCloud to MP3.', color: 'from-orange-400 to-orange-500', platforms: ['soundcloud'], formats: ['mp3'], recommended: true },
+  { name: 'SSSTik', url: 'https://ssstik.io/', desc: 'X/Twitter video downloader.', color: 'from-sky-400 to-sky-500', platforms: ['twitter'], formats: ['mp4'], recommended: true },
+  { name: 'Twitsave', url: 'https://twitsave.com/en', desc: 'Save X/Twitter videos in HD.', color: 'from-indigo-500 to-indigo-600', platforms: ['twitter'], formats: ['mp4'] },
+  { name: 'SaveInsta', url: 'https://www.saveinsta.app/', desc: 'Instagram photos and videos.', color: 'from-pink-400 to-pink-500', platforms: ['instagram'], formats: ['mp4'], recommended: true },
+  { name: 'iGram', url: 'https://igram.io/', desc: 'Instagram reels and stories.', color: 'from-purple-500 to-purple-600', platforms: ['instagram'], formats: ['mp4'] },
+  { name: 'SpotDown', url: 'https://spotdown.org/', desc: 'Spotify tracks to MP3.', color: 'from-green-500 to-green-600', platforms: ['spotify'], formats: ['mp3'], recommended: true },
+  { name: 'DeezLoad', url: 'https://deezerdownloader.net/', desc: 'Deezer tracks to MP3.', color: 'from-purple-500 to-purple-600', platforms: ['deezer'], formats: ['mp3'], recommended: true },
+  { name: 'AM Downloader', url: 'https://apple-music-downloader.com/', desc: 'Apple Music to MP3.', color: 'from-gray-600 to-gray-800', platforms: ['applemusic'], formats: ['mp3'], recommended: true },
+  { name: 'TTSave', url: 'https://ttsave.app/', desc: 'TikTok videos without watermark.', color: 'from-pink-500 to-pink-600', platforms: ['tiktok'], formats: ['mp4'], recommended: true },
+  { name: 'SnapTik', url: 'https://snaptik.app/en3', desc: 'TikTok to MP4, no watermark.', color: 'from-cyan-500 to-cyan-600', platforms: ['tiktok'], formats: ['mp4'] },
+  { name: 'FBDown', url: 'https://fbdown.net/', desc: 'Facebook videos in HD.', color: 'from-blue-600 to-blue-700', platforms: ['facebook'], formats: ['mp4'], recommended: true },
+  { name: 'VDFR', url: 'https://vdfr.app/snapchat-video-downloader', desc: 'Download Snapchat videos.', color: 'from-yellow-400 to-yellow-500', platforms: ['snapchat'], formats: ['mp4'], recommended: true },
+  { name: 'ViewSnapStories', url: 'https://viewsnapstories.com/video-downloader', desc: 'Save Snapchat videos fast.', color: 'from-yellow-500 to-yellow-600', platforms: ['snapchat'], formats: ['mp4'] },
+  { name: 'BeReal Saver', url: 'https://berealsaver.com/', desc: 'Download BeReal photos and videos.', color: 'from-gray-900 to-black', platforms: ['br'], formats: ['mp4'] },
+];
+
+/** Copy text to the clipboard, reporting whether it actually worked. */
+async function copyText(t: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(t);
+    return true;
+  } catch {
+    return false; // clipboard blocked by browser permissions
+  }
+}
 
 export default function Home() {
   const [mounted, setMounted] = useState(false);
@@ -89,9 +123,16 @@ export default function Home() {
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [favorite, setFavorite] = useState('');
   const [phIdx, setPhIdx] = useState(0);
+  const [linkCopied, setLinkCopied] = useState(false);
+  const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const convertersRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   const autoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Guards against stale metadata lookups: abort cancels the in-flight fetch,
+  // reqId ensures a slow older response can never overwrite a newer one.
+  const abortRef = useRef<AbortController | null>(null);
+  const reqIdRef = useRef(0);
 
   useEffect(() => {
     setMounted(true);
@@ -107,6 +148,8 @@ export default function Home() {
     else if (f === 'video') setFormat('mp4'); // migrate legacy value
     return () => {
       if (scrollTimer.current) clearTimeout(scrollTimer.current);
+      if (copyTimer.current) clearTimeout(copyTimer.current);
+      abortRef.current?.abort();
     };
   }, []);
 
@@ -134,11 +177,28 @@ export default function Home() {
     if (!u) return;
     const plat = detectPlatform(u);
     if (!plat) { setError('Unsupported URL.'); setPhase('error'); return; }
-    setError(''); setPhase('loading'); setVideoInfo(null); setLaunched(null);
+    setError(''); setPhase('loading'); setVideoInfo(null); setLaunched(null); setLinkCopied(false);
+    // Cancel the previous lookup (if any) so it can't clobber this one.
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    const reqId = ++reqIdRef.current;
+    const stale = () => reqId !== reqIdRef.current;
     try {
-      const r = await fetch('/api/video-info?url=' + encodeURIComponent(u));
-      if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error((d as { error?: string }).error || 'Failed'); }
+      const r = await fetch('/api/video-info?url=' + encodeURIComponent(u), { signal: controller.signal });
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}));
+        const msg = (d as { error?: string }).error || 'Failed';
+        // 4xx means the link itself was rejected — show that message in the
+        // regular error state instead of the graceful "no info" card.
+        if (r.status >= 400 && r.status < 500) {
+          if (!stale()) { setError(msg); setPhase('error'); }
+          return;
+        }
+        throw new Error(msg);
+      }
       const data = (await r.json()) as Partial<VideoInfo>;
+      if (stale()) return;
       const vid = extractYouTubeId(u);
       setVideoInfo({
         title: data.title || 'Unknown',
@@ -156,7 +216,10 @@ export default function Home() {
       });
       setPhase('ready');
       scrollToConverters();
-    } catch {
+    } catch (err) {
+      if (stale() || (err instanceof Error && err.name === 'AbortError')) return;
+      // Network/5xx failure: degrade gracefully so the converter list is
+      // still reachable even though no metadata could be fetched.
       setVideoInfo({ title: 'Could not load info', author: '', thumbnail: '', duration: '', views: '', published: '', platform: plat });
       setPhase('ready');
       scrollToConverters();
@@ -188,31 +251,10 @@ export default function Home() {
 
   const videoId = videoInfo ? extractYouTubeId(url.trim()) : null;
 
-  const all: Converter[] = [
-    { name: '9Convert', url: 'https://9convert.org/', desc: 'YouTube to MP3 and MP4. Fast and reliable.', color: 'from-rose-500 to-rose-600', platforms: ['youtube', 'youtubemusic'], formats: ['mp3', 'mp4'], recommended: true },
-    { name: 'Y2Mate', url: 'https://v30.www-y2mate.com/', desc: 'MP4 (144p-1080p) and MP3 (128-320kbps).', color: 'from-orange-500 to-orange-600', platforms: ['youtube', 'youtubemusic'], formats: ['mp3', 'mp4'] },
-    { name: 'AudioConverter', url: 'https://audioconverter.ai/youtube-to-mp4-converter', desc: 'YouTube to MP4. HD and 4K.', color: 'from-sky-500 to-sky-600', platforms: ['youtube', 'youtubemusic'], formats: ['mp4'] },
-    { name: 'Hicoo', url: 'https://hicoo.ai/mp4-converter/youtube-to-mp4', desc: 'YouTube to MP4. 360p to 4K.', color: 'from-emerald-500 to-emerald-600', platforms: ['youtube', 'youtubemusic'], formats: ['mp4'] },
-    { name: 'KlickAud', url: 'https://klickaud.org/en15', desc: 'SoundCloud to MP3.', color: 'from-orange-400 to-orange-500', platforms: ['soundcloud'], formats: ['mp3'], recommended: true },
-    { name: 'SSSTik', url: 'https://ssstik.io/', desc: 'X/Twitter video downloader.', color: 'from-sky-400 to-sky-500', platforms: ['twitter'], formats: ['mp4'], recommended: true },
-    { name: 'Twitsave', url: 'https://twitsave.com/en', desc: 'Save X/Twitter videos in HD.', color: 'from-indigo-500 to-indigo-600', platforms: ['twitter'], formats: ['mp4'] },
-    { name: 'SaveInsta', url: 'https://www.saveinsta.app/', desc: 'Instagram photos and videos.', color: 'from-pink-400 to-pink-500', platforms: ['instagram'], formats: ['mp4'], recommended: true },
-    { name: 'iGram', url: 'https://igram.io/', desc: 'Instagram reels and stories.', color: 'from-purple-500 to-purple-600', platforms: ['instagram'], formats: ['mp4'] },
-    { name: 'SpotDown', url: 'https://spotdown.org/', desc: 'Spotify tracks to MP3.', color: 'from-green-500 to-green-600', platforms: ['spotify'], formats: ['mp3'], recommended: true },
-    { name: 'DeezLoad', url: 'https://deezerdownloader.net/', desc: 'Deezer tracks to MP3.', color: 'from-purple-500 to-purple-600', platforms: ['deezer'], formats: ['mp3'], recommended: true },
-    { name: 'AM Downloader', url: 'https://apple-music-downloader.com/', desc: 'Apple Music to MP3.', color: 'from-gray-600 to-gray-800', platforms: ['applemusic'], formats: ['mp3'], recommended: true },
-    { name: 'TTSave', url: 'https://ttsave.app/', desc: 'TikTok videos without watermark.', color: 'from-pink-500 to-pink-600', platforms: ['tiktok'], formats: ['mp4'], recommended: true },
-    { name: 'SnapTik', url: 'https://snaptik.app/en3', desc: 'TikTok to MP4, no watermark.', color: 'from-cyan-500 to-cyan-600', platforms: ['tiktok'], formats: ['mp4'] },
-    { name: 'FBDown', url: 'https://fbdown.net/', desc: 'Facebook videos in HD.', color: 'from-blue-600 to-blue-700', platforms: ['facebook'], formats: ['mp4'], recommended: true },
-    { name: 'VDFR', url: 'https://vdfr.app/snapchat-video-downloader', desc: 'Download Snapchat videos.', color: 'from-yellow-400 to-yellow-500', platforms: ['snapchat'], formats: ['mp4'], recommended: true },
-    { name: 'ViewSnapStories', url: 'https://viewsnapstories.com/video-downloader', desc: 'Save Snapchat videos fast.', color: 'from-yellow-500 to-yellow-600', platforms: ['snapchat'], formats: ['mp4'] },
-    { name: 'BeReal Saver', url: 'https://berealsaver.com/', desc: 'Download BeReal photos and videos.', color: 'from-gray-900 to-black', platforms: ['br'], formats: ['mp4'] },
-  ];
-
   const getConverters = useCallback(() => {
     const plat = videoInfo?.platform || (url.trim() ? detectPlatform(url.trim()) : null);
-    if (!plat) return all.slice(0, 4);
-    return all
+    if (!plat) return ALL_CONVERTERS.slice(0, 4);
+    return ALL_CONVERTERS
       .filter(c => c.platforms.includes(plat as PlatformKey))
       .sort((a, b) => {
         if (a.name === favorite) return -1;
@@ -231,19 +273,51 @@ export default function Home() {
     const u = url.trim();
     // Wait for the clipboard write before opening the tab so the URL is ready
     // when the user lands on the converter site and presses Ctrl+V.
-    let copied = false;
-    try {
-      await navigator.clipboard.writeText(u);
-      copied = true;
-    } catch {
-      copied = false; // clipboard blocked by browser permissions; open anyway
-    }
+    const copied = await copyText(u);
     setLaunched({ name: c.name, copied });
     window.open(c.url, '_blank', 'noopener');
   };
   const toggleFav = (n: string) => { const v = favorite === n ? '' : n; setFavorite(v); sSet('yt-convert-fav', v); };
   const clearHist = () => { setHistory([]); if (typeof window !== 'undefined') localStorage.removeItem('yt-convert-history'); };
-  const handleReset = () => { setUrl(''); setPhase('input'); setError(''); setVideoInfo(null); setLaunched(null); setFormat('mp4'); window.scrollTo({ top: 0, behavior: 'smooth' }); };
+  const handleReset = useCallback(() => {
+    // Drop any in-flight lookup so its result can't reappear after the reset.
+    abortRef.current?.abort();
+    reqIdRef.current++;
+    setUrl(''); setPhase('input'); setError(''); setVideoInfo(null); setLaunched(null); setLinkCopied(false);
+    setFormat('mp4'); sSet('yt-convert-format', 'mp4');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }, []);
+  const copyLink = useCallback(async () => {
+    const ok = await copyText(url.trim());
+    setLinkCopied(ok);
+    if (ok) {
+      if (copyTimer.current) clearTimeout(copyTimer.current);
+      copyTimer.current = setTimeout(() => setLinkCopied(false), 2000);
+    }
+  }, [url]);
+  const clearUrl = useCallback(() => {
+    setUrl(''); setPhase('input'); setError(''); setVideoInfo(null); setLaunched(null);
+    inputRef.current?.focus();
+  }, []);
+  const openOriginal = useCallback(() => {
+    if (phase !== 'ready') return;
+    window.open(videoId ? 'https://www.youtube.com/watch?v=' + videoId : url.trim(), '_blank', 'noopener');
+  }, [phase, videoId, url]);
+
+  // Global shortcuts: Esc starts over (from the ready/error states) and /
+  // jumps to the link box, matching common converter-site muscle memory.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && (phase === 'ready' || phase === 'error')) {
+        handleReset();
+      } else if (e.key === '/' && phase === 'input' && document.activeElement !== inputRef.current) {
+        e.preventDefault();
+        inputRef.current?.focus();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [phase, handleReset]);
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => { if (e.key === 'Enter' && (phase === 'input' || phase === 'error')) handleGetInfo(); };
   const handleUrlChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setUrl(e.target.value);
@@ -268,7 +342,7 @@ export default function Home() {
         <div className="max-w-2xl mx-auto px-4 py-3 flex items-center justify-between">
           <div className="flex items-center gap-3 cursor-pointer select-none" onClick={handleReset}>
             <div className="flex items-center justify-center w-9 h-9 rounded-xl bg-gradient-to-br from-red-500 to-red-600 shadow-lg shadow-red-500/20">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M23.5 6.2a3 3 0 0 0-2.1-2.1C19.5 3.5 12 3.5 12 3.5s-7.5 0-9.4.6A3 3 0 0 0 .5 6.2 31.4 31.4 0 0 0 0 12a31.4 31.4 0 0 0 .5 5.8 3 3 0 0 0 2.1 2.1c1.9.6 9.4.6 9.4.6s7.5 0 9.4-.6a3 3 0 0 0 2.1-2.1A31.4 31.4 0 0 0 24 12a31.4 31.4 0 0 0-.5-5.8Z" fill="white"/><path d="m9.75 15.02 5.75-3.02-5.75-3.02v6.04Z" fill="#FF0000"/></svg>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false"><path d="M23.5 6.2a3 3 0 0 0-2.1-2.1C19.5 3.5 12 3.5 12 3.5s-7.5 0-9.4.6A3 3 0 0 0 .5 6.2 31.4 31.4 0 0 0 0 12a31.4 31.4 0 0 0 .5 5.8 3 3 0 0 0 2.1 2.1c1.9.6 9.4.6 9.4.6s7.5 0 9.4-.6a3 3 0 0 0 2.1-2.1A31.4 31.4 0 0 0 24 12a31.4 31.4 0 0 0-.5-5.8Z" fill="white"/><path d="m9.75 15.02 5.75-3.02-5.75-3.02v6.04Z" fill="#FF0000"/></svg>
             </div>
             <div>
               <h1 className="text-base font-bold tracking-tight">YT Convert</h1>
@@ -288,7 +362,12 @@ export default function Home() {
           <div className="flex gap-2">
             <div className="relative flex-1">
               <LinkIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-              <input id="url-input" type="url" placeholder={placeholders[phIdx]} value={url} onChange={handleUrlChange} onKeyDown={handleKeyDown} disabled={phase === 'loading'} className="w-full pl-10 pr-3 h-11 text-sm rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent placeholder:text-gray-400 dark:text-white" />
+              <input ref={inputRef} id="url-input" type="url" inputMode="url" autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck={false} placeholder={placeholders[phIdx]} value={url} onChange={handleUrlChange} onKeyDown={handleKeyDown} disabled={phase === 'loading'} className={'w-full pl-10 h-11 text-sm rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent placeholder:text-gray-400 dark:text-white ' + (url && (phase === 'input' || phase === 'error') ? 'pr-9' : 'pr-3')} />
+              {url && (phase === 'input' || phase === 'error') && (
+                <button type="button" onClick={clearUrl} aria-label="Clear link" title="Clear link" className="absolute right-2 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full flex items-center justify-center text-gray-400 hover:text-red-500 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
             </div>
             {(phase === 'input' || phase === 'error') && (
               <button onClick={handleGetInfo} disabled={!url.trim()} className="h-11 px-5 rounded-xl bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white text-sm font-semibold shadow-lg shadow-red-500/20 disabled:opacity-40 disabled:cursor-not-allowed transition-all flex items-center gap-2">
@@ -321,7 +400,7 @@ export default function Home() {
         </div>
 
         {phase === 'loading' && (
-          <div className="bg-white dark:bg-gray-900 rounded-2xl border-2 border-red-200 dark:border-red-900 p-8 text-center space-y-3">
+          <div role="status" aria-live="polite" className="bg-white dark:bg-gray-900 rounded-2xl border-2 border-red-200 dark:border-red-900 p-8 text-center space-y-3">
             <div className="w-8 h-8 border-[3px] border-red-500 border-t-transparent rounded-full animate-spin mx-auto" />
             <p className="text-sm text-gray-500">Fetching info...</p>
           </div>
@@ -331,8 +410,16 @@ export default function Home() {
           <div>
             <div className="bg-white dark:bg-gray-900 rounded-2xl border-2 border-red-200 dark:border-red-900 overflow-hidden p-5 space-y-4 mb-5">
               {videoInfo.thumbnail && (
-                <div className="relative rounded-xl overflow-hidden bg-black group cursor-pointer" onClick={() => window.open(videoId ? 'https://www.youtube.com/watch?v=' + videoId : url.trim(), '_blank')}>
-                  <img src={videoInfo.thumbnail} alt={videoInfo.title} className="w-full object-cover" style={{ maxHeight: '360px' }} onError={(e) => { const img = e.currentTarget; if (videoId) img.src = 'https://i.ytimg.com/vi/' + videoId + '/mqdefault.jpg'; else img.style.display = 'none'; }} />
+                <div
+                  className="relative rounded-xl overflow-hidden bg-black group cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+                  role="button"
+                  tabIndex={0}
+                  aria-label={videoInfo.title && videoInfo.title !== 'Could not load info' ? `Open "${videoInfo.title}" on ${platformLabel(videoInfo.platform) || 'the source site'}` : 'Open the original link in a new tab'}
+                  onClick={openOriginal}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openOriginal(); } }}
+                >
+                  <img src={videoInfo.thumbnail} alt={videoInfo.title} className="w-full object-cover" style={{ maxHeight: '360px' }} onError={(e) => { const img = e.currentTarget; // hqdefault.jpg can 404 for some videos (e.g. region-locked): fall back once to mqdefault, then give up instead of re-entering onError forever.
+                    if (videoId && !img.src.endsWith('/mqdefault.jpg')) img.src = 'https://i.ytimg.com/vi/' + videoId + '/mqdefault.jpg'; else img.style.display = 'none'; }} />
                   <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                     <div className="w-14 h-14 rounded-full bg-red-600 flex items-center justify-center"><Play className="w-6 h-6 text-white ml-0.5" fill="currentColor" /></div>
                   </div>
@@ -358,16 +445,27 @@ export default function Home() {
                   <h2 className="font-semibold text-base">Converters</h2>
                   <span className="text-[11px] text-gray-400 bg-gray-100 dark:bg-gray-800 px-2 py-0.5 rounded-full">{convList.length}</span>
                 </div>
-                <button onClick={handleReset} className="text-xs text-gray-500 hover:text-red-500 flex items-center gap-1">
-                  <ArrowLeft className="w-3 h-3" /> New
-                </button>
+                <div className="flex items-center gap-3">
+                  {linkCopied ? (
+                    <span className="text-xs text-green-600 dark:text-green-400 flex items-center gap-1">
+                      <Check className="w-3 h-3" /> Link copied
+                    </span>
+                  ) : (
+                    <button onClick={copyLink} className="text-xs text-gray-500 hover:text-red-500 flex items-center gap-1" title="Copy the link">
+                      <Clipboard className="w-3 h-3" /> Copy link
+                    </button>
+                  )}
+                  <button onClick={handleReset} className="text-xs text-gray-500 hover:text-red-500 flex items-center gap-1" title="Start over (Esc)">
+                    <ArrowLeft className="w-3 h-3" /> New
+                  </button>
+                </div>
               </div>
               <div className="bg-gray-50 dark:bg-gray-800 rounded-xl p-3 space-y-1.5">
                 <p className="text-xs font-semibold text-gray-700 dark:text-gray-300">How to download:</p>
                 <ol className="text-[11px] text-gray-500 list-decimal list-inside pl-1"><li>Click a converter {'\u2014'} opens in new tab</li><li>Your URL is <strong>auto-copied</strong></li><li>Press Ctrl+V to paste, convert and download</li></ol>
               </div>
               {launched && (
-                <div className="flex items-center gap-2 text-xs text-green-700 bg-green-50 dark:bg-green-950/30 dark:text-green-400 px-3 py-2 rounded-lg">
+                <div role="status" aria-live="polite" className="flex items-center gap-2 text-xs text-green-700 bg-green-50 dark:bg-green-950/30 dark:text-green-400 px-3 py-2 rounded-lg">
                   <Check className="w-4 h-4 flex-shrink-0" />
                   {launched.copied
                     ? `URL copied! Paste in ${launched.name} tab with Ctrl+V`
@@ -413,7 +511,7 @@ export default function Home() {
         )}
 
         {phase === 'error' && (
-          <div className="bg-white dark:bg-gray-900 rounded-2xl border-2 border-red-200 dark:border-red-900 p-5 space-y-3">
+          <div role="alert" className="bg-white dark:bg-gray-900 rounded-2xl border-2 border-red-200 dark:border-red-900 p-5 space-y-3">
             <div className="flex items-start gap-2 text-red-600">
               <CircleX className="w-5 h-5 mt-0.5 flex-shrink-0" />
               <p className="text-sm">{error}</p>
@@ -446,73 +544,73 @@ export default function Home() {
             <div className="flex flex-wrap justify-center gap-3">
               <div className="flex flex-col items-center gap-1.5 group">
                 <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-red-500 to-red-600 flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
-                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M23.5 6.2a3 3 0 0 0-2.1-2.1C19.5 3.5 12 3.5 12 3.5s-7.5 0-9.4.6A3 3 0 0 0 .5 6.2 31.4 31.4 0 0 0 0 12a31.4 31.4 0 0 0 .5 5.8 3 3 0 0 0 2.1 2.1c1.9.6 9.4.6 9.4.6s7.5 0 9.4-.6a3 3 0 0 0 2.1-2.1A31.4 31.4 0 0 0 24 12a31.4 31.4 0 0 0-.5-5.8Z" fill="white"/><path d="m9.75 15.02 5.75-3.02-5.75-3.02v6.04Z" fill="#FF0000"/></svg>
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false"><path d="M23.5 6.2a3 3 0 0 0-2.1-2.1C19.5 3.5 12 3.5 12 3.5s-7.5 0-9.4.6A3 3 0 0 0 .5 6.2 31.4 31.4 0 0 0 0 12a31.4 31.4 0 0 0 .5 5.8 3 3 0 0 0 2.1 2.1c1.9.6 9.4.6 9.4.6s7.5 0 9.4-.6a3 3 0 0 0 2.1-2.1A31.4 31.4 0 0 0 24 12a31.4 31.4 0 0 0-.5-5.8Z" fill="white"/><path d="m9.75 15.02 5.75-3.02-5.75-3.02v6.04Z" fill="#FF0000"/></svg>
                 </div>
                 <span className="text-[11px] font-medium text-gray-500">YouTube</span>
               </div>
               <div className="flex flex-col items-center gap-1.5 group">
                 <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-red-600 to-red-700 flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
-                  <img src="https://cdn.simpleicons.org/youtubemusic/ffffff" width="24" height="24" alt="YT Music" />
+                  <img src="https://cdn.simpleicons.org/youtubemusic/ffffff" width="24" height="24" alt="" />
                 </div>
                 <span className="text-[11px] font-medium text-gray-500">YT Music</span>
               </div>
               <div className="flex flex-col items-center gap-1.5 group">
                 <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-orange-500 to-orange-600 flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
-                  <img src="https://cdn.simpleicons.org/soundcloud/ffffff" width="24" height="24" alt="SoundCloud" />
+                  <img src="https://cdn.simpleicons.org/soundcloud/ffffff" width="24" height="24" alt="" />
                 </div>
                 <span className="text-[11px] font-medium text-gray-500">SoundCloud</span>
               </div>
               <div className="flex flex-col items-center gap-1.5 group">
                 <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-gray-800 to-black flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="white"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="white" aria-hidden="true" focusable="false"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
                 </div>
                 <span className="text-[11px] font-medium text-gray-500">X</span>
               </div>
               <div className="flex flex-col items-center gap-1.5 group">
                 <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-pink-500 via-purple-500 to-orange-400 flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
-                  <img src="https://cdn.simpleicons.org/instagram/ffffff" width="24" height="24" alt="Instagram" />
+                  <img src="https://cdn.simpleicons.org/instagram/ffffff" width="24" height="24" alt="" />
                 </div>
                 <span className="text-[11px] font-medium text-gray-500">Instagram</span>
               </div>
               <div className="flex flex-col items-center gap-1.5 group">
                 <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-green-500 to-green-700 flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z"/></svg>
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z"/></svg>
                 </div>
                 <span className="text-[11px] font-medium text-gray-500">Spotify</span>
               </div>
               <div className="flex flex-col items-center gap-1.5 group">
                 <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-purple-500 to-purple-700 flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
-                  <img src="https://cdn.simpleicons.org/deezer/ffffff" width="24" height="24" alt="Deezer" />
+                  <img src="https://cdn.simpleicons.org/deezer/ffffff" width="24" height="24" alt="" />
                 </div>
                 <span className="text-[11px] font-medium text-gray-500">Deezer</span>
               </div>
               <div className="flex flex-col items-center gap-1.5 group">
                 <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-pink-500 to-red-600 flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
-                  <img src="https://cdn.simpleicons.org/applemusic/ffffff" width="24" height="24" alt="Apple Music" />
+                  <img src="https://cdn.simpleicons.org/applemusic/ffffff" width="24" height="24" alt="" />
                 </div>
                 <span className="text-[11px] font-medium text-gray-500">Apple Music</span>
               </div>
               <div className="flex flex-col items-center gap-1.5 group">
                 <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-gray-900 to-black flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
-                  <img src="https://cdn.simpleicons.org/tiktok/ffffff" width="24" height="24" alt="TikTok" />
+                  <img src="https://cdn.simpleicons.org/tiktok/ffffff" width="24" height="24" alt="" />
                 </div>
                 <span className="text-[11px] font-medium text-gray-500">TikTok</span>
               </div>
               <div className="flex flex-col items-center gap-1.5 group">
                 <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-blue-600 to-blue-700 flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
-                  <img src="https://cdn.simpleicons.org/facebook/ffffff" width="24" height="24" alt="Facebook" />
+                  <img src="https://cdn.simpleicons.org/facebook/ffffff" width="24" height="24" alt="" />
                 </div>
                 <span className="text-[11px] font-medium text-gray-500">Facebook</span>
               </div>
               <div className="flex flex-col items-center gap-1.5 group">
                 <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-[#FFFC00] to-[#E6E200] flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
-                  <img src="/snapchat-logo.png" width="24" height="24" alt="Snapchat" />
+                  <img src="/snapchat-logo.png" width="24" height="24" alt="" />
                 </div>
                 <span className="text-[11px] font-medium text-gray-500">Snapchat</span>
               </div>
               <div className="flex flex-col items-center gap-1.5 group">
                 <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-gray-900 to-black flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
-                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="BeReal"><text x="50%" y="54%" dominantBaseline="middle" textAnchor="middle" fontFamily="system-ui,sans-serif" fontSize="7" fontWeight="800" fill="white" letterSpacing="-0.2">BeReal.</text></svg>
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false"><text x="50%" y="54%" dominantBaseline="middle" textAnchor="middle" fontFamily="system-ui,sans-serif" fontSize="7" fontWeight="800" fill="white" letterSpacing="-0.2">BeReal.</text></svg>
                 </div>
                 <span className="text-[11px] font-medium text-gray-500">BeReal</span>
               </div>
