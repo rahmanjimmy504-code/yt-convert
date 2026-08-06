@@ -13,10 +13,20 @@ export interface VideoInfo {
 
 const UA = { 'User-Agent': 'Mozilla/5.0 (compatible; YTConvert/1.0)' };
 
+const FETCH_TIMEOUT_MS = 6000;
+
 // Small in-memory cache to avoid hammering upstream oEmbed/Invidious APIs.
 const CACHE_TTL_MS = 5 * 60 * 1000;
 const MAX_CACHE_ENTRIES = 100;
 const cache = new Map<string, { at: number; body: VideoInfo }>();
+
+// Public Invidious instances used as fallbacks for YouTube metadata. Tried in
+// order until one responds, so a single dead instance can't break the lookup.
+const INVIDIOUS_INSTANCES = [
+  'https://inv.nadeko.net/api/v1/videos/',
+  'https://invidious.nerdvpn.de/api/v1/videos/',
+  'https://yewtu.be/api/v1/videos/',
+];
 
 function cacheGet(key: string): VideoInfo | null {
   const hit = cache.get(key);
@@ -64,41 +74,50 @@ function formatDate(unixSeconds: number): string {
   return d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
+/** Generic oEmbed fetch. Returns an empty object on any failure so callers can fall back. */
+async function fetchOEmbed(endpoint: string): Promise<Record<string, unknown>> {
+  try {
+    const r = await fetch(endpoint, { headers: UA, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+    if (!r.ok) return {};
+    return (await r.json()) as Record<string, unknown>;
+  } catch {
+    return {};
+  }
+}
+
 async function fetchYouTube(platform: PlatformKey, rawUrl: string): Promise<VideoInfo> {
   const id = extractYouTubeId(rawUrl);
   const info: VideoInfo = { title: '', author: '', thumbnail: '', duration: '', views: '', published: '', platform };
 
-  const [oembed, invidious] = await Promise.allSettled([
-    fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(rawUrl)}&format=json`, {
-      headers: UA,
-      signal: AbortSignal.timeout(6000),
-    }),
-    id
-      ? fetch(`https://inv.nadeko.net/api/v1/videos/${id}`, { headers: UA, signal: AbortSignal.timeout(5000) })
-      : Promise.reject(new Error('no id')),
-  ]);
+  const oembedP = fetchOEmbed(`https://www.youtube.com/oembed?url=${encodeURIComponent(rawUrl)}&format=json`);
+  // Try Invidious instances one at a time so a single dead/misbehaving
+  // instance (throttled, down, slow) doesn't fail the whole lookup.
+  const invidiousP = (async () => {
+    if (!id) return null;
+    for (const base of INVIDIOUS_INSTANCES) {
+      try {
+        const r = await fetch(`${base}${id}`, { headers: UA, signal: AbortSignal.timeout(5000) });
+        if (r.ok) return (await r.json()) as Record<string, unknown>;
+      } catch {
+        // try the next instance
+      }
+    }
+    return null;
+  })();
 
-  if (oembed.status === 'fulfilled' && oembed.value.ok) {
-    try {
-      const d = await oembed.value.json();
-      info.title = d.title || '';
-      info.author = d.author_name || '';
-      info.thumbnail = d.thumbnail_url || '';
-    } catch {
-      // fall back to Invidious data below
-    }
-  }
-  if (invidious.status === 'fulfilled' && invidious.value.ok) {
-    try {
-      const d = await invidious.value.json();
-      if (d.lengthSeconds) info.duration = formatDuration(d.lengthSeconds);
-      if (d.viewCount) info.views = formatCount(d.viewCount);
-      if (d.published) info.published = formatDate(d.published);
-      if (!info.title) info.title = d.title || '';
-      if (!info.author) info.author = d.author || '';
-    } catch {
-      // partial data is fine
-    }
+  const [oembed, invidious] = await Promise.all([oembedP, invidiousP]);
+
+  if (oembed.title) info.title = String(oembed.title);
+  if (oembed.author_name) info.author = String(oembed.author_name);
+  if (oembed.thumbnail_url) info.thumbnail = String(oembed.thumbnail_url);
+
+  if (invidious) {
+    const d = invidious;
+    if (typeof d.lengthSeconds === 'number') info.duration = formatDuration(d.lengthSeconds);
+    if (typeof d.viewCount === 'number') info.views = formatCount(d.viewCount);
+    if (typeof d.published === 'number') info.published = formatDate(d.published);
+    if (!info.title && d.title) info.title = String(d.title);
+    if (!info.author && d.author) info.author = String(d.author);
   }
   return info;
 }
@@ -110,82 +129,39 @@ async function fetchInfo(platform: PlatformKey, rawUrl: string): Promise<VideoIn
     return fetchYouTube(platform, rawUrl);
   }
 
-  if (platform === 'spotify') {
-    info.title = 'Spotify Track';
-    info.author = 'Spotify';
-    return info;
-  }
-  if (platform === 'deezer') {
-    info.title = 'Deezer Track';
-    info.author = 'Deezer';
-    return info;
-  }
-  if (platform === 'applemusic') {
-    info.title = 'Apple Music Track';
-    info.author = 'Apple Music';
-    return info;
-  }
-  if (platform === 'br') {
-    info.title = 'BeReal Post';
-    info.author = 'BeReal User';
-    return info;
-  }
-  if (platform === 'tiktok') {
-    // TikTok exposes a public oEmbed endpoint; degrade to placeholders if it fails.
-    try {
-      const r = await fetch(`https://www.tiktok.com/oembed?url=${encodeURIComponent(rawUrl)}`, {
-        headers: UA,
-        signal: AbortSignal.timeout(6000),
-      });
-      if (r.ok) {
-        const d = await r.json();
-        info.title = d.title || 'TikTok Video';
-        info.author = d.author_name || 'TikTok';
-        info.thumbnail = d.thumbnail_url || '';
-        return info;
-      }
-    } catch {
-      // fall through to placeholder
-    }
-    info.title = 'TikTok Video';
-    info.author = 'TikTok';
-    return info;
-  }
-  if (platform === 'facebook') {
-    info.title = 'Facebook Video';
-    info.author = 'Facebook';
-    return info;
+  // oEmbed-capable platforms (Spotify, Deezer, TikTok, SoundCloud, X, Instagram).
+  const oembedEndpoints: Partial<Record<PlatformKey, string>> = {
+    spotify: `https://open.spotify.com/oembed?url=${encodeURIComponent(rawUrl)}`,
+    deezer: `https://www.deezer.com/oembed?url=${encodeURIComponent(rawUrl)}&format=json`,
+    tiktok: `https://www.tiktok.com/oembed?url=${encodeURIComponent(rawUrl)}`,
+    soundcloud: `https://soundcloud.com/oembed?url=${encodeURIComponent(rawUrl)}&format=json`,
+    twitter: `https://publish.twitter.com/oembed?url=${encodeURIComponent(rawUrl)}&format=json`,
+    instagram: `https://www.instagram.com/oembed?url=${encodeURIComponent(rawUrl)}`,
+  };
+
+  const endpoint = oembedEndpoints[platform];
+  if (endpoint) {
+    const d = await fetchOEmbed(endpoint);
+    if (d.title) info.title = String(d.title);
+    if (d.author_name) info.author = String(d.author_name);
+    if (d.thumbnail_url) info.thumbnail = String(d.thumbnail_url);
   }
 
-  // oEmbed-capable platforms (SoundCloud, X, Instagram).
-  const oembedUrl =
-    platform === 'soundcloud'
-      ? `https://soundcloud.com/oembed?url=${encodeURIComponent(rawUrl)}&format=json`
-      : platform === 'twitter'
-        ? `https://publish.twitter.com/oembed?url=${encodeURIComponent(rawUrl)}&format=json`
-        : platform === 'instagram'
-          ? `https://www.instagram.com/oembed?url=${encodeURIComponent(rawUrl)}`
-          : '';
+  // Degrade to honest placeholders for platforms without a working public API.
+  const fallbacks: Partial<Record<PlatformKey, { title: string; author: string }>> = {
+    spotify: { title: 'Spotify Track', author: 'Spotify' },
+    deezer: { title: 'Deezer Track', author: 'Deezer' },
+    applemusic: { title: 'Apple Music Track', author: 'Apple Music' },
+    br: { title: 'BeReal Post', author: 'BeReal User' },
+    tiktok: { title: 'TikTok Video', author: 'TikTok' },
+    facebook: { title: 'Facebook Video', author: 'Facebook' },
+    soundcloud: { title: 'SoundCloud Track', author: '' },
+    twitter: { title: 'X Post', author: 'X' },
+    instagram: { title: 'Instagram Post', author: '' },
+  };
 
-  if (oembedUrl) {
-    try {
-      const r = await fetch(oembedUrl, { headers: UA, signal: AbortSignal.timeout(6000) });
-      if (r.ok) {
-        const d = await r.json();
-        info.title = d.title || (platform === 'twitter' ? `${d.author_name || ''} on X` : '');
-        info.author = d.author_name || '';
-        info.thumbnail = d.thumbnail_url || '';
-      }
-    } catch {
-      // fall through to placeholders
-    }
-  }
-
-  if (!info.title) {
-    info.title =
-      platform === 'soundcloud' ? 'SoundCloud Track' : platform === 'twitter' ? 'X Post' : 'Instagram Post';
-  }
-  if (!info.author) info.author = platform === 'twitter' ? 'X' : '';
+  if (!info.title) info.title = fallbacks[platform]?.title || 'Media';
+  if (!info.author) info.author = fallbacks[platform]?.author || '';
   return info;
 }
 
