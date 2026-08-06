@@ -12,6 +12,7 @@ export type PlatformKey =
   | 'applemusic'
   | 'tiktok'
   | 'facebook'
+  | 'snapchat'
   | 'br';
 
 export type FormatKey = 'mp3' | 'mp4';
@@ -27,6 +28,7 @@ export const PLATFORM_KEYS: PlatformKey[] = [
   'applemusic',
   'tiktok',
   'facebook',
+  'snapchat',
   'br',
 ];
 
@@ -41,6 +43,7 @@ export const PLATFORM_LABELS: Record<PlatformKey, string> = {
   applemusic: 'Apple Music',
   tiktok: 'TikTok',
   facebook: 'Facebook',
+  snapchat: 'Snapchat',
   br: 'BeReal',
 };
 
@@ -55,6 +58,7 @@ export const PLATFORM_COLORS: Record<PlatformKey, string> = {
   applemusic: 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300',
   tiktok: 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300',
   facebook: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
+  snapchat: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400',
   br: 'bg-gray-900 text-white dark:bg-gray-100 dark:text-gray-900',
 };
 
@@ -94,6 +98,7 @@ export function detectPlatform(input: string): PlatformKey | null {
   if (host === 'deezer.com' || host === 'deezer.page.link' || host.endsWith('.deezer.com')) return 'deezer';
   if (host === 'facebook.com' || host === 'fb.watch' || host.endsWith('.facebook.com')) return 'facebook';
   if (host === 'tiktok.com' || host.endsWith('.tiktok.com')) return 'tiktok';
+  if (host === 'snapchat.com' || host === 'story.snapchat.com' || host === 't.snapchat.com' || host === 'w.snapchat.com' || host.endsWith('.snapchat.com')) return 'snapchat';
   if (host === 'music.apple.com' || host === 'itunes.apple.com' || host === 'geo.itunes.apple.com') return 'applemusic';
   if (host === 'bereal.com' || host.endsWith('.bereal.com')) return 'br';
   return null;
