@@ -30,6 +30,18 @@ A clean, fast multi-platform converter website built with Next.js. Supports conv
 - **Tailwind CSS 4**
 - **YouTube oEmbed API** + **Invidious API** for video info
 
+## Development
+
+```bash
+npm install
+npm run dev        # start the dev server at http://localhost:3000
+npm run typecheck  # TypeScript check without emitting
+npm run build      # production build (runs type checking)
+```
+
+Set `NEXT_PUBLIC_SITE_URL` to override the canonical URL used by the metadata,
+robots.txt and sitemap (defaults to the production site).
+
 ## Live Site
 
 https://yt-convert-xi.vercel.app/
