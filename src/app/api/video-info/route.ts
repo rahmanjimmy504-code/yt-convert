@@ -46,6 +46,30 @@ function cacheSet(key: string, body: VideoInfo) {
   cache.set(key, { at: Date.now(), body });
 }
 
+// Simple fixed-window rate limiter per client IP so a single heavy user
+// can't hammer the upstream oEmbed/Invidious APIs through this endpoint.
+// In-memory like the cache: per-serverless-instance, which is fine for a
+// soft abuse guard. (Add Redis/Upstash here if a hard global limit is needed.)
+const RATE_LIMIT = 30; // requests per window per IP
+const RATE_WINDOW_MS = 60_000;
+const rateMap = new Map<string, { count: number; start: number }>();
+
+/** Returns the number of seconds the client must wait when limited, else 0. */
+function rateLimited(ip: string): number {
+  const now = Date.now();
+  const e = rateMap.get(ip);
+  if (!e || now - e.start >= RATE_WINDOW_MS) {
+    rateMap.set(ip, { count: 1, start: now });
+    // Keep the map bounded on untrusted hosts.
+    if (rateMap.size > 1000) {
+      for (const [k, v] of rateMap) if (now - v.start >= RATE_WINDOW_MS) rateMap.delete(k);
+    }
+    return 0;
+  }
+  e.count += 1;
+  return e.count > RATE_LIMIT ? Math.ceil((e.start + RATE_WINDOW_MS - now) / 1000) : 0;
+}
+
 function formatDuration(totalSeconds: number): string {
   const s = Math.max(0, Math.floor(totalSeconds));
   const h = Math.floor(s / 3600);
@@ -65,6 +89,23 @@ function formatCount(n: number): string {
 
 function trimZero(s: string): string {
   return s.replace(/\.0$/, '');
+}
+
+/**
+ * Normalize a string coming from an upstream oEmbed/Invidious payload:
+ * strip control characters, collapse whitespace, and cap the length. These
+ * values are embedded straight into the client UI, so untrusted upstreams
+ * shouldn't be able to inject odd characters or unbounded payloads.
+ */
+function clean(v: unknown, max = 300): string {
+  if (typeof v !== 'string') return '';
+  return v.replace(/[\u0000-\u001F\u007F]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
+}
+
+/** Only accept http(s) thumbnail URLs; anything else is ignored. */
+function cleanUrl(v: unknown): string {
+  const s = clean(v, 500);
+  return /^https?:\/\//i.test(s) ? s : '';
 }
 
 function formatDate(unixSeconds: number): string {
@@ -107,17 +148,17 @@ async function fetchYouTube(platform: PlatformKey, rawUrl: string): Promise<Vide
 
   const [oembed, invidious] = await Promise.all([oembedP, invidiousP]);
 
-  if (oembed.title) info.title = String(oembed.title);
-  if (oembed.author_name) info.author = String(oembed.author_name);
-  if (oembed.thumbnail_url) info.thumbnail = String(oembed.thumbnail_url);
+  if (oembed.title) info.title = clean(oembed.title, 200);
+  if (oembed.author_name) info.author = clean(oembed.author_name, 120);
+  if (oembed.thumbnail_url) info.thumbnail = cleanUrl(oembed.thumbnail_url);
 
   if (invidious) {
     const d = invidious;
     if (typeof d.lengthSeconds === 'number') info.duration = formatDuration(d.lengthSeconds);
     if (typeof d.viewCount === 'number') info.views = formatCount(d.viewCount);
     if (typeof d.published === 'number') info.published = formatDate(d.published);
-    if (!info.title && d.title) info.title = String(d.title);
-    if (!info.author && d.author) info.author = String(d.author);
+    if (!info.title && d.title) info.title = clean(d.title, 200);
+    if (!info.author && d.author) info.author = clean(d.author, 120);
   }
   return info;
 }
@@ -142,9 +183,9 @@ async function fetchInfo(platform: PlatformKey, rawUrl: string): Promise<VideoIn
   const endpoint = oembedEndpoints[platform];
   if (endpoint) {
     const d = await fetchOEmbed(endpoint);
-    if (d.title) info.title = String(d.title);
-    if (d.author_name) info.author = String(d.author_name);
-    if (d.thumbnail_url) info.thumbnail = String(d.thumbnail_url);
+    if (d.title) info.title = clean(d.title, 200);
+    if (d.author_name) info.author = clean(d.author_name, 120);
+    if (d.thumbnail_url) info.thumbnail = cleanUrl(d.thumbnail_url);
   }
 
   // Degrade to honest placeholders for platforms without a working public API.
@@ -165,7 +206,21 @@ async function fetchInfo(platform: PlatformKey, rawUrl: string): Promise<VideoIn
   return info;
 }
 
+const RESPONSE_HEADERS = { 'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=600' };
+
 export async function GET(request: Request) {
+  const ip =
+    (request.headers.get('x-forwarded-for') || '').split(',')[0].trim() ||
+    request.headers.get('x-real-ip') ||
+    'unknown';
+  const retryAfter = rateLimited(ip);
+  if (retryAfter > 0) {
+    return NextResponse.json(
+      { error: 'Too many requests. Please wait a moment and try again.' },
+      { status: 429, headers: { 'Retry-After': String(retryAfter) } },
+    );
+  }
+
   const { searchParams } = new URL(request.url);
   const rawUrl = (searchParams.get('url') || '').trim();
 
@@ -190,14 +245,12 @@ export async function GET(request: Request) {
 
   const cacheKey = `${platform}|${rawUrl}`;
   const cached = cacheGet(cacheKey);
-  if (cached) return NextResponse.json(cached);
+  if (cached) return NextResponse.json(cached, { headers: RESPONSE_HEADERS });
 
   try {
     const info = await fetchInfo(platform, rawUrl);
     cacheSet(cacheKey, info);
-    return NextResponse.json(info, {
-      headers: { 'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=600' },
-    });
+    return NextResponse.json(info, { headers: RESPONSE_HEADERS });
   } catch (err) {
     console.error('[video-info] failed for', platform, err);
     return NextResponse.json({ error: 'Failed to fetch video info. Please try again.' }, { status: 500 });

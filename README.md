@@ -31,6 +31,10 @@ A clean, fast multi-platform converter website built with Next.js. Paste a link 
 - **YouTube oEmbed API** + **Invidious instances** for YouTube / YT Music metadata
 - **oEmbed** endpoints for Spotify, Deezer, TikTok, SoundCloud, X, Instagram
 - **Vendored Geist Variable** font (no runtime Google Fonts dependency)
+- **API hardening**: per-IP rate limiting, in-memory response caching, upstream payload sanitizing
+- **Security headers** via `next.config.ts` (`nosniff`, `Referrer-Policy`, `Permissions-Policy`)
+- **Generated OG / Twitter share images** and a web app manifest
+- **Keyboard shortcuts**: `/` focuses the link box, `Esc` starts over
 
 ## Project Structure
 
@@ -49,6 +53,9 @@ yt-convert/
 │   │   ├── globals.css          # Tailwind 4 base + dark-mode variant + Geist theme
 │   │   ├── icon.tsx             # App icon (SVG)
 │   │   ├── layout.tsx           # Root layout: <html>, theme-flash script, JSON-LD, metadata
+│   │   ├── manifest.ts          # Web app manifest (Add-to-Home-Screen metadata)
+│   │   ├── opengraph-image.tsx  # Generated OG share card (ImageResponse)
+│   │   ├── twitter-image.tsx    # X/Twitter card — re-exports the OG image
 │   │   ├── page.tsx             # Main UI (client component)
 │   │   ├── robots.ts            # robots.txt (uses NEXT_PUBLIC_SITE_URL)
 │   │   └── sitemap.ts           # sitemap.xml (uses NEXT_PUBLIC_SITE_URL)
@@ -123,12 +130,15 @@ interface VideoInfo {
 
 #### Validation rules (checked in order)
 
+0. Per-IP rate limit — 30 requests per 60 s (in-memory, fixed window); over the limit the route returns **`429` "Too many requests..."** with a `Retry-After` header
 1. `url` parameter must be present — **`400` "Missing url parameter"**
 2. `url` must be ≤ 2048 characters — **`400` "URL is too long"**
 3. `detectPlatform()` must return a known `PlatformKey` — **`400` "Unsupported URL."**
 4. `url` must parse as a valid `URL` — **`400` "Enter a full URL starting with https://"**
 5. Protocol must be `http:` or `https:` — **`400` "Only http(s) links are supported"**
 6. For `youtube` and `youtubemusic`, `extractYouTubeId()` must find an 11-char ID — **`400` "Invalid YouTube URL"**
+
+Strings taken from upstream oEmbed/Invidious payloads are sanitized (control characters stripped, whitespace collapsed, length capped) and thumbnails are only passed through when they are http(s) URLs.
 
 #### Fetch strategy
 
@@ -138,13 +148,13 @@ interface VideoInfo {
 
 #### Caching
 
-A small in-memory `Map` caches responses for **5 minutes** (`CACHE_TTL_MS = 5 * 60 * 1000`), capped at **100 entries** (LRU eviction). In addition, successful responses carry an HTTP `Cache-Control` header of `public, s-maxage=300, stale-while-revalidate=600`, so CDNs and browsers can serve stale content for up to 10 more minutes while revalidating.
+A small in-memory `Map` caches responses for **5 minutes** (`CACHE_TTL_MS = 5 * 60 * 1000`), capped at **100 entries** (LRU eviction). In addition, successful responses (including in-memory cache hits) carry an HTTP `Cache-Control` header of `public, s-maxage=300, stale-while-revalidate=600`, so CDNs and browsers can serve stale content for up to 10 more minutes while revalidating.
 
 On any unhandled error during `fetchInfo()`, the route logs the error and returns **`500` "Failed to fetch video info. Please try again."**
 
 ### Adding a Converter
 
-Converters are defined as an array of `Converter` objects in `src/app/page.tsx` (inside the `Home` component, the `all` constant). Each entry:
+Converters are defined as an array of `Converter` objects in `src/app/page.tsx` (the module-scope `ALL_CONVERTERS` constant, so it isn't rebuilt on every render). Each entry:
 
 ```typescript
 {
@@ -163,7 +173,7 @@ Converters are ranked per-request by `getConverters()`:
 2. Sort so converters supporting the currently selected format (`mp3`/`mp4`) come first.
 3. Break ties with the `recommended` flag, then the user's favorite (stored in `localStorage` under `yt-convert-fav`).
 
-To add a new converter, add an entry to the `all` array in `page.tsx`. No other file needs to change — the platform filter and format sort pick it up automatically.
+To add a new converter, add an entry to the `ALL_CONVERTERS` array in `page.tsx`. No other file needs to change — the platform filter and format sort pick it up automatically.
 
 ### Adding a Platform
 
