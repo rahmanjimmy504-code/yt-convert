@@ -32,7 +32,7 @@ A clean, fast multi-platform converter website built with Next.js. Paste a link 
 - **oEmbed** endpoints for Spotify, Deezer, TikTok, SoundCloud, X, Instagram
 - **Vendored Geist Variable** font (no runtime Google Fonts dependency)
 - **API hardening**: per-IP rate limiting, in-memory response caching, upstream payload sanitizing
-- **Security headers** via `next.config.ts` (`nosniff`, `Referrer-Policy`, `Permissions-Policy`)
+- **Security headers** via `next.config.ts` (`nosniff`, `Referrer-Policy`, `Permissions-Policy`, `X-DNS-Prefetch-Control`)
 - **Generated OG / Twitter share images** and a web app manifest
 - **Keyboard shortcuts**: `/` focuses the link box, `Esc` starts over
 
@@ -55,15 +55,20 @@ yt-convert/
 │   │   ├── layout.tsx           # Root layout: <html>, theme-flash script, JSON-LD, metadata
 │   │   ├── manifest.ts          # Web app manifest (Add-to-Home-Screen metadata)
 │   │   ├── opengraph-image.tsx  # Generated OG share card (ImageResponse)
-│   │   ├── twitter-image.tsx    # X/Twitter card — re-exports the OG image
+│   │   ├── twitter-image.tsx    # X/Twitter card — same artwork as the OG image, rendered via `og-card.tsx`
 │   │   ├── page.tsx             # Main UI (client component)
 │   │   ├── robots.ts            # robots.txt (uses NEXT_PUBLIC_SITE_URL)
 │   │   └── sitemap.ts           # sitemap.xml (uses NEXT_PUBLIC_SITE_URL)
 │   └── lib/
+│       ├── og-card.tsx          # Shared OG/Twitter card artwork (JSX for ImageResponse)
 │       └── platforms.ts         # Platform definitions, detection, colour/label helpers
+├── public/
+│   └── snapchat-logo.png        # Snapchat icon used in the "Supported Platforms" grid
 ├── next.config.ts
+├── postcss.config.mjs
 ├── tsconfig.json
 ├── package.json
+├── package-lock.json
 └── README.md
 ```
 
@@ -71,7 +76,7 @@ yt-convert/
 
 ### Prerequisites
 
-- **Node.js** 18 or later
+- **Node.js** 18.18 or later (Next.js 15 requirement)
 - **npm** (or your preferred package manager)
 
 ### Getting Started
@@ -91,7 +96,7 @@ The dev server runs at **http://localhost:3000** by default. Edit any file under
 | Command | What it does |
 |---|---|
 | `npm run dev` | Start the development server with hot reload |
-| `npm run build` | Production build (runs TypeScript type-checking first) |
+| `npm run build` | Production build (includes TypeScript type-checking) |
 | `npm run start` | Start the production server (requires a prior `build`) |
 | `npm run typecheck` | Run `tsc --noEmit` — type-check without emitting files |
 
@@ -142,13 +147,13 @@ Strings taken from upstream oEmbed/Invidious payloads are sanitized (control cha
 
 #### Fetch strategy
 
-- **YouTube / YT Music:** runs two requests in parallel — the YouTube oEmbed endpoint and a round-robin over three public Invidious instances (`inv.nadeko.net`, `invidious.nerdvpn.de`, `yewtu.be`). The first Invidious instance to respond with `200` wins. oEmbed supplies `title`, `author_name`, `thumbnail_url`; Invidious supplies `lengthSeconds`, `viewCount`, `published`, and backs up `title`/`author` if oEmbed came back empty.
+- **YouTube / YT Music:** runs two requests in parallel — the YouTube oEmbed endpoint and a fallback chain over three public Invidious instances (`inv.nadeko.net`, `invidious.nerdvpn.de`, `yewtu.be`), tried in order until one responds with `200`. oEmbed supplies `title`, `author_name`, `thumbnail_url`; Invidious supplies `lengthSeconds`, `viewCount`, `published`, and backs up `title`/`author` if oEmbed came back empty.
 - **oEmbed-capable platforms** (Spotify, Deezer, TikTok, SoundCloud, X, Instagram): a single oEmbed request to the platform's public endpoint.
 - **Platforms without a working public API** (Apple Music, BeReal, Facebook, Snapchat, and any platform where oEmbed returned nothing): degraded to honest placeholder metadata (`title: "Apple Music Track"`, `author: "Apple Music"`, etc.).
 
 #### Caching
 
-A small in-memory `Map` caches responses for **5 minutes** (`CACHE_TTL_MS = 5 * 60 * 1000`), capped at **100 entries** (LRU eviction). In addition, successful responses (including in-memory cache hits) carry an HTTP `Cache-Control` header of `public, s-maxage=300, stale-while-revalidate=600`, so CDNs and browsers can serve stale content for up to 10 more minutes while revalidating.
+A small in-memory `Map` caches responses for **5 minutes** (`CACHE_TTL_MS = 5 * 60 * 1000`), capped at **100 entries** (the oldest inserted entry is evicted when full). In addition, successful responses (including in-memory cache hits) carry an HTTP `Cache-Control` header of `public, s-maxage=300, stale-while-revalidate=600`, so CDNs and browsers can serve stale content for up to 10 more minutes while revalidating.
 
 On any unhandled error during `fetchInfo()`, the route logs the error and returns **`500` "Failed to fetch video info. Please try again."**
 
@@ -170,8 +175,8 @@ Converters are defined as an array of `Converter` objects in `src/app/page.tsx` 
 
 Converters are ranked per-request by `getConverters()`:
 1. Filter to converters that support the detected platform.
-2. Sort so converters supporting the currently selected format (`mp3`/`mp4`) come first.
-3. Break ties with the `recommended` flag, then the user's favorite (stored in `localStorage` under `yt-convert-fav`).
+2. Sort: the user's favorite (stored in `localStorage` under `yt-convert-fav`) is pinned to the top, then converters supporting the currently selected format (`mp3`/`mp4`) come before the rest.
+3. Break remaining ties with the `recommended` flag.
 
 To add a new converter, add an entry to the `ALL_CONVERTERS` array in `page.tsx`. No other file needs to change — the platform filter and format sort pick it up automatically.
 
@@ -199,23 +204,23 @@ Converter sites periodically change their URLs, redirect, or go offline. This pr
 
 1. Visit the converter's landing page directly in a browser to confirm it still resolves.
 2. Note: a live landing page does **not** guarantee the download flow still works — test the full copy → paste → convert → download path.
-3. Update the `url` (and `desc` if needed) in the `all` array in `page.tsx`, or remove the entry if it's gone for good.
+3. Update the `url` (and `desc` if needed) in the `ALL_CONVERTERS` array in `page.tsx`, or remove the entry if it's gone for good.
 
 ## Features
 
 - **Platform detection** — accepts full URLs or bare domains; more-specific subdomains (e.g. `music.youtube.com`) are matched before their parent domains.
 - **Rich video info** — thumbnail, title, author, duration, view count, and publish date from oEmbed + Invidious.
-- **Format-aware converter ranking** — converters that support the selected format (MP3 or MP4) are shown first.
+- **Format-aware converter ranking** — converters that support the selected format (MP3 or MP4) rank above those that don't (after your starred favorite, which is pinned to the top).
 - **Auto-copy** — the pasted URL is written to the clipboard when you click a converter card, with a fallback message if the browser blocks clipboard access.
 - **Auto-fetch** — after you paste a URL longer than 15 characters, info is fetched automatically after 800 ms (cancelled if you edit the input again).
 - **Favorites** — star a converter to keep it at the top of your ranked list (persisted in `localStorage`).
-- **History** — the last 6 lookups are stored in `localStorage` and shown as tappable chips.
+- **History** — the last 6 lookups are stored in `localStorage`; the 4 most recent are shown as tappable chips.
 - **Dark mode** — toggle in the header; preference is persisted and applied before first paint via an inline script in `layout.tsx` to avoid a flash.
 - **SEO** — full `Metadata` export (title template, description, Open Graph, Twitter card, JSON-LD `WebApplication` schema), a `sitemap.xml`, and a `robots.txt`. Both the sitemap and robots.txt use `NEXT_PUBLIC_SITE_URL` so they're correct on preview deployments.
 
 ## Deployment
 
-The project is designed for **Vercel** (zero-config Next.js hosting). Push to your repository and import it in the Vercel dashboard — `next build` and `next start` arealready wired up.
+The project is designed for **Vercel** (zero-config Next.js hosting). Push to your repository and import it in the Vercel dashboard — `next build` and `next start` are already wired up.
 
 The live site is at:
 
