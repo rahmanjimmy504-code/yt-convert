@@ -73,8 +73,8 @@ function sSetJ(k: string, v: unknown) {
   if (typeof window !== 'undefined') localStorage.setItem(k, JSON.stringify(v));
 }
 
-const tips = ['Paste any link from YouTube, Spotify, SoundCloud, X, Instagram, Deezer, Apple Music, TikTok, Facebook or BeReal.', 'Your URL is auto-copied when you pick a converter.', 'If one converter has ads, try another.', 'All converters are free, no sign-up needed.', 'Press Enter after pasting to fetch info instantly.'];
-const placeholders = ['https://www.youtube.com/watch?v=...', 'https://open.spotify.com/track/...', 'https://soundcloud.com/...', 'https://x.com/user/status/...', 'https://www.instagram.com/reel/...', 'https://music.apple.com/...', 'https://www.deezer.com/track/...', 'https://music.youtube.com/watch?v=...', 'https://www.tiktok.com/...', 'https://www.facebook.com/...', 'https://bereal.com/...'];
+const tips = ['Paste any link from YouTube, Spotify, SoundCloud, X, Instagram, Deezer, Apple Music, TikTok, Facebook, Snapchat or BeReal.', 'Your URL is auto-copied when you pick a converter.', 'If one converter has ads, try another.', 'All converters are free, no sign-up needed.', 'Press Enter after pasting to fetch info instantly.'];
+const placeholders = ['https://www.youtube.com/watch?v=...', 'https://open.spotify.com/track/...', 'https://soundcloud.com/...', 'https://x.com/user/status/...', 'https://www.instagram.com/reel/...', 'https://music.apple.com/...', 'https://www.deezer.com/track/...', 'https://music.youtube.com/watch?v=...', 'https://www.tiktok.com/...', 'https://www.facebook.com/...', 'https://www.snapchat.com/add/...', 'https://bereal.com/...'];
 
 export default function Home() {
   const [mounted, setMounted] = useState(false);
@@ -204,6 +204,8 @@ export default function Home() {
     { name: 'TTSave', url: 'https://ttsave.app/', desc: 'TikTok videos without watermark.', color: 'from-pink-500 to-pink-600', platforms: ['tiktok'], formats: ['mp4'], recommended: true },
     { name: 'SnapTik', url: 'https://snaptik.app/', desc: 'TikTok to MP4, no watermark.', color: 'from-cyan-500 to-cyan-600', platforms: ['tiktok'], formats: ['mp4'] },
     { name: 'FBDown', url: 'https://fbdown.net/', desc: 'Facebook videos in HD.', color: 'from-blue-600 to-blue-700', platforms: ['facebook'], formats: ['mp4'], recommended: true },
+    { name: 'VDFR', url: 'https://vdfr.app/snapchat-video-downloader', desc: 'Download Snapchat videos.', color: 'from-yellow-400 to-yellow-500', platforms: ['snapchat'], formats: ['mp4'], recommended: true },
+    { name: 'ViewSnapStories', url: 'https://viewsnapstories.com/snapchat-video-downloader', desc: 'Save Snapchat videos fast.', color: 'from-yellow-500 to-yellow-600', platforms: ['snapchat'], formats: ['mp4'] },
     { name: 'BeReal Saver', url: 'https://berealsaver.com/', desc: 'Download BeReal photos and videos.', color: 'from-gray-900 to-black', platforms: ['br'], formats: ['mp4'] },
   ];
 
@@ -270,7 +272,7 @@ export default function Home() {
             </div>
             <div>
               <h1 className="text-base font-bold tracking-tight">YT Convert</h1>
-              <p className="text-[11px] text-gray-500 dark:text-gray-400">YouTube {'\u00B7'} YT Music {'\u00B7'} SoundCloud {'\u00B7'} X {'\u00B7'} Instagram {'\u00B7'} Spotify {'\u00B7'} Deezer {'\u00B7'} Apple Music {'\u00B7'} TikTok {'\u00B7'} Facebook {'\u00B7'} BeReal</p>
+              <p className="text-[11px] text-gray-500 dark:text-gray-400">YouTube {'\u00B7'} YT Music {'\u00B7'} SoundCloud {'\u00B7'} X {'\u00B7'} Instagram {'\u00B7'} Spotify {'\u00B7'} Deezer {'\u00B7'} Apple Music {'\u00B7'} TikTok {'\u00B7'} Facebook {'\u00B7'} Snapchat {'\u00B7'} BeReal</p>
             </div>
           </div>
           <button onClick={toggleDark} aria-label="Toggle dark mode" className="w-9 h-9 rounded-xl bg-gray-100 dark:bg-gray-800 flex items-center justify-center hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors" title="Toggle dark mode">
@@ -501,6 +503,12 @@ export default function Home() {
                   <img src="https://cdn.simpleicons.org/facebook/ffffff" width="24" height="24" alt="Facebook" />
                 </div>
                 <span className="text-[11px] font-medium text-gray-500">Facebook</span>
+              </div>
+              <div className="flex flex-col items-center gap-1.5 group">
+                <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-[#FFFC00] to-[#E6E200] flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
+                  <img src="https://cdn.simpleicons.org/snapchat/000000" width="24" height="24" alt="Snapchat" />
+                </div>
+                <span className="text-[11px] font-medium text-gray-500">Snapchat</span>
               </div>
               <div className="flex flex-col items-center gap-1.5 group">
                 <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-gray-900 to-black flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
