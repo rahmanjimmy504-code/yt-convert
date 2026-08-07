@@ -16,6 +16,28 @@ export interface EmbedInfo {
 }
 
 /**
+ * SoundCloud's player accepts canonical soundcloud.com track URLs, but rejects
+ * otherwise-valid links from its mobile and sharing subdomains. Normalize only
+ * the known first-party aliases and leave the path, query, and hash untouched.
+ */
+function canonicalSoundCloudUrl(rawUrl: string): URL | null {
+  try {
+    const parsed = new URL(rawUrl);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+
+    const host = parsed.hostname.toLowerCase();
+    if (!['soundcloud.com', 'www.soundcloud.com', 'm.soundcloud.com', 'on.soundcloud.com'].includes(host)) {
+      return null;
+    }
+
+    parsed.hostname = 'soundcloud.com';
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Return an embeddable player for a supported link, or null when the
  * platform (or the specific URL shape) has no embed. Only http(s) URLs
  * are ever wrapped, mirroring the API route's validation.
@@ -32,10 +54,12 @@ export function getEmbed(platform: PlatformKey, rawUrl: string): EmbedInfo | nul
       return id ? { url: `https://www.youtube-nocookie.com/embed/${id}`, kind: 'video' } : null;
     }
     case 'soundcloud': {
-      // Only user/track style pages are playable; bare profile pages aren't.
-      if (!/^https:\/\/(www\.|m\.|on\.)?soundcloud\.com\/[^/?#\s]+\/[^/?#\s]+/i.test(u)) return null;
+      const canonical = canonicalSoundCloudUrl(u);
+      // Only user/track style pages are playable; bare profiles and short
+      // on.soundcloud.com share links do not identify a track for the widget.
+      if (!canonical || canonical.pathname.split('/').filter(Boolean).length < 2) return null;
       return {
-        url: `https://w.soundcloud.com/player/?url=${encodeURIComponent(u)}&visual=true&show_teaser=false`,
+        url: `https://w.soundcloud.com/player/?url=${encodeURIComponent(canonical.toString())}&visual=true&show_teaser=false`,
         kind: 'audio',
       };
     }

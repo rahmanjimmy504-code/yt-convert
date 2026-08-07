@@ -441,6 +441,9 @@ export default function Home() {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <NextLink href="/faq" className="h-9 px-3 rounded-xl bg-gray-100 dark:bg-gray-800 flex items-center justify-center text-xs font-semibold hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors">
+              FAQ
+            </NextLink>
             <button onClick={() => setShowHelp(s => !s)} aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)" className="w-9 h-9 rounded-xl bg-gray-100 dark:bg-gray-800 flex items-center justify-center hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors">
               <Keyboard size={18} />
             </button>
