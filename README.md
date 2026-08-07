@@ -96,7 +96,7 @@ The dev server runs at **http://localhost:3000** by default. Edit any file under
 | Command | What it does |
 |---|---|
 | `npm run dev` | Start the development server with hot reload |
-| `npm run build` | Production build (includes TypeScript type-checking) |
+| `Build the project` | Production build (includes TypeScript type-checking) |
 | `npm run start` | Start the production server (requires a prior `build`) |
 | `npm run typecheck` | Run `tsc --noEmit` — type-check without emitting files |
 
