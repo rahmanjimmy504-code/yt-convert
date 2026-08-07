@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useCallback, useEffect, useRef } from 'react';
+import NextLink from 'next/link';
 import {
   ArrowLeft,
   ArrowRight,
@@ -9,11 +10,15 @@ import {
   Clipboard,
   Download,
   ExternalLink,
+  Eye,
+  EyeOff,
   Film,
+  Keyboard,
   Link as LinkIcon,
   Moon,
   Music,
   Play,
+  Share2,
   Star,
   Sun,
   X,
@@ -27,6 +32,7 @@ import {
   type FormatKey,
   type PlatformKey,
 } from '@/lib/platforms';
+import { getEmbed } from '@/lib/embed';
 
 type Phase = 'input' | 'loading' | 'ready' | 'error';
 
@@ -74,7 +80,7 @@ function sSetJ(k: string, v: unknown) {
   if (typeof window !== 'undefined') localStorage.setItem(k, JSON.stringify(v));
 }
 
-const tips = ['Paste any link from YouTube, Spotify, SoundCloud, X, Instagram, Deezer, Apple Music, TikTok, Facebook, Snapchat or BeReal.', 'Your URL is auto-copied when you pick a converter.', 'If one converter has ads, try another.', 'All converters are free, no sign-up needed.', 'Press Enter after pasting to fetch info instantly.', 'Shortcuts: press / to jump to the link box, Esc to start over.'];
+const tips = ['Paste any link from YouTube, Spotify, SoundCloud, X, Instagram, Deezer, Apple Music, TikTok, Facebook, Snapchat or BeReal.', 'Your URL is auto-copied when you pick a converter.', 'If one converter has ads, try another.', 'All converters are free, no sign-up needed.', 'Press Enter after pasting to fetch info instantly.', 'Shortcuts: press / to jump to the link box, Esc to start over.', 'Drag and drop a link anywhere on the page to load it.', 'Click Preview to watch or listen before converting.', 'Press ? to see all keyboard shortcuts.'];
 const placeholders = ['https://www.youtube.com/watch?v=...', 'https://open.spotify.com/track/...', 'https://soundcloud.com/...', 'https://x.com/user/status/...', 'https://www.instagram.com/reel/...', 'https://music.apple.com/...', 'https://www.deezer.com/track/...', 'https://music.youtube.com/watch?v=...', 'https://www.tiktok.com/...', 'https://www.facebook.com/...', 'https://www.snapchat.com/add/...', 'https://bereal.com/...'];
 
 // Converter catalog lives at module scope: it never changes at runtime, so
@@ -124,6 +130,9 @@ export default function Home() {
   const [favorite, setFavorite] = useState('');
   const [phIdx, setPhIdx] = useState(0);
   const [linkCopied, setLinkCopied] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
+  const [dragging, setDragging] = useState(false);
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const convertersRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -133,6 +142,9 @@ export default function Home() {
   // reqId ensures a slow older response can never overwrite a newer one.
   const abortRef = useRef<AbortController | null>(null);
   const reqIdRef = useRef(0);
+  // dragenter/dragleave fire for every child element crossed, so a depth
+  // counter is needed to know when the pointer actually left the window.
+  const dragDepth = useRef(0);
 
   useEffect(() => {
     setMounted(true);
@@ -165,6 +177,58 @@ export default function Home() {
   useEffect(() => { const i = setInterval(() => setTipIdx(t => (t + 1) % tips.length), 5000); return () => clearInterval(i); }, []);
   useEffect(() => { const i = setInterval(() => setPhIdx(p => (p + 1) % placeholders.length), 4000); return () => clearInterval(i); }, []);
 
+  // Drag & drop: dropping a link anywhere on the page fills the input box.
+  // The regular validation/auto-fetch flow takes over from there.
+  useEffect(() => {
+    const hasLink = (dt: DataTransfer | null) =>
+      !!dt && Array.from(dt.types).some(t => t === 'text/uri-list' || t === 'text/plain');
+    const onDragEnter = (e: DragEvent) => {
+      if (!hasLink(e.dataTransfer)) return;
+      e.preventDefault();
+      dragDepth.current += 1;
+      setDragging(true);
+    };
+    const onDragOver = (e: DragEvent) => {
+      if (!hasLink(e.dataTransfer)) return;
+      e.preventDefault();
+    };
+    const onDragLeave = (e: DragEvent) => {
+      if (!hasLink(e.dataTransfer)) return;
+      dragDepth.current = Math.max(0, dragDepth.current - 1);
+      if (dragDepth.current === 0) setDragging(false);
+    };
+    const onDrop = (e: DragEvent) => {
+      if (!hasLink(e.dataTransfer)) return;
+      e.preventDefault();
+      dragDepth.current = 0;
+      setDragging(false);
+      const text = (e.dataTransfer?.getData('text/uri-list') || e.dataTransfer?.getData('text/plain') || '')
+        .split(/\r?\n/)[0]
+        ?.trim() || '';
+      // Only accept things that look like a link (same guard detectPlatform
+      // applies); everything else is ignored so file drops do nothing.
+      if (!text || (!/^https?:\/\//i.test(text) && !/^\w+\.\w{2,}/i.test(text))) return;
+      setUrl(text);
+      setPhase('input');
+      setError('');
+      setVideoInfo(null);
+      setLaunched(null);
+      setPreviewOpen(false);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      inputRef.current?.focus();
+    };
+    window.addEventListener('dragenter', onDragEnter);
+    window.addEventListener('dragover', onDragOver);
+    window.addEventListener('dragleave', onDragLeave);
+    window.addEventListener('drop', onDrop);
+    return () => {
+      window.removeEventListener('dragenter', onDragEnter);
+      window.removeEventListener('dragover', onDragOver);
+      window.removeEventListener('dragleave', onDragLeave);
+      window.removeEventListener('drop', onDrop);
+    };
+  }, []);
+
   const dp = url.trim() ? detectPlatform(url.trim()) : null;
 
   const scrollToConverters = useCallback(() => {
@@ -177,7 +241,7 @@ export default function Home() {
     if (!u) return;
     const plat = detectPlatform(u);
     if (!plat) { setError('Unsupported URL.'); setPhase('error'); return; }
-    setError(''); setPhase('loading'); setVideoInfo(null); setLaunched(null); setLinkCopied(false);
+    setError(''); setPhase('loading'); setVideoInfo(null); setLaunched(null); setLinkCopied(false); setPreviewOpen(false);
     // Cancel the previous lookup (if any) so it can't clobber this one.
     abortRef.current?.abort();
     const controller = new AbortController();
@@ -251,6 +315,10 @@ export default function Home() {
 
   const videoId = videoInfo ? extractYouTubeId(url.trim()) : null;
 
+  // Native player embed (YouTube, SoundCloud, Spotify, TikTok) backing the
+  // Preview toggle; null for platforms without a public embed endpoint.
+  const embed = videoInfo ? getEmbed(videoInfo.platform as PlatformKey, url.trim()) : null;
+
   const getConverters = useCallback(() => {
     const plat = videoInfo?.platform || (url.trim() ? detectPlatform(url.trim()) : null);
     if (!plat) return ALL_CONVERTERS.slice(0, 4);
@@ -283,7 +351,7 @@ export default function Home() {
     // Drop any in-flight lookup so its result can't reappear after the reset.
     abortRef.current?.abort();
     reqIdRef.current++;
-    setUrl(''); setPhase('input'); setError(''); setVideoInfo(null); setLaunched(null); setLinkCopied(false);
+    setUrl(''); setPhase('input'); setError(''); setVideoInfo(null); setLaunched(null); setLinkCopied(false); setPreviewOpen(false); setShowHelp(false);
     setFormat('mp4'); sSet('yt-convert-format', 'mp4');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }, []);
@@ -295,8 +363,24 @@ export default function Home() {
       copyTimer.current = setTimeout(() => setLinkCopied(false), 2000);
     }
   }, [url]);
+  // Share via the Web Share API where available (mobile browsers mostly);
+  // otherwise fall back to copying the link like the Copy button does.
+  const shareLink = useCallback(async () => {
+    const u = url.trim();
+    if (!u) return;
+    if (typeof navigator.share === 'function') {
+      try {
+        await navigator.share({ title: videoInfo?.title || 'YT Convert', text: videoInfo?.title || u, url: u });
+        return;
+      } catch (err) {
+        // The user dismissed the share sheet — nothing to do.
+        if (err instanceof Error && err.name === 'AbortError') return;
+      }
+    }
+    await copyLink();
+  }, [url, videoInfo, copyLink]);
   const clearUrl = useCallback(() => {
-    setUrl(''); setPhase('input'); setError(''); setVideoInfo(null); setLaunched(null);
+    setUrl(''); setPhase('input'); setError(''); setVideoInfo(null); setLaunched(null); setPreviewOpen(false);
     inputRef.current?.focus();
   }, []);
   const openOriginal = useCallback(() => {
@@ -304,12 +388,19 @@ export default function Home() {
     window.open(videoId ? 'https://www.youtube.com/watch?v=' + videoId : url.trim(), '_blank', 'noopener');
   }, [phase, videoId, url]);
 
-  // Global shortcuts: Esc starts over (from the ready/error states) and /
-  // jumps to the link box, matching common converter-site muscle memory.
+  // Global shortcuts: Esc closes the help panel or starts over (from the
+  // ready/error states), / jumps to the link box and ? toggles the shortcut
+  // list, matching common converter-site muscle memory.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && (phase === 'ready' || phase === 'error')) {
-        handleReset();
+      if (e.key === 'Escape') {
+        if (showHelp) { setShowHelp(false); return; }
+        if (phase === 'ready' || phase === 'error') handleReset();
+      } else if (e.key === '?') {
+        const t = e.target as HTMLElement | null;
+        // Don't hijack '?' typed into the link box or any other field.
+        if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) return;
+        setShowHelp(s => !s);
       } else if (e.key === '/' && phase === 'input' && document.activeElement !== inputRef.current) {
         e.preventDefault();
         inputRef.current?.focus();
@@ -317,7 +408,7 @@ export default function Home() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [phase, handleReset]);
+  }, [phase, handleReset, showHelp]);
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => { if (e.key === 'Enter' && (phase === 'input' || phase === 'error')) handleGetInfo(); };
   const handleUrlChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setUrl(e.target.value);
@@ -349,9 +440,14 @@ export default function Home() {
               <p className="text-[11px] text-gray-500 dark:text-gray-400">YouTube {'\u00B7'} YT Music {'\u00B7'} SoundCloud {'\u00B7'} X {'\u00B7'} Instagram {'\u00B7'} Spotify {'\u00B7'} Deezer {'\u00B7'} Apple Music {'\u00B7'} TikTok {'\u00B7'} Facebook {'\u00B7'} Snapchat {'\u00B7'} BeReal</p>
             </div>
           </div>
-          <button onClick={toggleDark} aria-label="Toggle dark mode" className="w-9 h-9 rounded-xl bg-gray-100 dark:bg-gray-800 flex items-center justify-center hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors" title="Toggle dark mode">
-            {dark ? <Sun size={18} /> : <Moon size={18} />}
-          </button>
+          <div className="flex items-center gap-2">
+            <button onClick={() => setShowHelp(s => !s)} aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)" className="w-9 h-9 rounded-xl bg-gray-100 dark:bg-gray-800 flex items-center justify-center hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors">
+              <Keyboard size={18} />
+            </button>
+            <button onClick={toggleDark} aria-label="Toggle dark mode" className="w-9 h-9 rounded-xl bg-gray-100 dark:bg-gray-800 flex items-center justify-center hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors" title="Toggle dark mode">
+              {dark ? <Sun size={18} /> : <Moon size={18} />}
+            </button>
+          </div>
         </div>
       </header>
 
@@ -426,6 +522,27 @@ export default function Home() {
                   {videoInfo.duration && <span className="absolute bottom-2 right-2 bg-black/80 text-white text-xs px-2 py-0.5 rounded">{videoInfo.duration}</span>}
                 </div>
               )}
+              {previewOpen && embed && (
+                <div className={
+                  embed.kind === 'video'
+                    ? 'aspect-video w-full rounded-xl overflow-hidden bg-black'
+                    : embed.kind === 'tiktok'
+                      ? 'max-w-[325px] mx-auto h-[560px] rounded-xl overflow-hidden bg-gray-100 dark:bg-gray-800'
+                      : videoInfo.platform === 'spotify'
+                        ? 'h-[152px] rounded-xl overflow-hidden'
+                        : 'h-[300px] rounded-xl overflow-hidden'
+                }>
+                  <iframe
+                    src={embed.url}
+                    title={'Preview of ' + (videoInfo.title || 'the media')}
+                    className="w-full h-full border-0"
+                    loading="lazy"
+                    allow="autoplay; encrypted-media; picture-in-picture; clipboard-write; web-share; fullscreen"
+                    allowFullScreen
+                    referrerPolicy="strict-origin-when-cross-origin"
+                  />
+                </div>
+              )}
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0 flex-1">
                   <h3 className="font-semibold text-sm line-clamp-2">{videoInfo.title}</h3>
@@ -433,6 +550,11 @@ export default function Home() {
                   <div className="flex items-center gap-3 mt-1.5 flex-wrap">
                     {videoInfo.views && <span className="text-[11px] text-gray-400">{videoInfo.views} views</span>}
                     {videoInfo.published && <span className="text-[11px] text-gray-400">{videoInfo.published}</span>}
+                    {embed && (
+                      <button onClick={() => setPreviewOpen(p => !p)} className="text-[11px] font-medium text-red-600 dark:text-red-400 hover:opacity-75 transition-opacity flex items-center gap-1">
+                        {previewOpen ? <><EyeOff className="w-3 h-3" /> Hide preview</> : <><Eye className="w-3 h-3" /> Preview</>}
+                      </button>
+                    )}
                   </div>
                 </div>
                 {videoInfo.platform && <span className={'text-xs font-medium px-2.5 py-1 rounded-full flex-shrink-0 ' + platformColor(videoInfo.platform)}>{platformLabel(videoInfo.platform)}</span>}
@@ -455,6 +577,9 @@ export default function Home() {
                       <Clipboard className="w-3 h-3" /> Copy link
                     </button>
                   )}
+                  <button onClick={shareLink} className="text-xs text-gray-500 hover:text-red-500 flex items-center gap-1" title="Share this link">
+                    <Share2 className="w-3 h-3" /> Share
+                  </button>
                   <button onClick={handleReset} className="text-xs text-gray-500 hover:text-red-500 flex items-center gap-1" title="Start over (Esc)">
                     <ArrowLeft className="w-3 h-3" /> New
                   </button>
@@ -634,8 +759,55 @@ export default function Home() {
       </main>
 
       <footer className="border-t border-gray-200 dark:border-gray-800 py-3 mt-auto">
-        <p className="text-center text-[11px] text-gray-400">YT Convert {'\u2014'} For personal use only</p>
+        <p className="text-center text-[11px] text-gray-400">
+          YT Convert {'\u2014'} For personal use only {'\u00B7'}{' '}
+          <NextLink href="/faq" className="hover:text-red-500 underline-offset-2 hover:underline transition-colors">FAQ</NextLink>
+        </p>
       </footer>
+
+      {dragging && (
+        <div className="fixed inset-0 z-[70] bg-red-500/10 dark:bg-red-500/20 backdrop-blur-sm flex items-center justify-center pointer-events-none">
+          <div className="bg-white dark:bg-gray-900 border-2 border-dashed border-red-400 dark:border-red-700 rounded-2xl px-8 py-6 text-center shadow-xl">
+            <LinkIcon className="w-6 h-6 text-red-500 mx-auto mb-2" />
+            <p className="text-sm font-semibold">Drop your link here</p>
+            <p className="text-[11px] text-gray-500 mt-1">YouTube, Spotify, TikTok and 9 more</p>
+          </div>
+        </div>
+      )}
+
+      {showHelp && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Keyboard shortcuts"
+          className="fixed inset-0 z-[80] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4"
+          onClick={() => setShowHelp(false)}
+        >
+          <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 shadow-2xl w-full max-w-sm p-5 space-y-3" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h2 className="font-semibold text-sm flex items-center gap-2"><Keyboard className="w-4 h-4" /> Keyboard shortcuts</h2>
+              <button onClick={() => setShowHelp(false)} aria-label="Close keyboard shortcuts" className="w-7 h-7 rounded-lg flex items-center justify-center text-gray-400 hover:text-red-500 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <ul className="space-y-2 text-xs text-gray-500 dark:text-gray-400">
+              {[
+                ['/', 'Focus the link box'],
+                ['Enter', 'Fetch info'],
+                ['Esc', 'Start over / close dialogs'],
+                ['?', 'Toggle this panel'],
+                ['Ctrl + V', 'Paste your link into the converter tab'],
+              ].map(([k, d]) => (
+                <li key={k} className="flex items-center justify-between gap-3">
+                  <span>{d}</span>
+                  <kbd className="px-2 py-0.5 rounded-md bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 font-mono text-[11px] text-gray-700 dark:text-gray-300 flex-shrink-0">{k}</kbd>
+                </li>
+              ))}
+            </ul>
+            <p className="text-[11px] text-gray-400">You can also drag and drop a link anywhere on the page.</p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

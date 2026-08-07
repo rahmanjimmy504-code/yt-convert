@@ -34,7 +34,9 @@ A clean, fast multi-platform converter website built with Next.js. Paste a link 
 - **API hardening**: per-IP rate limiting, in-memory response caching, upstream payload sanitizing
 - **Security headers** via `next.config.ts` (`nosniff`, `Referrer-Policy`, `Permissions-Policy`, `X-DNS-Prefetch-Control`)
 - **Generated OG / Twitter share images** and a web app manifest
-- **Keyboard shortcuts**: `/` focuses the link box, `Esc` starts over
+- **Keyboard shortcuts**: `/` focuses the link box, `Esc` starts over, `?` opens the shortcut list
+- **Native media previews** (YouTube, SoundCloud, Spotify, TikTok) via the platforms' own embed players
+- **FAQ page** (`/faq`) with `FAQPage` JSON-LD, included in the sitemap
 
 ## Project Structure
 
@@ -45,6 +47,8 @@ yt-convert/
 │   │   ├── api/
 │   │   │   └── video-info/
 │   │   │       └── route.ts     # GET /api/video-info?url=... — metadata lookup
+│   │   ├── faq/
+│   │   │   └── page.tsx         # FAQ page (static, FAQPage JSON-LD)
 │   │   ├── favicon.ico/
 │   │   │   └── route.ts         # Dynamic favicon
 │   │   ├── fonts/
@@ -58,8 +62,9 @@ yt-convert/
 │   │   ├── twitter-image.tsx    # X/Twitter card — same artwork as the OG image, rendered via `og-card.tsx`
 │   │   ├── page.tsx             # Main UI (client component)
 │   │   ├── robots.ts            # robots.txt (uses NEXT_PUBLIC_SITE_URL)
-│   │   └── sitemap.ts           # sitemap.xml (uses NEXT_PUBLIC_SITE_URL)
+│   │   └── sitemap.ts           # sitemap.xml — home + FAQ (uses NEXT_PUBLIC_SITE_URL)
 │   └── lib/
+│       ├── embed.ts             # Native player embed URLs (Preview toggle)
 │       ├── og-card.tsx          # Shared OG/Twitter card artwork (JSX for ImageResponse)
 │       └── platforms.ts         # Platform definitions, detection, colour/label helpers
 ├── public/
@@ -198,6 +203,9 @@ To add support for a new platform, touch three files:
    - Add one or more `Converter` entries whose `platforms` array includes the new key.
    - Optionally add a placeholder to the `placeholders` array and an icon tile in the "Supported Platforms" section.
 
+4. **`src/lib/embed.ts`** *(optional)*
+   - If the platform offers a public embed player, add a case to `getEmbed()` so the result card shows the **Preview** toggle for it.
+
 ### Keeping Converter Links Current
 
 Converter sites periodically change their URLs, redirect, or go offline. This project does not auto-verify converter links. When a converter stops working:
@@ -215,7 +223,12 @@ Converter sites periodically change their URLs, redirect, or go offline. This pr
 - **Auto-fetch** — after you paste a URL longer than 15 characters, info is fetched automatically after 800 ms (cancelled if you edit the input again).
 - **Favorites** — star a converter to keep it at the top of your ranked list (persisted in `localStorage`).
 - **History** — the last 6 lookups are stored in `localStorage`; the 4 most recent are shown as tappable chips.
+- **Embedded previews** — a **Preview** toggle on the result card plays the media in the platform's own embed player (YouTube/YT Music via `youtube-nocookie.com`, SoundCloud's visual player, Spotify's `/embed` endpoint, TikTok's `embed/v2`). Platforms without an embed simply don't show the toggle.
+- **Drag & drop** — dropping a link anywhere on the page fills the input box (with a full-screen drop hint); the normal validation and auto-fetch flow takes over from there.
+- **Share** — a Share button on the result screen uses the Web Share API where available and falls back to copying the link otherwise.
+- **Shortcuts panel** — `?` (or the keyboard icon in the header) opens an overlay listing every keyboard shortcut.
 - **Dark mode** — toggle in the header; preference is persisted and applied before first paint via an inline script in `layout.tsx` to avoid a flash.
+- **FAQ page** — static `/faq` route answering common questions, with `FAQPage` structured data and its own sitemap entry.
 - **SEO** — full `Metadata` export (title template, description, Open Graph, Twitter card, JSON-LD `WebApplication` schema), a `sitemap.xml`, and a `robots.txt`. Both the sitemap and robots.txt use `NEXT_PUBLIC_SITE_URL` so they're correct on preview deployments.
 
 ## Deployment
