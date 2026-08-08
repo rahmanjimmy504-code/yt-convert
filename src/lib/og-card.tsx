@@ -32,8 +32,11 @@ export function ogCardJsx(): ReactElement {
           boxShadow: '0 24px 60px rgba(239, 68, 68, 0.35)',
         }}
       >
+        {/* Brand mark: a bold download arrow (the YT Convert logo). Same
+            glyph as the favicon (src/app/icon.tsx) so the brand stays
+            consistent across the share card, browser tab and header. */}
         <svg width="64" height="64" viewBox="0 0 24 24" fill="white">
-          <path d="M8 5.5v13l11-6.5-11-6.5z" />
+          <path d="M8.5 3.5 H15.5 V11.5 H20 L12 20.5 L4 11.5 H8.5 Z" />
         </svg>
       </div>
       <div
