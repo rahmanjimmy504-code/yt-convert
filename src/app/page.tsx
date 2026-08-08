@@ -804,6 +804,10 @@ export default function Home() {
         <p className="text-center text-[11px] text-gray-400">
           YT Convert {'\u2014'} For personal use only {'\u00B7'}{' '}
           <NextLink href="/faq" className="hover:text-red-500 underline-offset-2 hover:underline transition-colors">FAQ</NextLink>
+          {' \u00B7 '}
+          <NextLink href="/privacy" className="hover:text-red-500 underline-offset-2 hover:underline transition-colors">Privacy</NextLink>
+          {' \u00B7 '}
+          <NextLink href="/terms" className="hover:text-red-500 underline-offset-2 hover:underline transition-colors">Terms</NextLink>
         </p>
       </footer>
 

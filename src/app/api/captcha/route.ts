@@ -2,8 +2,9 @@ import { NextResponse } from 'next/server';
 import {
   createLocalCaptcha,
   isTurnstileConfigured,
-  verifyLocalCaptcha,
+  verifyLocalCaptchaDetailed,
   type LocalCaptchaMode,
+  type LocalCaptchaVerifyResult,
 } from '@/lib/captcha';
 
 export const runtime = 'nodejs';
@@ -49,14 +50,19 @@ export async function GET(request: Request) {
     );
   }
 
+  const { searchParams } = new URL(request.url);
+  // backup=1 forces the dependency-free local challenge even when Turnstile
+  // keys are configured — this powers the "Use backup CAPTCHA" fallback in the
+  // client when the Turnstile widget cannot connect or complete.
+  const backup = searchParams.get('backup') === '1';
+
   // The public site key controls the client widget. This endpoint is only
   // needed by the dependency-free local fallback.
-  if (isTurnstileConfigured()) {
+  if (isTurnstileConfigured() && !backup) {
     return NextResponse.json({ provider: 'turnstile' }, { headers: { 'Cache-Control': 'no-store' } });
   }
 
-  const modeParam = new URL(request.url).searchParams.get('mode');
-  const mode: LocalCaptchaMode = modeParam === 'math' ? 'math' : 'visual';
+  const mode: LocalCaptchaMode = searchParams.get('mode') === 'math' ? 'math' : 'visual';
   return NextResponse.json(
     { provider: 'local', ...createLocalCaptcha(mode) },
     { headers: { 'Cache-Control': 'no-store' } },
@@ -73,13 +79,6 @@ export async function POST(request: Request) {
     );
   }
 
-  if (isTurnstileConfigured()) {
-    return NextResponse.json(
-      { error: 'CAPTCHA verification is handled by the Turnstile widget.' },
-      { status: 400 },
-    );
-  }
-
   let body: { challengeId?: unknown; answer?: unknown };
   try {
     body = (await request.json()) as { challengeId?: unknown; answer?: unknown };
@@ -93,7 +92,17 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Enter the CAPTCHA answer.' }, { status: 400 });
   }
 
-  const token = verifyLocalCaptcha(challengeId, answer);
-  if (!token) return NextResponse.json({ error: 'That CAPTCHA answer is not correct.' }, { status: 400 });
-  return NextResponse.json({ token }, { headers: { 'Cache-Control': 'no-store' } });
+  // Local challenges can only be created via GET (optionally in backup mode),
+  // so verification is always meaningful even when Turnstile keys are present.
+  const result = verifyLocalCaptchaDetailed(challengeId, answer);
+  if (!result.ok) {
+    const messages: Record<Extract<LocalCaptchaVerifyResult, { ok: false }>['reason'], string> = {
+      missing: 'This CAPTCHA is no longer valid. Get a new one.',
+      expired: 'This CAPTCHA has expired. Get a new one.',
+      'wrong-answer': 'That answer is not correct. Try again or refresh the challenge.',
+      'too-many-attempts': 'Too many attempts on this CAPTCHA. Get a new one.',
+    };
+    return NextResponse.json({ error: messages[result.reason] }, { status: 400 });
+  }
+  return NextResponse.json({ token: result.token }, { headers: { 'Cache-Control': 'no-store' } });
 }
