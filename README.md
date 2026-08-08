@@ -32,6 +32,7 @@ A clean, fast multi-platform converter website built with Next.js. Paste a link 
 - **oEmbed** endpoints for Spotify, Deezer, TikTok, SoundCloud, X, Instagram
 - **Vendored Geist Variable** font (no runtime Google Fonts dependency)
 - **API hardening**: per-IP rate limiting, in-memory response caching, upstream payload sanitizing
+- **Human verification**: Cloudflare Turnstile in production, with an accessible dependency-free CAPTCHA fallback for local development
 - **Security headers** via `next.config.ts` (`nosniff`, `Referrer-Policy`, `Permissions-Policy`, `X-DNS-Prefetch-Control`)
 - **Generated OG / Twitter share images** and a web app manifest
 - **Keyboard shortcuts**: `/` focuses the link box, `Esc` starts over, `?` opens the shortcut list
@@ -45,6 +46,8 @@ yt-convert/
 ├── src/
 │   ├── app/
 │   │   ├── api/
+│   │   │   ├── captcha/
+│   │   │   │   └── route.ts     # GET/POST /api/captcha — local CAPTCHA fallback
 │   │   │   └── video-info/
 │   │   │       └── route.ts     # GET /api/video-info?url=... — metadata lookup
 │   │   ├── faq/
@@ -63,10 +66,13 @@ yt-convert/
 │   │   ├── page.tsx             # Main UI (client component)
 │   │   ├── robots.ts            # robots.txt (uses NEXT_PUBLIC_SITE_URL)
 │   │   └── sitemap.ts           # sitemap.xml — home + FAQ (uses NEXT_PUBLIC_SITE_URL)
+│   ├── components/
+│   │   └── captcha.tsx          # Turnstile widget + accessible local CAPTCHA fallback
 │   └── lib/
-│       ├── embed.ts             # Native player embed URLs (Preview toggle)
-│       ├── og-card.tsx          # Shared OG/Twitter card artwork (JSX for ImageResponse)
-│       └── platforms.ts         # Platform definitions, detection, colour/label helpers
+│       ├── captcha.ts           # Server-side CAPTCHA challenge/token verification
+│       ├── embed.ts              # Native player embed URLs (Preview toggle)
+│       ├── og-card.tsx           # Shared OG/Twitter card artwork (JSX for ImageResponse)
+│       └── platforms.ts          # Platform definitions, detection, colour/label helpers
 ├── public/
 │   └── snapchat-logo.png        # Snapchat icon used in the "Supported Platforms" grid
 ├── next.config.ts
@@ -74,6 +80,7 @@ yt-convert/
 ├── tsconfig.json
 ├── package.json
 ├── package-lock.json
+├── .env.example
 └── README.md
 ```
 
@@ -112,8 +119,19 @@ The dev server runs at **http://localhost:3000** by default. Edit any file under
 | Variable | Default | Purpose |
 |---|---|---|
 | `NEXT_PUBLIC_SITE_URL` | `https://yt-convert-xi.vercel.app` | Canonical URL used by `layout.tsx` metadata, `robots.ts`, and `sitemap.ts` |
+| `NEXT_PUBLIC_TURNSTILE_SITE_KEY` | *(empty)* | Public Cloudflare Turnstile site key; set this together with `TURNSTILE_SECRET_KEY` in production |
+| `TURNSTILE_SECRET_KEY` | *(empty)* | Server-only Cloudflare Turnstile secret used to verify the human proof |
+| `CAPTCHA_SECRET` | *(random per process)* | Stable secret used to sign the local fallback's proof tokens; set it in multi-instance production deployments |
 
-Set it in a `.env.local` file (excluded from Git via `.gitignore`) or in your hosting platform's environment settings. The production default is correct for the Vercel deployment, so you usually don't need to set it.
+Set values in a `.env.local` file (excluded from Git via `.gitignore`) or in your hosting platform's environment settings. The production default is correct for the Vercel deployment, so you usually don't need to set `NEXT_PUBLIC_SITE_URL`.
+
+### CAPTCHA / human verification
+
+Every metadata lookup is gated by a one-time human-verification proof. The client sends the proof in the `X-Captcha-Token` header and `/api/video-info` rejects missing, expired, invalid, or already-consumed tokens with **`403`**.
+
+For production, create a [Cloudflare Turnstile](https://www.cloudflare.com/products/turnstile/) widget and set both `NEXT_PUBLIC_TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY`. The browser renders Turnstile and the server verifies its token against Cloudflare's Siteverify endpoint; the secret is never exposed to the client.
+
+When Turnstile keys are not configured, local and preview builds use the built-in CAPTCHA at `/api/captcha`: a noisy character challenge with an accessible one-time math alternative. The answer is checked on the server, proof tokens are signed, short-lived, and single-use. This fallback is useful for development, but production deployments should use Turnstile for stronger bot detection. `CAPTCHA_SECRET` should be stable across instances; the fallback stores challenges in memory, consistent with the existing cache and soft rate limiter, so a shared datastore is needed if challenge state must span serverless instances.
 
 Example `.env.local`:
 ```env
@@ -147,6 +165,7 @@ interface VideoInfo {
 4. `url` must parse as a valid `URL` — **`400` "Enter a full URL starting with https://"**
 5. Protocol must be `http:` or `https:` — **`400` "Only http(s) links are supported"**
 6. For `youtube` and `youtubemusic`, `extractYouTubeId()` must find an 11-char ID — **`400` "Invalid YouTube URL"**
+7. `X-Captcha-Token` must contain a valid one-time human-verification proof — **`403` "Complete the CAPTCHA before requesting media information."**
 
 Strings taken from upstream oEmbed/Invidious payloads are sanitized (control characters stripped, whitespace collapsed, length capped) and thumbnails are only passed through when they are http(s) URLs.
 

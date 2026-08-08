@@ -1,5 +1,8 @@
 import { NextResponse } from 'next/server';
 import { detectPlatform, extractYouTubeId, type PlatformKey } from '@/lib/platforms';
+import { verifyCaptchaToken } from '@/lib/captcha';
+
+export const runtime = 'nodejs';
 
 export interface VideoInfo {
   title: string;
@@ -53,6 +56,24 @@ function cacheSet(key: string, body: VideoInfo) {
 const RATE_LIMIT = 30; // requests per window per IP
 const RATE_WINDOW_MS = 60_000;
 const rateMap = new Map<string, { count: number; start: number }>();
+// Proof tokens are single-use on this server instance as an additional guard
+// for the local fallback. Cloudflare Turnstile tokens are also single-use at
+// its Siteverify endpoint.
+const usedCaptchaTokens = new Map<string, number>();
+
+function captchaTokenAlreadyUsed(token: string): boolean {
+  const now = Date.now();
+  for (const [key, expiresAt] of usedCaptchaTokens) {
+    if (expiresAt <= now) usedCaptchaTokens.delete(key);
+  }
+  if (usedCaptchaTokens.has(token)) return true;
+  if (usedCaptchaTokens.size >= 2000) {
+    const oldest = usedCaptchaTokens.keys().next().value;
+    if (oldest !== undefined) usedCaptchaTokens.delete(oldest);
+  }
+  usedCaptchaTokens.set(token, now + 10 * 60 * 1000);
+  return false;
+}
 
 /** Returns the number of seconds the client must wait when limited, else 0. */
 function rateLimited(ip: string): number {
@@ -241,6 +262,14 @@ export async function GET(request: Request) {
   }
   if ((platform === 'youtube' || platform === 'youtubemusic') && !extractYouTubeId(rawUrl)) {
     return NextResponse.json({ error: 'Invalid YouTube URL' }, { status: 400 });
+  }
+
+  const captchaToken = request.headers.get('x-captcha-token') || '';
+  if (!captchaToken || !(await verifyCaptchaToken(captchaToken, ip)) || captchaTokenAlreadyUsed(captchaToken)) {
+    return NextResponse.json(
+      { error: 'Complete the CAPTCHA before requesting media information.' },
+      { status: 403, headers: { 'Cache-Control': 'no-store' } },
+    );
   }
 
   const cacheKey = `${platform}|${rawUrl}`;

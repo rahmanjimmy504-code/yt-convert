@@ -33,6 +33,7 @@ import {
   type PlatformKey,
 } from '@/lib/platforms';
 import { getEmbed } from '@/lib/embed';
+import Captcha from '@/components/captcha';
 
 type Phase = 'input' | 'loading' | 'ready' | 'error';
 
@@ -132,6 +133,8 @@ export default function Home() {
   const [linkCopied, setLinkCopied] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
+  const [captchaToken, setCaptchaToken] = useState('');
+  const [captchaResetKey, setCaptchaResetKey] = useState(0);
   const [dragging, setDragging] = useState(false);
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const convertersRef = useRef<HTMLDivElement>(null);
@@ -236,11 +239,21 @@ export default function Home() {
     scrollTimer.current = setTimeout(() => convertersRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
   }, []);
 
+  const handleCaptchaVerified = useCallback((token: string) => {
+    setCaptchaToken(token);
+    if (token) setError('');
+  }, []);
+
   const handleGetInfo = useCallback(async () => {
     const u = url.trim();
     if (!u) return;
     const plat = detectPlatform(u);
     if (!plat) { setError('Unsupported URL.'); setPhase('error'); return; }
+    if (!captchaToken) {
+      setError('Complete the CAPTCHA to continue.');
+      setPhase('error');
+      return;
+    }
     setError(''); setPhase('loading'); setVideoInfo(null); setLaunched(null); setLinkCopied(false); setPreviewOpen(false);
     // Cancel the previous lookup (if any) so it can't clobber this one.
     abortRef.current?.abort();
@@ -249,12 +262,26 @@ export default function Home() {
     const reqId = ++reqIdRef.current;
     const stale = () => reqId !== reqIdRef.current;
     try {
-      const r = await fetch('/api/video-info?url=' + encodeURIComponent(u), { signal: controller.signal });
+      const r = await fetch('/api/video-info?url=' + encodeURIComponent(u), {
+        signal: controller.signal,
+        headers: { 'X-Captcha-Token': captchaToken },
+      });
       if (!r.ok) {
         const d = await r.json().catch(() => ({}));
         const msg = (d as { error?: string }).error || 'Failed';
-        // 4xx means the link itself was rejected — show that message in the
-        // regular error state instead of the graceful "no info" card.
+        // A proof token is single-use. If it expired or was consumed, ask for
+        // a fresh CAPTCHA instead of leaving the user with a dead Go button.
+        if (r.status === 403 && msg.toLowerCase().includes('captcha')) {
+          if (!stale()) {
+            setCaptchaToken('');
+            setCaptchaResetKey(key => key + 1);
+            setError(msg);
+            setPhase('error');
+          }
+          return;
+        }
+        // Other 4xx responses mean the link itself was rejected — show that
+        // message in the regular error state instead of the graceful card.
         if (r.status >= 400 && r.status < 500) {
           if (!stale()) { setError(msg); setPhase('error'); }
           return;
@@ -288,7 +315,7 @@ export default function Home() {
       setPhase('ready');
       scrollToConverters();
     }
-  }, [url, scrollToConverters]);
+  }, [url, captchaToken, scrollToConverters]);
 
   const handlePaste = useCallback(async () => {
     try {
@@ -299,14 +326,14 @@ export default function Home() {
 
   useEffect(() => {
     if (autoTimer.current) { clearTimeout(autoTimer.current); autoTimer.current = null; }
-    if (phase === 'input' || phase === 'error') {
+    if (captchaToken && (phase === 'input' || phase === 'error')) {
       const u = url.trim();
       if (detectPlatform(u) && u.length > 15 && /^https?:\/\//i.test(u)) {
         autoTimer.current = setTimeout(() => handleGetInfo(), 800);
       }
     }
     return () => { if (autoTimer.current) { clearTimeout(autoTimer.current); autoTimer.current = null; } };
-  }, [url, phase, handleGetInfo]);
+  }, [url, phase, captchaToken, handleGetInfo]);
 
   const handleFormatChange = useCallback((f: FormatKey) => {
     setFormat(f);
@@ -352,6 +379,8 @@ export default function Home() {
     abortRef.current?.abort();
     reqIdRef.current++;
     setUrl(''); setPhase('input'); setError(''); setVideoInfo(null); setLaunched(null); setLinkCopied(false); setPreviewOpen(false); setShowHelp(false);
+    setCaptchaToken('');
+    setCaptchaResetKey(key => key + 1);
     setFormat('mp4'); sSet('yt-convert-format', 'mp4');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }, []);
@@ -381,6 +410,8 @@ export default function Home() {
   }, [url, videoInfo, copyLink]);
   const clearUrl = useCallback(() => {
     setUrl(''); setPhase('input'); setError(''); setVideoInfo(null); setLaunched(null); setPreviewOpen(false);
+    setCaptchaToken('');
+    setCaptchaResetKey(key => key + 1);
     inputRef.current?.focus();
   }, []);
   const openOriginal = useCallback(() => {
@@ -474,7 +505,7 @@ export default function Home() {
               )}
             </div>
             {(phase === 'input' || phase === 'error') && (
-              <button onClick={handleGetInfo} disabled={!url.trim()} className="h-11 px-5 rounded-xl bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white text-sm font-semibold shadow-lg shadow-red-500/20 disabled:opacity-40 disabled:cursor-not-allowed transition-all flex items-center gap-2">
+              <button onClick={handleGetInfo} disabled={!url.trim() || !captchaToken} aria-disabled={!url.trim() || !captchaToken} title={!captchaToken ? 'Complete the CAPTCHA first' : 'Fetch link information'} className="h-11 px-5 rounded-xl bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white text-sm font-semibold shadow-lg shadow-red-500/20 disabled:opacity-40 disabled:cursor-not-allowed transition-all flex items-center gap-2">
                 Go <ArrowRight className="w-4 h-4" />
               </button>
             )}
@@ -487,6 +518,9 @@ export default function Home() {
             )}
             {dp && phase === 'input' && <span className={'text-xs font-medium px-2.5 py-0.5 rounded-full ' + platformColor(dp)}>{platformLabel(dp)}</span>}
           </div>
+          {(phase === 'input' || phase === 'error') && (
+            <Captcha onVerified={handleCaptchaVerified} resetKey={captchaResetKey} />
+          )}
           {phase === 'input' && (
             <div className="space-y-2">
               <label className="text-sm font-semibold">Format</label>
