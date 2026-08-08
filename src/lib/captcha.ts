@@ -5,6 +5,12 @@ import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
  * It keeps the project usable in local development while still making the
  * production integration fail closed when TURNSTILE_SECRET_KEY is present.
  *
+ * Supports multiple providers:
+ * - Cloudflare Turnstile (primary when configured)
+ * - Google reCAPTCHA v2 (fallback alternative)
+ * - hCaptcha (fallback alternative)
+ * - Local visual/math challenge (always available as ultimate fallback / backup)
+ *
  * The stores intentionally follow the same in-memory convention as the
  * metadata cache/rate limiter in this project. Set CAPTCHA_SECRET in a
  * multi-instance deployment so signed values remain valid across restarts;
@@ -223,24 +229,28 @@ export function isTurnstileConfigured(): boolean {
   return Boolean(process.env.TURNSTILE_SECRET_KEY && process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY);
 }
 
-/**
- * Verify a human proof. Local fallback tokens are accepted first — they are
- * signed and single-use — so the backup CAPTCHA keeps working even when
- * Turnstile keys are configured. Anything that is not a local token is then
- * checked against Cloudflare's Siteverify endpoint when Turnstile is enabled.
- */
-export async function verifyCaptchaToken(token: string, remoteIp: string): Promise<boolean> {
-  if (!token) return false;
+export function isRecaptchaConfigured(): boolean {
+  return Boolean(process.env.RECAPTCHA_SECRET_KEY && process.env.NEXT_PUBLIC_RECAPTCHA_SITE_KEY);
+}
 
-  // Local backup tokens must keep working when production Turnstile keys are
-  // present, so consume from the signed local store before the remote check.
-  if (consumeLocalCaptchaToken(token)) return true;
-  if (!isTurnstileConfigured()) return false;
+export function isHcaptchaConfigured(): boolean {
+  return Boolean(process.env.HCAPTCHA_SECRET_KEY && process.env.NEXT_PUBLIC_HCAPTCHA_SITE_KEY);
+}
 
-  const turnstileSecret = process.env.TURNSTILE_SECRET_KEY as string;
+export function getAvailableCaptchaProviders(): Array<'turnstile' | 'recaptcha' | 'hcaptcha' | 'local'> {
+  const providers: Array<'turnstile' | 'recaptcha' | 'hcaptcha' | 'local'> = [];
+  if (isTurnstileConfigured()) providers.push('turnstile');
+  if (isRecaptchaConfigured()) providers.push('recaptcha');
+  if (isHcaptchaConfigured()) providers.push('hcaptcha');
+  providers.push('local');
+  return providers;
+}
 
+async function verifyTurnstileToken(token: string, remoteIp: string): Promise<boolean> {
+  const secretKey = process.env.TURNSTILE_SECRET_KEY as string;
+  if (!secretKey) return false;
   try {
-    const body = new URLSearchParams({ secret: turnstileSecret, response: token });
+    const body = new URLSearchParams({ secret: secretKey, response: token });
     if (remoteIp && remoteIp !== 'unknown') body.set('remoteip', remoteIp);
     const response = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
       method: 'POST',
@@ -250,6 +260,78 @@ export async function verifyCaptchaToken(token: string, remoteIp: string): Promi
     if (!response.ok) return false;
     const result = (await response.json()) as { success?: boolean };
     return result.success === true;
+  } catch {
+    return false;
+  }
+}
+
+async function verifyRecaptchaToken(token: string, remoteIp: string): Promise<boolean> {
+  const secretKey = process.env.RECAPTCHA_SECRET_KEY as string;
+  if (!secretKey) return false;
+  try {
+    const body = new URLSearchParams({ secret: secretKey, response: token });
+    if (remoteIp && remoteIp !== 'unknown') body.set('remoteip', remoteIp);
+    const response = await fetch('https://www.google.com/recaptcha/api/siteverify', {
+      method: 'POST',
+      body,
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!response.ok) return false;
+    const result = (await response.json()) as { success?: boolean };
+    return result.success === true;
+  } catch {
+    return false;
+  }
+}
+
+async function verifyHcaptchaToken(token: string, remoteIp: string): Promise<boolean> {
+  const secretKey = process.env.HCAPTCHA_SECRET_KEY as string;
+  if (!secretKey) return false;
+  try {
+    const body = new URLSearchParams({
+      secret: secretKey,
+      response: token,
+      sitekey: (process.env.NEXT_PUBLIC_HCAPTCHA_SITE_KEY as string) || '',
+    });
+    if (remoteIp && remoteIp !== 'unknown') body.set('remoteip', remoteIp);
+    const response = await fetch('https://api.hcaptcha.com/siteverify', {
+      method: 'POST',
+      body,
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!response.ok) return false;
+    const result = (await response.json()) as { success?: boolean };
+    return result.success === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Verify a human proof. Local fallback tokens are accepted first — they are
+ * signed and single-use — so the backup CAPTCHA keeps working even when
+ * Turnstile/reCAPTCHA/hCaptcha keys are configured. Anything that is not a local
+ * token is then checked against the respective Siteverify endpoints.
+ */
+export async function verifyCaptchaToken(token: string, remoteIp: string): Promise<boolean> {
+  if (!token) return false;
+
+  // Local backup tokens must keep working when production keys are
+  // present, so consume from the signed local store before the remote check.
+  if (consumeLocalCaptchaToken(token)) return true;
+
+  const checks: Array<Promise<boolean>> = [];
+  if (isTurnstileConfigured()) checks.push(verifyTurnstileToken(token, remoteIp));
+  if (isRecaptchaConfigured()) checks.push(verifyRecaptchaToken(token, remoteIp));
+  if (isHcaptchaConfigured()) checks.push(verifyHcaptchaToken(token, remoteIp));
+
+  if (checks.length === 0) return false;
+
+  // Try providers in order, but in parallel for speed. Any success means the
+  // human check passed; we don't need to wait for the others.
+  try {
+    const results = await Promise.all(checks);
+    return results.some(ok => ok);
   } catch {
     return false;
   }
