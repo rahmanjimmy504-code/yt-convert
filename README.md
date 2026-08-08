@@ -111,6 +111,8 @@ The dev server runs at **http://localhost:3000** by default. Edit any file under
 | `Build the project` | Production build (includes TypeScript type-checking) |
 | `npm run start` | Start the production server (requires a prior `build`) |
 | `npm run typecheck` | Run `tsc --noEmit` — type-check without emitting files |
+| `npm test` | Run the Vitest unit test suite once |
+| `npm run test:watch` | Run Vitest in watch mode |
 
 `reactStrictMode: true` is set in `next.config.ts`, so the dev server double-renders components to surface side-effect bugs.
 

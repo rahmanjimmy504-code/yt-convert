@@ -21,6 +21,10 @@ type LocalChallenge = {
 type LocalStatus = 'loading' | 'ready' | 'verifying' | 'verified' | 'error';
 
 const TURNSTILE_SITE_KEY = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY || '';
+// api.js fires its load event before window.turnstile is always usable (and a
+// previously-inserted script may already be loaded without firing listeners),
+// so the loader polls for the render function instead of trusting the event.
+const TURNSTILE_READY_TIMEOUT_MS = 10_000;
 
 function captchaShell(children: React.ReactNode) {
   return (
@@ -30,7 +34,7 @@ function captchaShell(children: React.ReactNode) {
   );
 }
 
-function LocalCaptcha({ onVerified, resetKey = 0, disabled = false }: CaptchaProps) {
+function LocalCaptcha({ onVerified, resetKey = 0, disabled = false, backup = false }: CaptchaProps & { backup?: boolean }) {
   const [challenge, setChallenge] = useState<LocalChallenge | null>(null);
   const [answer, setAnswer] = useState('');
   const [status, setStatus] = useState<LocalStatus>('loading');
@@ -48,7 +52,10 @@ function LocalCaptcha({ onVerified, resetKey = 0, disabled = false }: CaptchaPro
     onVerified('');
 
     try {
-      const response = await fetch(`/api/captcha?mode=${mode}`, {
+      // In backup mode the challenge must be served even when Turnstile keys
+      // are configured, so the endpoint needs the explicit backup flag.
+      const query = `mode=${mode}${backup ? '&backup=1' : ''}`;
+      const response = await fetch(`/api/captcha?${query}`, {
         signal: controller.signal,
         cache: 'no-store',
       });
@@ -63,10 +70,10 @@ function LocalCaptcha({ onVerified, resetKey = 0, disabled = false }: CaptchaPro
       if (controller.signal.aborted) return;
       setStatus('error');
       setMessage(error instanceof Error && error.message === 'Turnstile is configured'
-        ? 'Refresh the page to load the configured human check.'
-        : 'The CAPTCHA could not load. Please try again.');
+        ? 'The configured human check is unavailable. Refresh the page.'
+        : 'The CAPTCHA could not be loaded. Check your connection and try again.');
     }
-  }, [onVerified]);
+  }, [onVerified, backup]);
 
   useEffect(() => {
     void loadChallenge('visual');
@@ -109,6 +116,7 @@ function LocalCaptcha({ onVerified, resetKey = 0, disabled = false }: CaptchaPro
         <div className="flex items-center gap-2">
           <ShieldCheck className="w-4 h-4 text-red-500" aria-hidden="true" />
           <p id="captcha-heading" className="text-xs font-semibold">Human verification</p>
+          {backup && <span className="text-[10px] font-medium text-gray-500 dark:text-gray-400">backup</span>}
           <span className="text-[10px] font-medium text-red-600 dark:text-red-400">CAPTCHA required</span>
         </div>
         {status === 'verified' ? (
@@ -218,29 +226,46 @@ declare global {
 
 function loadTurnstileScript(): Promise<void> {
   if (typeof window === 'undefined') return Promise.reject(new Error('No browser available'));
-  if (window.turnstile) return Promise.resolve();
+  if (window.turnstile?.render) return Promise.resolve();
 
-  const existing = document.querySelector<HTMLScriptElement>('script[data-turnstile-script]');
-  if (existing) {
-    return new Promise((resolve, reject) => {
-      existing.addEventListener('load', () => resolve(), { once: true });
-      existing.addEventListener('error', () => reject(new Error('Turnstile script failed')), { once: true });
-    });
-  }
-
-  return new Promise((resolve, reject) => {
-    const script = document.createElement('script');
+  let script = document.querySelector<HTMLScriptElement>('script[data-turnstile-script]');
+  if (!script) {
+    script = document.createElement('script');
     script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
     script.async = true;
     script.defer = true;
     script.dataset.turnstileScript = 'true';
-    script.onload = () => resolve();
-    script.onerror = () => reject(new Error('Turnstile script failed'));
     document.head.appendChild(script);
+  }
+
+  return new Promise((resolve, reject) => {
+    const startedAt = Date.now();
+    const onLoad = () => { /* fall through to the poll below */ };
+    const onError = () => finish(new Error('Turnstile script failed'));
+    script!.addEventListener('load', onLoad, { once: true });
+    script!.addEventListener('error', onError, { once: true });
+
+    function finish(error?: Error) {
+      script?.removeEventListener('load', onLoad);
+      script?.removeEventListener('error', onError);
+      if (error) reject(error);
+      else resolve();
+    }
+
+    // Race-condition fix: with render=explicit, api.js can fire its load
+    // event before window.turnstile.render is ready, and on repeat mounts the
+    // script may already be loaded without any event firing again. Poll until
+    // the render function exists instead of calling render() immediately.
+    function poll() {
+      if (window.turnstile?.render) return finish();
+      if (Date.now() - startedAt >= TURNSTILE_READY_TIMEOUT_MS) return finish(new Error('Turnstile failed to initialize'));
+      window.setTimeout(poll, 50);
+    }
+    poll();
   });
 }
 
-function TurnstileCaptcha({ onVerified, resetKey = 0, disabled = false }: CaptchaProps) {
+function TurnstileCaptcha({ onVerified, resetKey = 0, disabled = false, onUseBackup }: CaptchaProps & { onUseBackup?: () => void }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const widgetIdRef = useRef<string | null>(null);
   const [status, setStatus] = useState<'loading' | 'ready' | 'verified' | 'error'>('loading');
@@ -269,13 +294,13 @@ function TurnstileCaptcha({ onVerified, resetKey = 0, disabled = false }: Captch
           'expired-callback': () => {
             if (cancelled) return;
             setStatus('ready');
-            setMessage('The check expired. Please verify again.');
+            setMessage('The check expired. Verify again or use the backup CAPTCHA.');
             onVerified('');
           },
           'error-callback': () => {
             if (cancelled) return;
             setStatus('error');
-            setMessage('Turnstile could not complete. Please retry.');
+            setMessage('The check could not be completed. Retry or use the backup CAPTCHA.');
             onVerified('');
           },
         });
@@ -284,7 +309,7 @@ function TurnstileCaptcha({ onVerified, resetKey = 0, disabled = false }: Captch
       } catch {
         if (!cancelled) {
           setStatus('error');
-          setMessage('Turnstile could not load. Check your connection and retry.');
+          setMessage('Human verification is unavailable right now. Try again or use the backup CAPTCHA.');
         }
       }
     };
@@ -310,14 +335,21 @@ function TurnstileCaptcha({ onVerified, resetKey = 0, disabled = false }: Captch
           <Check className="w-3.5 h-3.5" aria-hidden="true" /> You can continue with your link.
         </p>
       ) : (
-        <div className="flex items-center justify-between gap-2">
+        <div className="space-y-2">
           <p role={status === 'error' ? 'alert' : 'status'} aria-live="polite" className={'text-[11px] ' + (status === 'error' ? 'text-red-600 dark:text-red-400' : 'text-gray-500')}>
             {message}
           </p>
           {status === 'error' && (
-            <button type="button" onClick={() => setRetry(value => value + 1)} disabled={disabled} className="flex items-center gap-1 text-[11px] text-gray-500 hover:text-red-500 disabled:opacity-40">
-              <RefreshCw className="w-3.5 h-3.5" aria-hidden="true" /> Retry
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <button type="button" onClick={() => setRetry(value => value + 1)} disabled={disabled} className="flex items-center gap-1 text-[11px] text-gray-500 hover:text-red-500 disabled:opacity-40">
+                <RefreshCw className="w-3.5 h-3.5" aria-hidden="true" /> Retry
+              </button>
+              {onUseBackup && (
+                <button type="button" onClick={onUseBackup} disabled={disabled} className="flex items-center gap-1 text-[11px] font-medium text-red-600 dark:text-red-400 hover:underline underline-offset-2 disabled:opacity-40">
+                  Use backup CAPTCHA
+                </button>
+              )}
+            </div>
           )}
         </div>
       )}
@@ -329,7 +361,13 @@ function TurnstileCaptcha({ onVerified, resetKey = 0, disabled = false }: Captch
  * Cloudflare Turnstile is used when deployment keys are present. Without
  * credentials, the local challenge keeps development and preview builds
  * functional and still gates the metadata request behind a server check.
+ * If the Turnstile widget cannot load or complete, the user can switch to
+ * the backup CAPTCHA, which works even when Turnstile keys are configured.
  */
 export default function Captcha(props: CaptchaProps) {
-  return TURNSTILE_SITE_KEY ? <TurnstileCaptcha {...props} /> : <LocalCaptcha {...props} />;
+  const [useBackup, setUseBackup] = useState(false);
+  if (TURNSTILE_SITE_KEY && !useBackup) {
+    return <TurnstileCaptcha {...props} onUseBackup={() => setUseBackup(true)} />;
+  }
+  return <LocalCaptcha {...props} backup={useBackup} />;
 }

@@ -153,23 +153,33 @@ export function createLocalCaptcha(mode: LocalCaptchaMode = 'visual'): LocalCapt
   return { challengeId, mode, image, question };
 }
 
+export type LocalCaptchaVerifyResult =
+  | { ok: true; token: string }
+  | { ok: false; reason: 'missing' | 'expired' | 'wrong-answer' | 'too-many-attempts' };
+
 /**
  * Check a local challenge and mint a one-time proof token. Visual mode
  * renders the server-generated answer as a noisy image rather than plain UI text.
+ * The detailed result lets the API return a specific, human-readable message
+ * for missing, expired, rejected, or locked challenges.
  */
-export function verifyLocalCaptcha(challengeId: string, answer: string): string | null {
+export function verifyLocalCaptchaDetailed(challengeId: string, answer: string): LocalCaptchaVerifyResult {
   const challenge = challenges.get(challengeId);
   const now = Date.now();
-  if (!challenge || challenge.expiresAt <= now) {
+  if (!challenge) return { ok: false, reason: 'missing' };
+  if (challenge.expiresAt <= now) {
     challenges.delete(challengeId);
-    return null;
+    return { ok: false, reason: 'expired' };
   }
 
   challenge.attempts += 1;
   const normalized = answer.trim().replace(/\s+/g, '').toUpperCase();
-  if (challenge.attempts > MAX_ATTEMPTS || normalized !== challenge.answer) {
-    if (challenge.attempts >= MAX_ATTEMPTS) challenges.delete(challengeId);
-    return null;
+  if (normalized !== challenge.answer) {
+    if (challenge.attempts >= MAX_ATTEMPTS) {
+      challenges.delete(challengeId);
+      return { ok: false, reason: 'too-many-attempts' };
+    }
+    return { ok: false, reason: 'wrong-answer' };
   }
 
   challenges.delete(challengeId);
@@ -177,7 +187,12 @@ export function verifyLocalCaptcha(challengeId: string, answer: string): string 
   const token = signedValue(payload);
   tokens.set(token, { expiresAt: now + TOKEN_TTL_MS, used: false });
   pruneStores(now);
-  return token;
+  return { ok: true, token };
+}
+
+export function verifyLocalCaptcha(challengeId: string, answer: string): string | null {
+  const result = verifyLocalCaptchaDetailed(challengeId, answer);
+  return result.ok ? result.token : null;
 }
 
 /** Consume a local proof exactly once. */
@@ -208,11 +223,20 @@ export function isTurnstileConfigured(): boolean {
   return Boolean(process.env.TURNSTILE_SECRET_KEY && process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY);
 }
 
-/** Verify a Cloudflare Turnstile proof when production keys are configured. */
+/**
+ * Verify a human proof. Local fallback tokens are accepted first — they are
+ * signed and single-use — so the backup CAPTCHA keeps working even when
+ * Turnstile keys are configured. Anything that is not a local token is then
+ * checked against Cloudflare's Siteverify endpoint when Turnstile is enabled.
+ */
 export async function verifyCaptchaToken(token: string, remoteIp: string): Promise<boolean> {
   if (!token) return false;
 
-  if (!isTurnstileConfigured()) return consumeLocalCaptchaToken(token);
+  // Local backup tokens must keep working when production Turnstile keys are
+  // present, so consume from the signed local store before the remote check.
+  if (consumeLocalCaptchaToken(token)) return true;
+  if (!isTurnstileConfigured()) return false;
+
   const turnstileSecret = process.env.TURNSTILE_SECRET_KEY as string;
 
   try {
