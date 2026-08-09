@@ -38,6 +38,7 @@ import {
 } from '@/lib/platforms';
 import { ALL_CONVERTERS, type Converter, type ConverterCheckResult } from '@/lib/converters';
 import { getEmbed } from '@/lib/embed';
+import { OPEN_COOKIE_PREFERENCES_EVENT } from '@/lib/cookies';
 import Captcha from '@/components/captcha';
 
 type Phase = 'input' | 'loading' | 'ready' | 'error';
@@ -963,6 +964,14 @@ export default function Home() {
           <NextLink href="/faq" className="hover:text-red-500 underline-offset-2 hover:underline transition-colors">FAQ</NextLink>
           {' \u00B7 '}
           <NextLink href="/privacy" className="hover:text-red-500 underline-offset-2 hover:underline transition-colors">Privacy</NextLink>
+          {' \u00B7 '}
+          {/* Reopens the cookie-consent notice (mounted in the root layout). */}
+          <button
+            onClick={() => window.dispatchEvent(new Event(OPEN_COOKIE_PREFERENCES_EVENT))}
+            className="hover:text-red-500 underline-offset-2 hover:underline transition-colors"
+          >
+            Cookie settings
+          </button>
           {' \u00B7 '}
           <NextLink href="/terms" className="hover:text-red-500 underline-offset-2 hover:underline transition-colors">Terms</NextLink>
         </p>
