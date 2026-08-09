@@ -51,9 +51,12 @@ export default function PrivacyPage() {
 
       <Section heading="Cookies and tracking">
         <p>
-          We do not use advertising cookies, fingerprinting, or third-party analytics. The only storage used is your
-          browser&apos;s local storage for the preferences described above. Server logs may retain transient request
-          metadata (such as IP address) for rate limiting and abuse prevention, and are not used for profiling.
+          We do not use advertising cookies, fingerprinting, or third-party analytics. The only cookie we set is a
+          first-party one that records your choice on the cookie notice (accept, decline, or dismiss). It lasts one
+          year, is limited to the site itself, and can be cleared at any time through your browser settings. Your
+          other preferences (dark mode, recent conversions, favorite converter, format) live only in your
+          browser&apos;s local storage. Server logs may retain transient request metadata (such as IP address) for
+          rate limiting and abuse prevention, and are not used for profiling.
         </p>
       </Section>
 

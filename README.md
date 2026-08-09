@@ -36,6 +36,7 @@ A clean, fast multi-platform converter website built with Next.js. Paste a link 
 - **Converter availability checks**: every converter card shows a live "Working / Unavailable" badge (server-probed, cached 15 min, manual re-check)
 - **Broken-converter reporting**: users flag dead or unsafe converters with a flag button; reports surface on the cards and in the admin dashboard
 - **Privacy-friendly analytics & error monitoring**: cookieless aggregate counters (no IPs, no URLs) that show which platforms fail, top errors, converter clicks, and user reports on an admin dashboard at `/status`
+- **Cookie-consent notice**: a privacy-first banner (no tracking or advertising cookies) shown once per visitor; the choice is remembered in a single first-party cookie and can be reopened any time from the footer's "Cookie settings" link
 - **PWA support**: installable on Android/iOS/desktop with a service worker, offline app shell, and full icon set
 - **Custom production domain** support via `NEXT_PUBLIC_SITE_URL`, centralized in `src/lib/site.ts`
 - **Security headers** via `next.config.ts` (`nosniff`, `Referrer-Policy`, `Permissions-Policy`, `X-DNS-Prefetch-Control`)
@@ -79,12 +80,14 @@ yt-convert/
 │   │   ├── robots.ts                # robots.txt (disallows /status; uses NEXT_PUBLIC_SITE_URL)
 │   │   └── sitemap.ts               # sitemap.xml — home + FAQ (uses NEXT_PUBLIC_SITE_URL)
 │   ├── components/
-│   │   └── captcha.tsx              # Turnstile widget + accessible local CAPTCHA fallback
+│   │   ├── captcha.tsx              # Turnstile widget + accessible local CAPTCHA fallback
+│   │   └── cookie-consent.tsx       # Cookie-consent notice (accept / decline / dismiss)
 │   └── lib/
 │       ├── admin.ts                 # ADMIN_TOKEN auth for the status dashboard
 │       ├── captcha-env.ts           # Per-environment CAPTCHA key resolution (prod/preview/dev)
 │       ├── captcha.ts               # Server-side CAPTCHA challenge/token verification
 │       ├── converters.ts            # Converter catalog + availability probing/caching
+│       ├── cookies.ts               # Cookie helpers + consent-choice storage (single first-party cookie)
 │       ├── embed.ts                 # Native player embed URLs (Preview toggle)
 │       ├── og-card.tsx              # Shared OG/Twitter card artwork (JSX for ImageResponse)
 │       ├── platforms.ts             # Platform definitions, detection, colour/label helpers
