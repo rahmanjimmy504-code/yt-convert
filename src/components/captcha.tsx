@@ -682,18 +682,23 @@ function HcaptchaCaptcha({ onVerified, resetKey = 0, disabled = false }: Captcha
 }
 
 // ----------------- Backup selector with pills -----------------
-type BackupProvider = 'recaptcha' | 'hcaptcha' | 'local';
+type BackupProvider = 'recaptcha' | 'hcaptcha';
 
-function BackupCaptchaSelector({ onVerified, resetKey = 0, disabled = false, backup = false }: CaptchaProps & { backup?: boolean }) {
+function BackupCaptchaSelector({
+  onVerified,
+  resetKey = 0,
+  disabled = false,
+  backup = false,
+  onRetryPrimary,
+}: CaptchaProps & { backup?: boolean; onRetryPrimary?: () => void }) {
   const providers: Array<{ key: BackupProvider; label: string; available: boolean }> = [
     { key: 'recaptcha', label: 'Google reCAPTCHA', available: !!RECAPTCHA_SITE_KEY },
     { key: 'hcaptcha', label: 'hCaptcha', available: !!HCAPTCHA_SITE_KEY },
-    { key: 'local', label: 'Local', available: true },
   ];
 
   const availableProviders = providers.filter(p => p.available);
-  const defaultProvider: BackupProvider = availableProviders[0]?.key || 'local';
-  const [active, setActive] = useState<BackupProvider>(defaultProvider);
+  const defaultProvider = availableProviders[0]?.key;
+  const [active, setActive] = useState<BackupProvider | undefined>(defaultProvider);
 
   // If the currently active provider becomes unavailable (e.g. keys removed), fall back
   useEffect(() => {
@@ -709,10 +714,33 @@ function BackupCaptchaSelector({ onVerified, resetKey = 0, disabled = false, bac
     onVerified('');
   }, [active, onVerified]);
 
-  // If only local is available, render local directly without pills for cleaner UI,
-  // but still keep consistent shell styling via LocalCaptcha.
-  if (availableProviders.length <= 1) {
-    return <LocalCaptcha onVerified={onVerified} resetKey={resetKey} disabled={disabled} backup={backup} />;
+  // No backup provider is configured (no reCAPTCHA/hCaptcha keys): explain
+  // instead of showing an empty selector, and let the user return to the
+  // primary human verification.
+  if (availableProviders.length === 0) {
+    return captchaShell(
+      <div role="group" aria-labelledby="backup-captcha-heading" className="space-y-2.5">
+        <div className="flex items-center gap-2">
+          <ShieldCheck className="w-4 h-4 text-red-500" aria-hidden="true" />
+          <p id="backup-captcha-heading" className="text-xs font-semibold">Human verification</p>
+          {backup && <span className="text-[10px] font-medium text-gray-500 dark:text-gray-400">backup</span>}
+          <span className="text-[10px] font-medium text-red-600 dark:text-red-400">CAPTCHA required</span>
+        </div>
+        <p role="alert" aria-live="polite" className="text-[11px] text-red-600 dark:text-red-400">
+          No backup CAPTCHA is configured for this site.
+        </p>
+        {onRetryPrimary && (
+          <button
+            type="button"
+            onClick={onRetryPrimary}
+            disabled={disabled}
+            className="flex items-center gap-1 text-[11px] text-gray-500 hover:text-red-500 disabled:opacity-40 transition-colors"
+          >
+            <RefreshCw className="w-3.5 h-3.5" aria-hidden="true" /> Try the human verification again
+          </button>
+        )}
+      </div>,
+    );
   }
 
   return captchaShell(
@@ -726,35 +754,36 @@ function BackupCaptchaSelector({ onVerified, resetKey = 0, disabled = false, bac
         </div>
       </div>
 
-      <div className="flex flex-wrap gap-1.5" role="tablist" aria-label="CAPTCHA methods">
-        {availableProviders.map(p => {
-          const isActive = p.key === active;
-          return (
-            <button
-              key={p.key}
-              role="tab"
-              aria-selected={isActive}
-              type="button"
-              onClick={() => handleSwitch(p.key)}
-              disabled={disabled}
-              className={
-                'rounded-full px-2.5 py-1 text-[11px] font-medium border transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 ' +
-                (isActive
-                  ? 'bg-red-600 border-red-600 text-white shadow-sm'
-                  : 'bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:border-red-300 dark:hover:border-red-800 hover:text-red-600 dark:hover:text-red-400') +
-                (disabled ? ' opacity-40 cursor-not-allowed' : '')
-              }
-            >
-              {p.label}
-            </button>
-          );
-        })}
-      </div>
+      {availableProviders.length > 1 && (
+        <div className="flex flex-wrap gap-1.5" role="tablist" aria-label="CAPTCHA methods">
+          {availableProviders.map(p => {
+            const isActive = p.key === active;
+            return (
+              <button
+                key={p.key}
+                role="tab"
+                aria-selected={isActive}
+                type="button"
+                onClick={() => handleSwitch(p.key)}
+                disabled={disabled}
+                className={
+                  'rounded-full px-2.5 py-1 text-[11px] font-medium border transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 ' +
+                  (isActive
+                    ? 'bg-red-600 border-red-600 text-white shadow-sm'
+                    : 'bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:border-red-300 dark:hover:border-red-800 hover:text-red-600 dark:hover:text-red-400') +
+                  (disabled ? ' opacity-40 cursor-not-allowed' : '')
+                }
+              >
+                {p.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       <div className="pt-1">
         {active === 'recaptcha' && <RecaptchaCaptcha onVerified={onVerified} resetKey={resetKey} disabled={disabled} />}
         {active === 'hcaptcha' && <HcaptchaCaptcha onVerified={onVerified} resetKey={resetKey} disabled={disabled} />}
-        {active === 'local' && <div className="-m-1"><LocalCaptcha onVerified={onVerified} resetKey={resetKey} disabled={disabled} backup={backup} /></div>}
       </div>
     </div>,
   );
@@ -762,12 +791,11 @@ function BackupCaptchaSelector({ onVerified, resetKey = 0, disabled = false, bac
 
 /**
  * Cloudflare Turnstile is used when deployment keys are present. Without
- * credentials, the local challenge and alternative providers keep development
- * and preview builds functional and still gate the metadata request behind a
- * server check.
+ * credentials, the local challenge keeps development and preview builds
+ * functional and still gates the metadata request behind a server check.
  * If the Turnstile widget cannot load or complete, the user can switch to
- * the backup CAPTCHA, which can be reCAPTCHA, hCaptcha, or Local — shown as
- * pills [Google reCAPTCHA] [hCaptcha] [Local] when multiple keys are configured.
+ * the backup CAPTCHA, which can be reCAPTCHA or hCaptcha — shown as
+ * pills [Google reCAPTCHA] [hCaptcha] when multiple keys are configured.
  */
 export default function Captcha(props: CaptchaProps) {
   const [useBackup, setUseBackup] = useState(false);
@@ -777,13 +805,21 @@ export default function Captcha(props: CaptchaProps) {
     return <TurnstileCaptcha {...props} onUseBackup={() => setUseBackup(true)} />;
   }
 
-  // When backup is requested (Turnstile failed), or Turnstile is not configured,
-  // show the selector. If only local is available and no alternative keys, the
-  // selector will render local directly — preserving the old UX while still
-  // supporting the new pills when keys are present.
+  // When backup is requested (Turnstile failed), or Turnstile is not configured
+  // but an alternative provider is, show the selector. If no alternative keys
+  // are present, the selector explains that no backup is configured and offers
+  // a way back to the primary human verification.
   if (useBackup || hasAlternative) {
-    return <BackupCaptchaSelector {...props} backup={useBackup} />;
+    return (
+      <BackupCaptchaSelector
+        {...props}
+        backup={useBackup}
+        onRetryPrimary={useBackup ? () => setUseBackup(false) : undefined}
+      />
+    );
   }
 
+  // No external keys configured at all: fall back to the dependency-free local
+  // challenge so local development and preview builds stay usable.
   return <LocalCaptcha {...props} backup={useBackup} />;
 }
