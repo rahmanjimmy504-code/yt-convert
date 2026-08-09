@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import localFont from "next/font/local";
 import "./globals.css";
+import { getSiteUrl } from "@/lib/site";
 
 // Geist is vendored locally (see src/app/fonts/LICENSE-Geist.txt) so builds
 // don't depend on fetching fonts from Google Fonts at compile time.
@@ -11,9 +12,10 @@ const geistSans = localFont({
   preload: true,
 });
 
-// Allow overriding the canonical site URL at deploy time (e.g. Vercel previews
-// or a custom domain) while keeping the production default.
-const SITE_URL = (process.env.NEXT_PUBLIC_SITE_URL || "https://yt-convert-xi.vercel.app").replace(/\/+$/, "");
+// Canonical origin — a custom production domain is honored via
+// NEXT_PUBLIC_SITE_URL (see src/lib/site.ts). Previews can override it per
+// environment in Vercel.
+const SITE_URL = getSiteUrl();
 const SITE_TITLE = "YT Convert - YouTube to MP3 & MP4";
 const SITE_DESCRIPTION =
   "Convert videos and audio from 12 platforms (YouTube, Spotify, SoundCloud, X, Instagram, TikTok and more) to MP3 & MP4. Free, no sign-up needed.";
@@ -34,6 +36,11 @@ export const metadata: Metadata = {
     "video converter",
   ],
   alternates: { canonical: "/" },
+  icons: {
+    icon: "/icon",
+    apple: "/apple-touch-icon.png",
+  },
+  manifest: "/manifest.webmanifest",
   openGraph: {
     type: "website",
     url: SITE_URL,
@@ -48,7 +55,7 @@ export const metadata: Metadata = {
   },
   appleWebApp: {
     capable: true,
-    statusBarStyle: "default",
+    statusBarStyle: "black-translucent",
     title: "YT Convert",
   },
   formatDetection: { telephone: false, address: false, email: false },
@@ -57,6 +64,8 @@ export const metadata: Metadata = {
 
 export const viewport: Viewport = {
   colorScheme: "light dark",
+  // viewport-fit=cover lets the standalone PWA draw under the notch on iOS.
+  viewportFit: "cover",
   themeColor: [
     { media: "(prefers-color-scheme: light)", color: "#ffffff" },
     { media: "(prefers-color-scheme: dark)", color: "#030712" },
@@ -98,6 +107,16 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           type="application/ld+json"
           dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
         />
+        {/* PWA: register the service worker only in production builds (dev
+            hot-reload and cached shells don't mix). Registration waits for
+            the load event so it never competes with first paint. */}
+        {process.env.NODE_ENV === "production" && (
+          <script
+            dangerouslySetInnerHTML={{
+              __html: `if('serviceWorker' in navigator){addEventListener('load',function(){navigator.serviceWorker.register('/sw.js').catch(function(){})})}`,
+            }}
+          />
+        )}
       </head>
       <body className={`${geistSans.variable} antialiased font-sans bg-gray-50 text-gray-900 min-h-screen`}>
         {children}

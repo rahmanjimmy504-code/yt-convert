@@ -42,7 +42,23 @@ const FAQS: { q: string; a: string }[] = [
   },
   {
     q: 'A converter did not work. What now?',
-    a: 'Converter sites occasionally change domains or go offline. Try another converter from the ranked list, and make sure you pasted the link into the converter\u2019s input box (the URL is auto-copied when you click a converter card). If a converter is permanently broken, its entry can be updated in this project\u2019s source.',
+    a: 'Converter sites occasionally change domains or go offline. Each converter card shows a live \u201cWorking\u201d / \u201cUnavailable\u201d badge (checked automatically every 15 minutes, with a manual \u201cCheck again\u201d button), so if one is down you can see it before clicking. If a converter still fails, try another from the ranked list, and make sure you pasted the link into the converter\u2019s input box (the URL is auto-copied when you click a converter card).',
+  },
+  {
+    q: 'How do I report a broken or unsafe converter?',
+    a: 'Click the flag icon on the converter card and pick a reason: the link is dead (site down or 404), the site looks unsafe (scam, malware, fake download buttons), or it simply does not work for your platform/format. Reports are anonymous \u2014 no account or email needed \u2014 and are reviewed by the site owner. Flagged converters show a small \u201cflagged\u201d badge so other users can be cautious.',
+  },
+  {
+    q: 'What do the green and red converter badges mean?',
+    a: 'The site automatically probes every converter in the list (cheap HEAD/GET checks, cached for 15 minutes) and shows \u201cWorking\u201d in green or \u201cUnavailable\u201d in red next to its name. Unavailable converters may be temporarily down, blocking automated checks, or gone for good \u2014 treat the badge as a helpful signal, not a guarantee, since a converter can stop working for reasons a probe cannot see.',
+  },
+  {
+    q: 'Can I install YT Convert as an app on my phone?',
+    a: 'Yes. YT Convert is a progressive web app (PWA): on Android, open the site in Chrome and choose \u201cAdd to Home screen\u201d or \u201cInstall app\u201d; on iPhone, tap Share \u2192 \u201cAdd to Home Screen\u201d. It installs like a native app with its own icon and opens full-screen without the browser chrome.',
+  },
+  {
+    q: 'What analytics does the site collect?',
+    a: 'Only aggregate, cookieless counters: which platform a lookup was for, whether it succeeded, which converter was clicked, and bucketed error messages with numbers redacted. No IP addresses, full URLs, accounts, or personal data are stored, and there is no cross-site tracking. The counters exist so the site owner can see which platforms fail and keep converters honest. They are in-memory only and reset on every deploy.',
   },
   {
     q: 'My link is not recognized. What am I doing wrong?',

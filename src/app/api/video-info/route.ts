@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { detectPlatform, extractYouTubeId, type PlatformKey } from '@/lib/platforms';
 import { verifyCaptchaToken } from '@/lib/captcha';
+import { recordEvent } from '@/lib/stats';
 
 export const runtime = 'nodejs';
 
@@ -15,6 +16,11 @@ export interface VideoInfo {
 }
 
 const UA = { 'User-Agent': 'Mozilla/5.0 (compatible; YTConvert/1.0)' };
+
+/** Privacy-friendly analytics: record a lookup outcome per platform. */
+function recordLookup(platform: PlatformKey | 'unknown', ok: boolean, error?: string): void {
+  recordEvent({ type: 'lookup', platform, ok, error });
+}
 
 const FETCH_TIMEOUT_MS = 6000;
 
@@ -249,23 +255,30 @@ export async function GET(request: Request) {
   if (rawUrl.length > 2048) return NextResponse.json({ error: 'URL is too long' }, { status: 400 });
 
   const platform = detectPlatform(rawUrl);
-  if (!platform) return NextResponse.json({ error: 'Unsupported URL.' }, { status: 400 });
+  if (!platform) {
+    recordLookup('unknown', false, 'unsupported url');
+    return NextResponse.json({ error: 'Unsupported URL.' }, { status: 400 });
+  }
 
   let parsed: URL;
   try {
     parsed = new URL(rawUrl);
   } catch {
+    recordLookup(platform, false, 'invalid url');
     return NextResponse.json({ error: 'Enter a full URL starting with https://' }, { status: 400 });
   }
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    recordLookup(platform, false, 'non-http url');
     return NextResponse.json({ error: 'Only http(s) links are supported' }, { status: 400 });
   }
   if ((platform === 'youtube' || platform === 'youtubemusic') && !extractYouTubeId(rawUrl)) {
+    recordLookup(platform, false, 'invalid youtube url');
     return NextResponse.json({ error: 'Invalid YouTube URL' }, { status: 400 });
   }
 
   const captchaToken = request.headers.get('x-captcha-token') || '';
   if (!captchaToken || !(await verifyCaptchaToken(captchaToken, ip)) || captchaTokenAlreadyUsed(captchaToken)) {
+    recordLookup(platform, false, 'captcha rejected');
     return NextResponse.json(
       { error: 'Complete the CAPTCHA before requesting media information.' },
       { status: 403, headers: { 'Cache-Control': 'no-store' } },
@@ -274,14 +287,19 @@ export async function GET(request: Request) {
 
   const cacheKey = `${platform}|${rawUrl}`;
   const cached = cacheGet(cacheKey);
-  if (cached) return NextResponse.json(cached, { headers: RESPONSE_HEADERS });
+  if (cached) {
+    recordLookup(platform, true);
+    return NextResponse.json(cached, { headers: RESPONSE_HEADERS });
+  }
 
   try {
     const info = await fetchInfo(platform, rawUrl);
     cacheSet(cacheKey, info);
+    recordLookup(platform, true);
     return NextResponse.json(info, { headers: RESPONSE_HEADERS });
   } catch (err) {
     console.error('[video-info] failed for', platform, err);
+    recordLookup(platform, false, 'fetch failed');
     return NextResponse.json({ error: 'Failed to fetch video info. Please try again.' }, { status: 500 });
   }
 }

@@ -1,4 +1,5 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { getScopedEnv } from './captcha-env';
 
 /**
  * A small, dependency-free CAPTCHA used when Turnstile is not configured.
@@ -226,15 +227,15 @@ export function consumeLocalCaptchaToken(token: string): boolean {
 }
 
 export function isTurnstileConfigured(): boolean {
-  return Boolean(process.env.TURNSTILE_SECRET_KEY && process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY);
+  return Boolean(getScopedEnv('TURNSTILE_SECRET_KEY') && getScopedEnv('NEXT_PUBLIC_TURNSTILE_SITE_KEY'));
 }
 
 export function isRecaptchaConfigured(): boolean {
-  return Boolean(process.env.RECAPTCHA_SECRET_KEY && process.env.NEXT_PUBLIC_RECAPTCHA_SITE_KEY);
+  return Boolean(getScopedEnv('RECAPTCHA_SECRET_KEY') && getScopedEnv('NEXT_PUBLIC_RECAPTCHA_SITE_KEY'));
 }
 
 export function isHcaptchaConfigured(): boolean {
-  return Boolean(process.env.HCAPTCHA_SECRET_KEY && process.env.NEXT_PUBLIC_HCAPTCHA_SITE_KEY);
+  return Boolean(getScopedEnv('HCAPTCHA_SECRET_KEY') && getScopedEnv('NEXT_PUBLIC_HCAPTCHA_SITE_KEY'));
 }
 
 export function getAvailableCaptchaProviders(): Array<'turnstile' | 'recaptcha' | 'hcaptcha' | 'local'> {
@@ -247,7 +248,7 @@ export function getAvailableCaptchaProviders(): Array<'turnstile' | 'recaptcha' 
 }
 
 async function verifyTurnstileToken(token: string, remoteIp: string): Promise<boolean> {
-  const secretKey = process.env.TURNSTILE_SECRET_KEY as string;
+  const secretKey = getScopedEnv('TURNSTILE_SECRET_KEY') as string;
   if (!secretKey) return false;
   try {
     const body = new URLSearchParams({ secret: secretKey, response: token });
@@ -266,7 +267,7 @@ async function verifyTurnstileToken(token: string, remoteIp: string): Promise<bo
 }
 
 async function verifyRecaptchaToken(token: string, remoteIp: string): Promise<boolean> {
-  const secretKey = process.env.RECAPTCHA_SECRET_KEY as string;
+  const secretKey = getScopedEnv('RECAPTCHA_SECRET_KEY') as string;
   if (!secretKey) return false;
   try {
     const body = new URLSearchParams({ secret: secretKey, response: token });
@@ -285,13 +286,13 @@ async function verifyRecaptchaToken(token: string, remoteIp: string): Promise<bo
 }
 
 async function verifyHcaptchaToken(token: string, remoteIp: string): Promise<boolean> {
-  const secretKey = process.env.HCAPTCHA_SECRET_KEY as string;
+  const secretKey = getScopedEnv('HCAPTCHA_SECRET_KEY') as string;
   if (!secretKey) return false;
   try {
     const body = new URLSearchParams({
       secret: secretKey,
       response: token,
-      sitekey: (process.env.NEXT_PUBLIC_HCAPTCHA_SITE_KEY as string) || '',
+      sitekey: (getScopedEnv('NEXT_PUBLIC_HCAPTCHA_SITE_KEY') as string) || '',
     });
     if (remoteIp && remoteIp !== 'unknown') body.set('remoteip', remoteIp);
     const response = await fetch('https://api.hcaptcha.com/siteverify', {

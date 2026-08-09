@@ -1,29 +1,29 @@
 import type { MetadataRoute } from "next";
-
-const SITE_URL = (process.env.NEXT_PUBLIC_SITE_URL || "https://yt-convert-xi.vercel.app").replace(/\/+$/, "");
+import { getSiteUrl } from "@/lib/site";
 
 export default function sitemap(): MetadataRoute.Sitemap {
+  const siteUrl = getSiteUrl();
   return [
     {
-      url: `${SITE_URL}/`,
+      url: `${siteUrl}/`,
       lastModified: new Date(),
       changeFrequency: "weekly",
       priority: 1,
     },
     {
-      url: `${SITE_URL}/faq`,
+      url: `${siteUrl}/faq`,
       lastModified: new Date(),
       changeFrequency: "monthly",
       priority: 0.8,
     },
     {
-      url: `${SITE_URL}/privacy`,
+      url: `${siteUrl}/privacy`,
       lastModified: new Date(),
       changeFrequency: "yearly",
       priority: 0.3,
     },
     {
-      url: `${SITE_URL}/terms`,
+      url: `${siteUrl}/terms`,
       lastModified: new Date(),
       changeFrequency: "yearly",
       priority: 0.3,
