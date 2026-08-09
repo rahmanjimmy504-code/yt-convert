@@ -220,6 +220,7 @@ async function fetchInfo(platform: PlatformKey, rawUrl: string): Promise<VideoIn
     spotify: { title: 'Spotify Track', author: 'Spotify' },
     deezer: { title: 'Deezer Track', author: 'Deezer' },
     applemusic: { title: 'Apple Music Track', author: 'Apple Music' },
+    amazonmusic: { title: 'Amazon Music Track', author: 'Amazon Music' },
     br: { title: 'BeReal Post', author: 'BeReal User' },
     tiktok: { title: 'TikTok Video', author: 'TikTok' },
     facebook: { title: 'Facebook Video', author: 'Facebook' },

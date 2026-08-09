@@ -78,9 +78,13 @@ describe('detectPlatform', () => {
     expect(detectPlatform('https://t.snapchat.com/abc')).toBe('snapchat');
   });
 
-  it('detects Apple Music and BeReal', () => {
+  it('detects Apple Music, Amazon Music and BeReal', () => {
     expect(detectPlatform('https://music.apple.com/us/album/name/123')).toBe('applemusic');
     expect(detectPlatform('https://itunes.apple.com/us/album/name/123')).toBe('applemusic');
+    expect(detectPlatform('https://music.amazon.com/albums/B012345678')).toBe('amazonmusic');
+    expect(detectPlatform('https://music.amazon.co.uk/albums/B012345678')).toBe('amazonmusic');
+    expect(detectPlatform('https://www.amazon.com/music/player/albums/B012345678')).toBe('amazonmusic');
+    expect(detectPlatform('https://www.amazon.com/gp/product/B012345678')).toBeNull();
     expect(detectPlatform('https://www.bereal.com/post/abc')).toBe('br');
   });
 
@@ -148,11 +152,13 @@ describe('extractYouTubeId', () => {
 describe('platform label/color helpers', () => {
   it('returns a label for known platforms and empty for unknown', () => {
     expect(platformLabel('youtube')).toBe('YouTube');
+    expect(platformLabel('amazonmusic')).toBe('Amazon Music');
     expect(platformLabel('not-a-platform')).toBe('');
   });
 
   it('returns a color class for known platforms and a default otherwise', () => {
     expect(platformColor('youtube')).toContain('bg-red');
+    expect(platformColor('amazonmusic')).toContain('bg-sky');
     expect(platformColor('unknown')).toContain('bg-gray');
   });
 });

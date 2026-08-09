@@ -69,7 +69,7 @@ export function ogCardJsx(): ReactElement {
           color: '#6b7280',
         }}
       >
-        12 platforms · Free · No sign-up needed
+        13 platforms · Free · No sign-up needed
       </div>
     </div>
   )

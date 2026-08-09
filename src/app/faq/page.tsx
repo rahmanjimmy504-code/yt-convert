@@ -26,7 +26,7 @@ const FAQS: { q: string; a: string }[] = [
   },
   {
     q: 'Which platforms are supported?',
-    a: 'YouTube, YT Music, SoundCloud, X (Twitter), Instagram, Spotify, Deezer, Apple Music, TikTok, Facebook, Snapchat and BeReal. Paste a link from any of them and the platform is detected automatically.',
+    a: 'YouTube, YT Music, SoundCloud, X (Twitter), Instagram, Spotify, Deezer, Apple Music, Amazon Music, TikTok, Facebook, Snapchat and BeReal. Paste a link from any of them and the platform is detected automatically.',
   },
   {
     q: 'Is it free? Do I need an account?',
@@ -62,7 +62,7 @@ const FAQS: { q: string; a: string }[] = [
   },
   {
     q: 'My link is not recognized. What am I doing wrong?',
-    a: 'Make sure you copied the full link, including the https:// part, and that it points to one of the 12 supported platforms. Channel or profile pages without a specific video/track are often not convertible — link to the exact video, track, or post instead.',
+    a: 'Make sure you copied the full link, including the https:// part, and that it points to one of the 13 supported platforms. Channel or profile pages without a specific video/track are often not convertible — link to the exact video, track, or post instead.',
   },
   {
     q: 'Is it legal to convert and download media?',
