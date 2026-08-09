@@ -41,6 +41,11 @@ describe('catalog', () => {
   it('looks converters up by name', () => {
     expect(getConverterByName('SaveInsta')?.url).toBe('https://saveinsta.to/en1');
     expect(getConverterByName('FastDL')?.url).toBe('https://fastdl.app/en4');
+    expect(getConverterByName('Lucida')).toMatchObject({
+      url: 'https://lucida.to/',
+      platforms: expect.arrayContaining(['amazonmusic']),
+      formats: ['mp3'],
+    });
     expect(getConverterByName('Y2Mate')).toBeUndefined();
     expect(getConverterByName('Does Not Exist')).toBeUndefined();
   });

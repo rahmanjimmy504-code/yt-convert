@@ -77,8 +77,8 @@ function sSetJ(k: string, v: unknown) {
   if (typeof window !== 'undefined') localStorage.setItem(k, JSON.stringify(v));
 }
 
-const tips = ['Paste any link from YouTube, Spotify, SoundCloud, X, Instagram, Deezer, Apple Music, TikTok, Facebook, Snapchat or BeReal.', 'Your URL is auto-copied when you pick a converter.', 'If one converter has ads, try another.', 'All converters are free, no sign-up needed.', 'Press Enter after pasting to fetch info instantly.', 'Shortcuts: press / to jump to the link box, Esc to start over.', 'Drag and drop a link anywhere on the page to load it.', 'Click Preview to watch or listen before converting.', 'Press ? to see all keyboard shortcuts.'];
-const placeholders = ['https://www.youtube.com/watch?v=...', 'https://open.spotify.com/track/...', 'https://soundcloud.com/...', 'https://x.com/user/status/...', 'https://www.instagram.com/reel/...', 'https://music.apple.com/...', 'https://www.deezer.com/track/...', 'https://music.youtube.com/watch?v=...', 'https://www.tiktok.com/...', 'https://www.facebook.com/...', 'https://www.snapchat.com/add/...', 'https://bereal.com/...'];
+const tips = ['Paste any link from YouTube, Spotify, SoundCloud, X, Instagram, Deezer, Apple Music, Amazon Music, TikTok, Facebook, Snapchat or BeReal.', 'Your URL is auto-copied when you pick a converter.', 'If one converter has ads, try another.', 'All converters are free, no sign-up needed.', 'Press Enter after pasting to fetch info instantly.', 'Shortcuts: press / to jump to the link box, Esc to start over.', 'Drag and drop a link anywhere on the page to load it.', 'Click Preview to watch or listen before converting.', 'Press ? to see all keyboard shortcuts.'];
+const placeholders = ['https://www.youtube.com/watch?v=...', 'https://open.spotify.com/track/...', 'https://soundcloud.com/...', 'https://x.com/user/status/...', 'https://www.instagram.com/reel/...', 'https://music.apple.com/...', 'https://music.amazon.com/...', 'https://www.deezer.com/track/...', 'https://music.youtube.com/watch?v=...', 'https://www.tiktok.com/...', 'https://www.facebook.com/...', 'https://www.snapchat.com/add/...', 'https://bereal.com/...'];
 
 /** Copy text to the clipboard, reporting whether it actually worked. */
 async function copyText(t: string): Promise<boolean> {
@@ -569,7 +569,7 @@ export default function Home() {
             </div>
             <div className="min-w-0">
               <h1 className="text-base font-bold tracking-tight">YT Convert</h1>
-              <p className="text-[11px] text-gray-500 dark:text-gray-400 truncate">YouTube {'\u00B7'} YT Music {'\u00B7'} SoundCloud {'\u00B7'} X {'\u00B7'} Instagram {'\u00B7'} Spotify {'\u00B7'} Deezer {'\u00B7'} Apple Music {'\u00B7'} TikTok {'\u00B7'} Facebook {'\u00B7'} Snapchat {'\u00B7'} BeReal</p>
+              <p className="text-[11px] text-gray-500 dark:text-gray-400 truncate">YouTube {'\u00B7'} YT Music {'\u00B7'} SoundCloud {'\u00B7'} X {'\u00B7'} Instagram {'\u00B7'} Spotify {'\u00B7'} Deezer {'\u00B7'} Apple Music {'\u00B7'} Amazon Music {'\u00B7'} TikTok {'\u00B7'} Facebook {'\u00B7'} Snapchat {'\u00B7'} BeReal</p>
             </div>
           </div>
           <div className="flex items-center gap-2 shrink-0">
@@ -914,6 +914,12 @@ export default function Home() {
                   <img src="https://cdn.simpleicons.org/applemusic/ffffff" width="24" height="24" alt="" />
                 </div>
                 <span className="text-[11px] font-medium text-gray-500">Apple Music</span>
+              </div>
+              <div className="flex flex-col items-center gap-1.5 group">
+                <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-sky-500 to-sky-700 flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
+                  <img src="https://cdn.simpleicons.org/amazonmusic/ffffff" width="24" height="24" alt="" />
+                </div>
+                <span className="text-[11px] font-medium text-gray-500">Amazon Music</span>
               </div>
               <div className="flex flex-col items-center gap-1.5 group">
                 <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-gray-900 to-black flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">

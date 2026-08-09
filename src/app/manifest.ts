@@ -10,7 +10,7 @@ export default function manifest(): MetadataRoute.Manifest {
     name: "YT Convert - YouTube to MP3 & MP4",
     short_name: "YT Convert",
     description:
-      "Convert videos and audio from 12 platforms (YouTube, Spotify, SoundCloud, X, Instagram, TikTok and more) to MP3 & MP4. Free, no sign-up needed.",
+      "Convert videos and audio from 13 platforms (YouTube, Spotify, SoundCloud, X, Instagram, TikTok and more) to MP3 & MP4. Free, no sign-up needed.",
     start_url: "/",
     scope: "/",
     display: "standalone",

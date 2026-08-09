@@ -16,6 +16,7 @@ A clean, fast multi-platform converter website built with Next.js. Paste a link 
 | Spotify | `spotify` | oEmbed; falls back to placeholder metadata |
 | Deezer | `deezer` | oEmbed; falls back to placeholder metadata |
 | Apple Music | `applemusic` | Placeholder metadata only |
+| Amazon Music | `amazonmusic` | Placeholder metadata only |
 | TikTok | `tiktok` | oEmbed; falls back to placeholder metadata |
 | Facebook | `facebook` | Placeholder metadata only |
 | Snapchat | `snapchat` | Placeholder metadata only |
@@ -238,7 +239,7 @@ Strings taken from upstream oEmbed/Invidious payloads are sanitized (control cha
 
 - **YouTube / YT Music:** runs two requests in parallel — the YouTube oEmbed endpoint and a fallback chain over three public Invidious instances (`inv.nadeko.net`, `invidious.nerdvpn.de`, `yewtu.be`), tried in order until one responds with `200`. oEmbed supplies `title`, `author_name`, `thumbnail_url`; Invidious supplies `lengthSeconds`, `viewCount`, `published`, and backs up `title`/`author` if oEmbed came back empty.
 - **oEmbed-capable platforms** (Spotify, Deezer, TikTok, SoundCloud, X, Instagram): a single oEmbed request to the platform's public endpoint.
-- **Platforms without a working public API** (Apple Music, BeReal, Facebook, Snapchat, and any platform where oEmbed returned nothing): degraded to honest placeholder metadata (`title: "Apple Music Track"`, `author: "Apple Music"`, etc.).
+- **Platforms without a working public API** (Apple Music, Amazon Music, BeReal, Facebook, Snapchat, and any platform where oEmbed returned nothing): degraded to honest placeholder metadata (`title: "Apple Music Track"`, `author: "Apple Music"`, etc.).
 
 #### Caching
 

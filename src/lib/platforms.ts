@@ -10,6 +10,7 @@ export type PlatformKey =
   | 'spotify'
   | 'deezer'
   | 'applemusic'
+  | 'amazonmusic'
   | 'tiktok'
   | 'facebook'
   | 'snapchat'
@@ -26,6 +27,7 @@ export const PLATFORM_KEYS: PlatformKey[] = [
   'spotify',
   'deezer',
   'applemusic',
+  'amazonmusic',
   'tiktok',
   'facebook',
   'snapchat',
@@ -41,6 +43,7 @@ export const PLATFORM_LABELS: Record<PlatformKey, string> = {
   spotify: 'Spotify',
   deezer: 'Deezer',
   applemusic: 'Apple Music',
+  amazonmusic: 'Amazon Music',
   tiktok: 'TikTok',
   facebook: 'Facebook',
   snapchat: 'Snapchat',
@@ -56,6 +59,7 @@ export const PLATFORM_COLORS: Record<PlatformKey, string> = {
   spotify: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400',
   deezer: 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400',
   applemusic: 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300',
+  amazonmusic: 'bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-400',
   tiktok: 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300',
   facebook: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
   snapchat: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400',
@@ -100,6 +104,14 @@ export function detectPlatform(input: string): PlatformKey | null {
   if (host === 'tiktok.com' || host.endsWith('.tiktok.com')) return 'tiktok';
   if (host === 'snapchat.com' || host === 'story.snapchat.com' || host === 't.snapchat.com' || host === 'w.snapchat.com' || host.endsWith('.snapchat.com')) return 'snapchat';
   if (host === 'music.apple.com' || host === 'itunes.apple.com' || host === 'geo.itunes.apple.com') return 'applemusic';
+  // Amazon Music uses regional music.amazon.* domains (for example .com,
+  // .co.uk and .de), and some shared links use amazon.*/music. Restrict the
+  // latter to the /music path so ordinary Amazon shopping links are not media.
+  const path = u.replace(/^https?:\/\/[^/]+/i, '').split(/[?#]/)[0];
+  if (
+    /^music\.amazon\.[a-z.]+$/.test(host) ||
+    (/^(?:www\.)?amazon\.[a-z.]+$/.test(host) && /^\/music(?:\/|$)/i.test(path))
+  ) return 'amazonmusic';
   if (host === 'bereal.com' || host.endsWith('.bereal.com')) return 'br';
   return null;
 }

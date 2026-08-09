@@ -19,7 +19,7 @@ const geistSans = localFont({
 const SITE_URL = getSiteUrl();
 const SITE_TITLE = "YT Convert - YouTube to MP3 & MP4";
 const SITE_DESCRIPTION =
-  "Convert videos and audio from 12 platforms (YouTube, Spotify, SoundCloud, X, Instagram, TikTok and more) to MP3 & MP4. Free, no sign-up needed.";
+  "Convert videos and audio from 13 platforms (YouTube, Spotify, SoundCloud, X, Instagram, TikTok and more) to MP3 & MP4. Free, no sign-up needed.";
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
@@ -32,6 +32,8 @@ export const metadata: Metadata = {
     "youtube to mp4",
     "spotify to mp3",
     "soundcloud to mp3",
+    "amazon music downloader",
+    "amazon music to mp3",
     "tiktok video downloader",
     "instagram downloader",
     "video converter",
@@ -87,6 +89,7 @@ const jsonLd = {
     "YouTube to MP4",
     "Spotify to MP3",
     "SoundCloud to MP3",
+    "Amazon Music downloader",
     "TikTok video downloader",
     "Instagram downloader",
   ],
