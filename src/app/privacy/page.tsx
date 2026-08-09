@@ -57,6 +57,25 @@ export default function PrivacyPage() {
         </p>
       </Section>
 
+      <Section heading="Analytics">
+        <p>
+          To keep the service reliable, we collect a small amount of aggregate usage data: which platform a metadata
+          lookup was for, whether the lookup succeeded, which converter card was clicked, and anonymized error
+          messages (numbers are redacted). This data is cookieless, contains no IP addresses, full URLs, or personal
+          information, and is never shared with third parties. Counters live in server memory only and reset on every
+          redeploy; they cannot be used to identify you. The operator can turn this collection off entirely by setting
+          <code> DISABLE_ANALYTICS=1 </code> on the server.
+        </p>
+      </Section>
+
+      <Section heading="Converter reports">
+        <p>
+          If you use the flag button to report a converter as dead or unsafe, we receive the converter&apos;s name,
+          the reason you picked, and any optional note you type (max 500 characters). Reports are stored anonymously
+          in server memory for review and are not linked to your identity.
+        </p>
+      </Section>
+
       <Section heading="Children">
         <p>
           YT Convert is not directed at children under 13. We do not knowingly collect personal information from

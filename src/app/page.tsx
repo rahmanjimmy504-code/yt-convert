@@ -6,6 +6,7 @@ import {
   ArrowLeft,
   ArrowRight,
   Check,
+  CheckCircle2,
   CircleX,
   Clipboard,
   Download,
@@ -13,15 +14,18 @@ import {
   Eye,
   EyeOff,
   Film,
+  Flag,
   Keyboard,
   Link as LinkIcon,
   Moon,
   Music,
   Play,
+  RefreshCw,
   Share2,
   Star,
   Sun,
   X,
+  XCircle,
   Zap,
 } from 'lucide-react';
 import {
@@ -32,6 +36,7 @@ import {
   type FormatKey,
   type PlatformKey,
 } from '@/lib/platforms';
+import { ALL_CONVERTERS, type Converter, type ConverterCheckResult } from '@/lib/converters';
 import { getEmbed } from '@/lib/embed';
 import Captcha from '@/components/captcha';
 
@@ -54,16 +59,6 @@ interface HistoryItem {
   time: number;
 }
 
-interface Converter {
-  name: string;
-  url: string;
-  desc: string;
-  color: string;
-  platforms: PlatformKey[];
-  formats: FormatKey[];
-  recommended?: boolean;
-}
-
 function sGet(k: string) {
   return typeof window === 'undefined' ? '' : localStorage.getItem(k) || '';
 }
@@ -84,29 +79,6 @@ function sSetJ(k: string, v: unknown) {
 const tips = ['Paste any link from YouTube, Spotify, SoundCloud, X, Instagram, Deezer, Apple Music, TikTok, Facebook, Snapchat or BeReal.', 'Your URL is auto-copied when you pick a converter.', 'If one converter has ads, try another.', 'All converters are free, no sign-up needed.', 'Press Enter after pasting to fetch info instantly.', 'Shortcuts: press / to jump to the link box, Esc to start over.', 'Drag and drop a link anywhere on the page to load it.', 'Click Preview to watch or listen before converting.', 'Press ? to see all keyboard shortcuts.'];
 const placeholders = ['https://www.youtube.com/watch?v=...', 'https://open.spotify.com/track/...', 'https://soundcloud.com/...', 'https://x.com/user/status/...', 'https://www.instagram.com/reel/...', 'https://music.apple.com/...', 'https://www.deezer.com/track/...', 'https://music.youtube.com/watch?v=...', 'https://www.tiktok.com/...', 'https://www.facebook.com/...', 'https://www.snapchat.com/add/...', 'https://bereal.com/...'];
 
-// Converter catalog lives at module scope: it never changes at runtime, so
-// there is no reason to rebuild the array on every render.
-const ALL_CONVERTERS: Converter[] = [
-  { name: '9Convert', url: 'https://9convert.org/', desc: 'YouTube to MP3 and MP4. Fast and reliable.', color: 'from-rose-500 to-rose-600', platforms: ['youtube', 'youtubemusic'], formats: ['mp3', 'mp4'], recommended: true },
-  { name: 'Y2Mate', url: 'https://v30.www-y2mate.com/', desc: 'MP4 (144p-1080p) and MP3 (128-320kbps).', color: 'from-orange-500 to-orange-600', platforms: ['youtube', 'youtubemusic'], formats: ['mp3', 'mp4'] },
-  { name: 'AudioConverter', url: 'https://audioconverter.ai/youtube-to-mp4-converter', desc: 'YouTube to MP4. HD and 4K.', color: 'from-sky-500 to-sky-600', platforms: ['youtube', 'youtubemusic'], formats: ['mp4'] },
-  { name: 'Hicoo', url: 'https://hicoo.ai/mp4-converter/youtube-to-mp4', desc: 'YouTube to MP4. 360p to 4K.', color: 'from-emerald-500 to-emerald-600', platforms: ['youtube', 'youtubemusic'], formats: ['mp4'] },
-  { name: 'KlickAud', url: 'https://klickaud.org/en15', desc: 'SoundCloud to MP3.', color: 'from-orange-400 to-orange-500', platforms: ['soundcloud'], formats: ['mp3'], recommended: true },
-  { name: 'SSSTik', url: 'https://ssstik.io/', desc: 'X/Twitter video downloader.', color: 'from-sky-400 to-sky-500', platforms: ['twitter'], formats: ['mp4'], recommended: true },
-  { name: 'Twitsave', url: 'https://twitsave.com/en', desc: 'Save X/Twitter videos in HD.', color: 'from-indigo-500 to-indigo-600', platforms: ['twitter'], formats: ['mp4'] },
-  { name: 'SaveInsta', url: 'https://www.saveinsta.app/', desc: 'Instagram photos and videos.', color: 'from-pink-400 to-pink-500', platforms: ['instagram'], formats: ['mp4'], recommended: true },
-  { name: 'iGram', url: 'https://igram.io/', desc: 'Instagram reels and stories.', color: 'from-purple-500 to-purple-600', platforms: ['instagram'], formats: ['mp4'] },
-  { name: 'SpotDown', url: 'https://spotdown.org/', desc: 'Spotify tracks to MP3.', color: 'from-green-500 to-green-600', platforms: ['spotify'], formats: ['mp3'], recommended: true },
-  { name: 'DeezLoad', url: 'https://deezerdownloader.net/', desc: 'Deezer tracks to MP3.', color: 'from-purple-500 to-purple-600', platforms: ['deezer'], formats: ['mp3'], recommended: true },
-  { name: 'AM Downloader', url: 'https://apple-music-downloader.com/', desc: 'Apple Music to MP3.', color: 'from-gray-600 to-gray-800', platforms: ['applemusic'], formats: ['mp3'], recommended: true },
-  { name: 'TTSave', url: 'https://ttsave.app/', desc: 'TikTok videos without watermark.', color: 'from-pink-500 to-pink-600', platforms: ['tiktok'], formats: ['mp4'], recommended: true },
-  { name: 'SnapTik', url: 'https://snaptik.app/en3', desc: 'TikTok to MP4, no watermark.', color: 'from-cyan-500 to-cyan-600', platforms: ['tiktok'], formats: ['mp4'] },
-  { name: 'FBDown', url: 'https://fbdown.net/', desc: 'Facebook videos in HD.', color: 'from-blue-600 to-blue-700', platforms: ['facebook'], formats: ['mp4'], recommended: true },
-  { name: 'VDFR', url: 'https://vdfr.app/snapchat-video-downloader', desc: 'Download Snapchat videos.', color: 'from-yellow-400 to-yellow-500', platforms: ['snapchat'], formats: ['mp4'], recommended: true },
-  { name: 'ViewSnapStories', url: 'https://viewsnapstories.com/video-downloader', desc: 'Save Snapchat videos fast.', color: 'from-yellow-500 to-yellow-600', platforms: ['snapchat'], formats: ['mp4'] },
-  { name: 'BeReal Saver', url: 'https://berealsaver.com/', desc: 'Download BeReal photos and videos.', color: 'from-gray-900 to-black', platforms: ['br'], formats: ['mp4'] },
-];
-
 /** Copy text to the clipboard, reporting whether it actually worked. */
 async function copyText(t: string): Promise<boolean> {
   try {
@@ -116,6 +88,29 @@ async function copyText(t: string): Promise<boolean> {
     return false; // clipboard blocked by browser permissions
   }
 }
+
+/** Anonymous, cookieless event for the privacy-friendly analytics. */
+function sendEvent(payload: Record<string, unknown>): void {
+  try {
+    void fetch('/api/events', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      keepalive: true,
+    }).catch(() => {});
+  } catch {
+    // analytics must never break the UI
+  }
+}
+
+type ReportIssue = 'dead' | 'unsafe' | 'wrong' | 'other';
+
+const REPORT_OPTIONS: Array<{ key: ReportIssue; label: string; hint: string }> = [
+  { key: 'dead', label: 'Link is dead', hint: 'Site is down, 404, or redirected to spam.' },
+  { key: 'unsafe', label: 'Looks unsafe', hint: 'Scam, malware, fake download buttons or abusive ads.' },
+  { key: 'wrong', label: "Doesn't work", hint: 'Fails for this platform/format, or errors every time.' },
+  { key: 'other', label: 'Something else', hint: 'Any other problem worth fixing.' },
+];
 
 export default function Home() {
   const [mounted, setMounted] = useState(false);
@@ -136,6 +131,17 @@ export default function Home() {
   const [captchaToken, setCaptchaToken] = useState('');
   const [captchaResetKey, setCaptchaResetKey] = useState(0);
   const [dragging, setDragging] = useState(false);
+  // Converter availability ("working"/"unavailable") from /api/converters/status.
+  const [converterStatus, setConverterStatus] = useState<Record<string, ConverterCheckResult>>({});
+  const [statusCheckedAt, setStatusCheckedAt] = useState<number | null>(null);
+  const [statusLoading, setStatusLoading] = useState(false);
+  // Broken/unsafe converter reporting dialog.
+  const [reportFor, setReportFor] = useState<Converter | null>(null);
+  const [reportIssue, setReportIssue] = useState<ReportIssue>('dead');
+  const [reportNote, setReportNote] = useState('');
+  const [reportSending, setReportSending] = useState(false);
+  const [reportError, setReportError] = useState('');
+  const [reportDone, setReportDone] = useState(false);
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const convertersRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -237,6 +243,54 @@ export default function Home() {
   const scrollToConverters = useCallback(() => {
     if (scrollTimer.current) clearTimeout(scrollTimer.current);
     scrollTimer.current = setTimeout(() => convertersRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
+  }, []);
+
+  // Availability probe: fetch once on mount and whenever "Check again" is
+  // pressed. Server-side results are cached for 15 minutes, so this is cheap.
+  const loadConverterStatus = useCallback(async () => {
+    if (statusLoading) return;
+    setStatusLoading(true);
+    try {
+      const response = await fetch('/api/converters/status', { cache: 'no-store' });
+      if (!response.ok) return;
+      const data = (await response.json()) as {
+        results: ConverterCheckResult[];
+        checkedAt: number;
+      };
+      const byName: Record<string, ConverterCheckResult> = {};
+      for (const result of data.results) byName[result.name] = result;
+      setConverterStatus(byName);
+      setStatusCheckedAt(data.checkedAt);
+    } catch {
+      // Status is decorative; never block the page on it.
+    } finally {
+      setStatusLoading(false);
+    }
+  }, [statusLoading]);
+
+  useEffect(() => {
+    void loadConverterStatus();
+  }, [loadConverterStatus]);
+
+  // Privacy-friendly error monitoring: report uncaught client errors as
+  // anonymous, bucketed events (no stack traces, no URLs, no identifiers).
+  useEffect(() => {
+    const onError = (event: ErrorEvent) => {
+      const message = (event.message || 'script error').slice(0, 200);
+      sendEvent({ type: 'client_error', error: message });
+    };
+    const onRejection = (event: PromiseRejectionEvent) => {
+      const reason = event.reason;
+      const message =
+        typeof reason === 'string' ? reason : reason instanceof Error ? reason.message : 'unhandled rejection';
+      sendEvent({ type: 'client_error', error: (message || 'unhandled rejection').slice(0, 200) });
+    };
+    window.addEventListener('error', onError);
+    window.addEventListener('unhandledrejection', onRejection);
+    return () => {
+      window.removeEventListener('error', onError);
+      window.removeEventListener('unhandledrejection', onRejection);
+    };
   }, []);
 
   const handleCaptchaVerified = useCallback((token: string) => {
@@ -371,6 +425,45 @@ export default function Home() {
     const copied = await copyText(u);
     setLaunched({ name: c.name, copied });
     window.open(c.url, '_blank', 'noopener');
+    // Anonymous analytics: which converter was picked for which platform.
+    sendEvent({ type: 'converter_click', converter: c.name, platform: videoInfo?.platform || detectPlatform(u) || '' });
+  };
+
+  const submitReport = async () => {
+    if (!reportFor || reportSending) return;
+    setReportSending(true);
+    setReportError('');
+    try {
+      const response = await fetch('/api/converters/report', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ converter: reportFor.name, issue: reportIssue, note: reportNote.trim() || undefined }),
+      });
+      const data = (await response.json().catch(() => ({}))) as { error?: string };
+      if (!response.ok) {
+        setReportError(data.error || 'Could not send the report. Please try again.');
+        return;
+      }
+      setReportDone(true);
+      // Reflect the report on the badge immediately without a full re-probe.
+      setConverterStatus(prev => {
+        const existing = prev[reportFor.name];
+        if (!existing) return prev;
+        return { ...prev, [reportFor.name]: { ...existing, reports: existing.reports + 1 } };
+      });
+    } catch {
+      setReportError('Could not send the report. Please try again.');
+    } finally {
+      setReportSending(false);
+    }
+  };
+
+  const closeReport = () => {
+    setReportFor(null);
+    setReportIssue('dead');
+    setReportNote('');
+    setReportError('');
+    setReportDone(false);
   };
   const toggleFav = (n: string) => { const v = favorite === n ? '' : n; setFavorite(v); sSet('yt-convert-fav', v); };
   const clearHist = () => { setHistory([]); if (typeof window !== 'undefined') localStorage.removeItem('yt-convert-history'); };
@@ -448,6 +541,13 @@ export default function Home() {
   };
 
   const convList = getConverters();
+
+  // Converter availability derived from the latest probe results.
+  const statusMinutesAgo = statusCheckedAt ? Math.max(0, Math.round((Date.now() - statusCheckedAt) / 60000)) : null;
+  const unavailableCount = convList.filter(c => converterStatus[c.name]?.status === 'unavailable').length;
+  const statusSummary = statusCheckedAt
+    ? `Checked ${statusMinutesAgo === 0 ? 'just now' : `${statusMinutesAgo} min ago`}`
+    : null;
 
   if (!mounted) {
     return (
@@ -627,6 +727,28 @@ export default function Home() {
                   </button>
                 </div>
               </div>
+              <div className="flex items-center justify-between text-[11px] text-gray-400">
+                <span className="flex items-center gap-1.5">
+                  <span className={'w-1.5 h-1.5 rounded-full ' + (unavailableCount > 0 ? 'bg-red-500' : 'bg-green-500')} />
+                  {statusLoading
+                    ? 'Checking converter availability…'
+                    : unavailableCount > 0
+                      ? `${unavailableCount} converter${unavailableCount > 1 ? 's are' : ' is'} unavailable right now`
+                      : statusSummary
+                        ? 'All converters reachable'
+                        : 'Availability checks unavailable'}
+                  {statusSummary && <span className="text-gray-300 dark:text-gray-600">·</span>}
+                  {statusSummary && <span>{statusSummary}</span>}
+                </span>
+                <button
+                  onClick={loadConverterStatus}
+                  disabled={statusLoading}
+                  className="flex items-center gap-1 text-gray-400 hover:text-red-500 transition-colors disabled:opacity-40"
+                  title="Re-check every converter now"
+                >
+                  <RefreshCw className={'w-3 h-3' + (statusLoading ? ' animate-spin' : '')} /> Check again
+                </button>
+              </div>
               <div className="bg-gray-50 dark:bg-gray-800 rounded-xl p-3 space-y-1.5">
                 <p className="text-xs font-semibold text-gray-700 dark:text-gray-300">How to download:</p>
                 <ol className="text-[11px] text-gray-500 list-decimal list-inside pl-1"><li>Click a converter {'\u2014'} opens in new tab</li><li>Your URL is <strong>auto-copied</strong></li><li>Press Ctrl+V to paste, convert and download</li></ol>
@@ -658,17 +780,57 @@ export default function Home() {
                       <Download className="w-5 h-5" />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex items-center gap-1.5 flex-wrap">
                         <span className="font-semibold text-sm">{svc.name}</span>
                         {svc.recommended && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400">BEST</span>}
+                        {(() => {
+                          const status = converterStatus[svc.name];
+                          if (!status || status.status === 'unknown') {
+                            return (
+                              <span className="flex items-center gap-1 text-[10px] font-medium text-gray-400">
+                                <span className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-pulse" /> Checking…
+                              </span>
+                            );
+                          }
+                          if (status.status === 'working') {
+                            return (
+                              <span title={status.checkedAt ? `Working — checked ${new Date(status.checkedAt).toLocaleTimeString()}${status.latencyMs != null ? ` (${status.latencyMs}ms)` : ''}` : 'Working'} className="flex items-center gap-1 text-[10px] font-medium text-green-700 dark:text-green-400">
+                                <CheckCircle2 className="w-3 h-3" /> Working
+                              </span>
+                            );
+                          }
+                          return (
+                            <span
+                              title={status.error ? `Unavailable — ${status.error}${status.statusCode ? ` (HTTP ${status.statusCode})` : ''}` : 'Unavailable'}
+                              className="flex items-center gap-1 text-[10px] font-medium text-red-600 dark:text-red-400"
+                            >
+                              <XCircle className="w-3 h-3" /> Unavailable
+                            </span>
+                          );
+                        })()}
+                        {converterStatus[svc.name]?.reports ? (
+                          <span className="flex items-center gap-1 text-[10px] font-medium text-amber-600 dark:text-amber-400" title={`Flagged by users ${converterStatus[svc.name]?.reports} time${converterStatus[svc.name]?.reports === 1 ? '' : 's'}`}>
+                            <Flag className="w-2.5 h-2.5" /> flagged
+                          </span>
+                        ) : null}
                       </div>
                       <p className="text-[11px] text-gray-500 mt-0.5">{svc.desc}</p>
                     </div>
                     <div className="flex flex-col items-center gap-1.5 flex-shrink-0">
                       <ExternalLink className="w-4 h-4 text-gray-400 group-hover:text-red-500 transition-colors" />
-                      <button onClick={(e) => { e.stopPropagation(); toggleFav(svc.name); }} aria-label={svc.name === favorite ? `Remove ${svc.name} from favorites` : `Favorite ${svc.name}`} className="p-0.5">
-                        <Star className={'w-3.5 h-3.5 ' + (svc.name === favorite ? 'text-yellow-500' : 'text-gray-300')} fill={svc.name === favorite ? 'currentColor' : 'none'} />
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setReportFor(svc); setReportDone(false); }}
+                          aria-label={`Report ${svc.name} as broken or unsafe`}
+                          title="Report dead or unsafe converter"
+                          className="p-0.5 group/flag"
+                        >
+                          <Flag className={'w-3.5 h-3.5 transition-colors ' + (converterStatus[svc.name]?.reports ? 'text-amber-500' : 'text-gray-300 group-hover/flag:text-red-500')} />
+                        </button>
+                        <button onClick={(e) => { e.stopPropagation(); toggleFav(svc.name); }} aria-label={svc.name === favorite ? `Remove ${svc.name} from favorites` : `Favorite ${svc.name}`} className="p-0.5">
+                          <Star className={'w-3.5 h-3.5 ' + (svc.name === favorite ? 'text-yellow-500' : 'text-gray-300')} fill={svc.name === favorite ? 'currentColor' : 'none'} />
+                        </button>
+                      </div>
                     </div>
                   </div>
                 ))}
@@ -817,6 +979,87 @@ export default function Home() {
             <LinkIcon className="w-6 h-6 text-red-500 mx-auto mb-2" />
             <p className="text-sm font-semibold">Drop your link here</p>
             <p className="text-[11px] text-gray-500 mt-1">YouTube, Spotify, TikTok and 9 more</p>
+          </div>
+        </div>
+      )}
+
+      {reportFor && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Report ${reportFor.name}`}
+          className="fixed inset-0 z-[80] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4"
+          onClick={closeReport}
+        >
+          <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 shadow-2xl w-full max-w-sm p-5 space-y-4" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h2 className="font-semibold text-sm flex items-center gap-2">
+                <Flag className="w-4 h-4 text-red-500" /> Report {reportFor.name}
+              </h2>
+              <button onClick={closeReport} aria-label="Close report dialog" className="w-7 h-7 rounded-lg flex items-center justify-center text-gray-400 hover:text-red-500 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {reportDone ? (
+              <div className="space-y-3">
+                <p className="text-sm text-green-700 dark:text-green-400 flex items-start gap-2" role="status" aria-live="polite">
+                  <Check className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                  Thanks — this converter has been flagged for review. The site owner sees your report on the status dashboard.
+                </p>
+                <button onClick={closeReport} className="w-full h-10 rounded-xl bg-gray-100 dark:bg-gray-800 text-sm font-semibold hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors">
+                  Done
+                </button>
+              </div>
+            ) : (
+              <>
+                <p className="text-xs text-gray-500">What&apos;s wrong with this converter?</p>
+                <div className="space-y-2">
+                  {REPORT_OPTIONS.map(opt => (
+                    <label
+                      key={opt.key}
+                      className={
+                        'block rounded-xl border p-3 cursor-pointer transition-colors ' +
+                        (reportIssue === opt.key
+                          ? 'border-red-400 bg-red-50 dark:bg-red-950/30'
+                          : 'border-gray-200 dark:border-gray-700 hover:border-red-300 dark:hover:border-red-800')
+                      }
+                    >
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="radio"
+                          name="report-issue"
+                          value={opt.key}
+                          checked={reportIssue === opt.key}
+                          onChange={() => setReportIssue(opt.key)}
+                          className="accent-red-600"
+                        />
+                        <span className="text-xs font-semibold">{opt.label}</span>
+                      </div>
+                      <p className="text-[11px] text-gray-500 mt-1 ml-6">{opt.hint}</p>
+                    </label>
+                  ))}
+                </div>
+                <textarea
+                  value={reportNote}
+                  onChange={e => setReportNote(e.target.value)}
+                  maxLength={500}
+                  rows={2}
+                  placeholder="Optional details (what happened?)"
+                  className="w-full text-xs rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 p-2.5 focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent resize-none"
+                />
+                {reportError && (
+                  <p role="alert" className="text-xs text-red-600 dark:text-red-400">{reportError}</p>
+                )}
+                <button
+                  onClick={submitReport}
+                  disabled={reportSending}
+                  className="w-full h-10 rounded-xl bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white text-sm font-semibold shadow-lg shadow-red-500/20 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                >
+                  {reportSending ? 'Sending…' : 'Send report'}
+                </button>
+              </>
+            )}
           </div>
         </div>
       )}
