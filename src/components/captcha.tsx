@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Check, RefreshCw, ShieldCheck } from 'lucide-react';
+import { getRecaptchaDomainGuidance, isRecaptchaInvalidDomainError } from '@/lib/recaptcha';
 
 type CaptchaProps = {
   /** Called with a one-time proof token after the challenge succeeds. */
@@ -222,7 +223,7 @@ type GrecaptchaOptions = {
   theme?: 'light' | 'dark';
   callback: (token: string) => void;
   'expired-callback': () => void;
-  'error-callback': () => void;
+  'error-callback': (error?: unknown) => void;
 };
 
 type HcaptchaOptions = {
@@ -461,13 +462,40 @@ function RecaptchaCaptcha({ onVerified, resetKey = 0, disabled = false }: Captch
   const widgetIdRef = useRef<number | null>(null);
   const [status, setStatus] = useState<'loading' | 'ready' | 'verified' | 'error'>('loading');
   const [message, setMessage] = useState('Loading Google reCAPTCHA...');
+  const [domainError, setDomainError] = useState(false);
   const [retry, setRetry] = useState(0);
+  const currentHostname = typeof window !== 'undefined'
+    ? window.location.hostname || window.location.host
+    : '';
 
   useEffect(() => {
     let cancelled = false;
+    let observer: MutationObserver | null = null;
     onVerified('');
     setStatus('loading');
     setMessage('Loading Google reCAPTCHA...');
+    setDomainError(false);
+
+    // reCAPTCHA's error callback usually has no argument. In practice it is
+    // also the only signal exposed when Google's cross-origin iframe displays
+    // “Invalid domain for site key”, so give the site owner useful domain
+    // troubleshooting rather than an opaque retry-only error. If Google does
+    // provide a reason, use it to distinguish the exact failure.
+    const reportError = (reason?: unknown) => {
+      if (cancelled) return;
+      const invalidDomain = reason === undefined || isRecaptchaInvalidDomainError(reason);
+      setDomainError(invalidDomain);
+      setStatus('error');
+      setMessage(invalidDomain
+        ? getRecaptchaDomainGuidance(currentHostname)
+        : 'The check could not be completed. Retry or try another method.');
+      onVerified('');
+    };
+
+    const inspectWidgetText = () => {
+      const text = containerRef.current?.textContent || '';
+      if (isRecaptchaInvalidDomainError(text)) reportError(text);
+    };
 
     const mount = async () => {
       try {
@@ -478,29 +506,38 @@ function RecaptchaCaptcha({ onVerified, resetKey = 0, disabled = false }: Captch
           theme: 'light',
           callback: token => {
             if (cancelled) return;
+            setDomainError(false);
             setStatus('verified');
             setMessage('Human check passed.');
             onVerified(token);
           },
           'expired-callback': () => {
             if (cancelled) return;
+            setDomainError(false);
             setStatus('ready');
             setMessage('The check expired. Verify again.');
             onVerified('');
           },
-          'error-callback': () => {
-            if (cancelled) return;
-            setStatus('error');
-            setMessage('The check could not be completed. Retry or try another method.');
-            onVerified('');
-          },
+          'error-callback': error => reportError(error),
         });
         setStatus('ready');
         setMessage('');
-      } catch {
+
+        // This also covers versions of the widget that render the diagnostic
+        // text in the host DOM instead of passing it to error-callback.
+        if (containerRef.current && typeof MutationObserver !== 'undefined') {
+          observer = new MutationObserver(inspectWidgetText);
+          observer.observe(containerRef.current, { childList: true, subtree: true, characterData: true });
+          inspectWidgetText();
+        }
+      } catch (error) {
         if (!cancelled) {
+          const invalidDomain = isRecaptchaInvalidDomainError(error);
+          setDomainError(invalidDomain);
           setStatus('error');
-          setMessage('Google reCAPTCHA is unavailable right now. Try again or use another method.');
+          setMessage(invalidDomain
+            ? getRecaptchaDomainGuidance(currentHostname)
+            : 'Google reCAPTCHA is unavailable right now. Try again or use another method.');
         }
       }
     };
@@ -508,6 +545,7 @@ function RecaptchaCaptcha({ onVerified, resetKey = 0, disabled = false }: Captch
 
     return () => {
       cancelled = true;
+      observer?.disconnect();
       try {
         if (widgetIdRef.current != null && window.grecaptcha?.remove) {
           window.grecaptcha.remove(widgetIdRef.current);
@@ -518,10 +556,11 @@ function RecaptchaCaptcha({ onVerified, resetKey = 0, disabled = false }: Captch
       } catch {}
       widgetIdRef.current = null;
     };
-  }, [onVerified, resetKey, retry]);
+  }, [onVerified, resetKey, retry, currentHostname]);
 
   return (
     <div role="group" aria-labelledby="recaptcha-heading" className="space-y-2">
+      <p id="recaptcha-heading" className="sr-only">Google reCAPTCHA human verification</p>
       <div ref={containerRef} className={disabled ? 'pointer-events-none opacity-60' : ''} />
       {status === 'verified' ? (
         <p className="flex items-center gap-1.5 text-xs text-green-700 dark:text-green-400" role="status" aria-live="polite">
@@ -533,6 +572,19 @@ function RecaptchaCaptcha({ onVerified, resetKey = 0, disabled = false }: Captch
             <p role={status === 'error' ? 'alert' : 'status'} aria-live="polite" className={'text-[11px] ' + (status === 'error' ? 'text-red-600 dark:text-red-400' : 'text-gray-500')}>
               {message}
             </p>
+          )}
+          {domainError && (
+            <div className="rounded-lg border border-red-200 bg-red-50 p-2 text-[11px] text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300">
+              <p>Current hostname: <code className="font-semibold">{currentHostname || 'unknown'}</code></p>
+              <a
+                href="https://www.google.com/recaptcha/admin"
+                target="_blank"
+                rel="noreferrer"
+                className="mt-1 inline-block font-semibold underline underline-offset-2 hover:no-underline"
+              >
+                Open Google reCAPTCHA Admin Console
+              </a>
+            </div>
           )}
           {status === 'error' && (
             <button type="button" onClick={() => setRetry(v => v + 1)} disabled={disabled} className="flex items-center gap-1 text-[11px] text-gray-500 hover:text-red-500 disabled:opacity-40">
