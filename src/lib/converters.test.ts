@@ -39,7 +39,9 @@ describe('catalog', () => {
   });
 
   it('looks converters up by name', () => {
-    expect(getConverterByName('Y2Mate')?.url).toBe('https://v30.www-y2mate.com/');
+    expect(getConverterByName('SaveInsta')?.url).toBe('https://saveinsta.to/en1');
+    expect(getConverterByName('FastDL')?.url).toBe('https://fastdl.app/en4');
+    expect(getConverterByName('Y2Mate')).toBeUndefined();
     expect(getConverterByName('Does Not Exist')).toBeUndefined();
   });
 });
