@@ -1,0 +1,270 @@
+import { NextRequest, NextResponse } from "next/server";
+import { rateLimit, clientIp } from "@/lib/rate-limit";
+import { answerLocally, KNOWLEDGE } from "@/lib/faq-knowledge";
+
+export const runtime = "nodejs";
+
+const MAX_QUESTION_LEN = 500;
+const RATE_LIMIT_PER_MIN = 20;
+
+interface Body {
+  question?: string;
+}
+
+function jsonError(message: string, status: number) {
+  return NextResponse.json({ error: message }, { status });
+}
+
+function buildSystemPrompt(localAnswer: string, sources: string[]) {
+  // Compact knowledge dump – keep under ~4000 tokens for Groq
+  const faqDump = KNOWLEDGE.map(k => `Q: ${k.q}\nA: ${k.a}`).join("\n\n");
+
+  return `You are YT Convert Assistant – a helpful, friendly AI that ONLY answers about YT Convert, a free multi-platform converter front-end.
+
+CORE FACTS YOU MUST OBEY:
+- YT Convert does NOT download/convert/store media itself. It detects platform of pasted link, fetches public metadata (title, thumbnail, duration, author) from oEmbed + Invidious (YouTube) and routes user to third-party converter sites. URL is auto-copied on converter click so user presses Ctrl+V in new tab.
+- Supported platforms (13): YouTube, YT Music, SoundCloud, X (Twitter), Instagram, Spotify, Deezer, Apple Music, Amazon Music, TikTok, Facebook, Snapchat, BeReal. Detect more specific hosts first (music.youtube.com before youtube.com).
+- Features: platform detection (bare domains accepted), rich video info, format-aware ranking (MP3 audio vs MP4 video, user choice in localStorage), auto-copy with fallback if blocked, auto-fetch after 800ms, favorites (star, yt-convert-fav), history (6 items, yt-convert-history), embedded previews (YouTube via youtube-nocookie.com, SoundCloud visual, Spotify /embed, TikTok embed/v2 – other platforms no preview), drag & drop anywhere, Web Share API fallback to copy, keyboard shortcuts / focus input, Enter fetch, Esc reset, ? help panel, dark mode persisted (yt-convert-dark) before first paint, FAQPage JSON-LD, PWA installable (Android Add to Home, iOS Share→Add), offline shell via sw.js (network-first nav, cache-first static, no API cache), converter health badges Working/Unavailable probed via HEAD then GET cached 15 min, Check again button, broken reporting via flag icon (dead/unsafe/wrong/other) 10/hour rate limit, flagged badge, admin dashboard /status gated by ADMIN_TOKEN, privacy-friendly analytics only aggregate counters (no IPs, URLs, accounts, personal data, in-memory), cookie-consent banner with single first-party cookie, rate limit 30/min for /api/video-info, CAPTCHA Turnstile in prod + local fallback single-use token via X-Captcha-Token, separate keys per env.
+
+LEGAL & PRIVACY:
+- Only personal lawful use, own content/public domain/licensed, respect ToS, YT Convert not responsible for third-party converters. Converters show ads (independent sites) – try another if too many ads. If unsafe (scam/malware/fake buttons) report via flag. Safety not guaranteed.
+
+TROUBLESHOOTING:
+- Link not recognized: need full https://, exact video/track/post not channel/profile, http(s) only, 2048 char limit, YouTube needs 11-char ID, for mobile apps open in browser.
+
+HOW TO USE (step-by-step):
+1) Copy link 2) Paste in box (auto-fetch) or Go 3) Choose MP3/MP4 4) Click converter card (URL auto-copied) 5) In new tab Ctrl+V (or long-press Paste on mobile) → Convert/Download. If blocked use Copy link button.
+
+If user asks off-topic (weather, jokes, general knowledge, coding unrelated to YT Convert), politely say you only answer about YT Convert and list what you can help with.
+
+Ground truth local answer (use this as primary source, improve phrasing but keep facts accurate):
+${localAnswer}
+Sources: ${sources.join(", ")}
+
+Full FAQ knowledge base for reference:
+${faqDump}
+
+Be concise (2-6 sentences usually, longer if needed), friendly, helpful. Cite sources when relevant but don't hallucinate converters.`;
+}
+
+async function callGroq(question: string, systemPrompt: string): Promise<string | null> {
+  const groqKey = process.env.GROQ_API_KEY;
+  if (!groqKey) return null;
+
+  const model = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10000);
+
+  try {
+    const resp = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${groqKey}`,
+      },
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: question },
+        ],
+        max_tokens: 700,
+        temperature: 0.35,
+        top_p: 0.9,
+      }),
+      signal: controller.signal,
+    });
+
+    if (!resp.ok) {
+      const txt = await resp.text().catch(() => "");
+      console.warn("Groq API error", resp.status, txt.slice(0, 300));
+      return null;
+    }
+
+    const data = (await resp.json()) as {
+      choices?: Array<{ message?: { content?: string } }>;
+    };
+    const content = data.choices?.[0]?.message?.content?.trim();
+    if (content && content.length > 10) return content;
+    return null;
+  } catch (e) {
+    console.warn("Groq call failed", e);
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function callOpenAI(question: string, systemPrompt: string): Promise<string | null> {
+  const key = process.env.OPENAI_API_KEY;
+  if (!key) return null;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
+  try {
+    const resp = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${key}`,
+      },
+      body: JSON.stringify({
+        model: process.env.OPENAI_MODEL || "gpt-4o-mini",
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: question },
+        ],
+        max_tokens: 600,
+        temperature: 0.3,
+      }),
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    if (!resp.ok) return null;
+    const data = (await resp.json()) as {
+      choices?: Array<{ message?: { content?: string } }>;
+    };
+    return data.choices?.[0]?.message?.content?.trim() || null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function callAnthropic(question: string, localAnswer: string): Promise<string | null> {
+  const key = process.env.ANTHROPIC_API_KEY;
+  if (!key) return null;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
+  try {
+    const resp = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": key,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: process.env.ANTHROPIC_MODEL || "claude-3-haiku-20240307",
+        max_tokens: 600,
+        system: `You are YT Convert Assistant, only answer about YT Convert. Grounding: ${localAnswer}`,
+        messages: [{ role: "user", content: question }],
+      }),
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    if (!resp.ok) return null;
+    const data = (await resp.json()) as { content?: Array<{ text?: string }> };
+    return data.content?.[0]?.text?.trim() || null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+export async function POST(req: NextRequest) {
+  // rate limit
+  const ip = clientIp(req as unknown as Request);
+  const retry = rateLimit(`faq-assistant:${ip}`, RATE_LIMIT_PER_MIN);
+  if (retry > 0) {
+    return NextResponse.json(
+      { error: `Too many questions — retry in ${retry}s` },
+      { status: 429, headers: { "Retry-After": String(retry) } },
+    );
+  }
+
+  let body: Body;
+  try {
+    body = (await req.json()) as Body;
+  } catch {
+    return jsonError("Invalid JSON body", 400);
+  }
+
+  const question = (body.question || "").trim();
+  if (!question) return jsonError("Question is required", 400);
+  if (question.length > MAX_QUESTION_LEN)
+    return jsonError(`Question too long — max ${MAX_QUESTION_LEN} characters`, 400);
+  if (question.length < 2) return jsonError("Question too short", 400);
+
+  // local answer first – always computed for grounding + fallback
+  const local = answerLocally(question);
+  let finalAnswer = local.answer;
+  const sources = local.sources;
+  const related = local.related;
+
+  // Build comprehensive system prompt for LLMs
+  const systemPrompt = buildSystemPrompt(local.answer, sources);
+
+  // Try LLMs in priority order: Groq (user-provided) -> OpenAI -> Anthropic
+  // Groq is tried even for high-confidence questions when key exists – user expects AI power.
+  const groqKey = process.env.GROQ_API_KEY;
+  const openAiKey = process.env.OPENAI_API_KEY;
+  const anthropicKey = process.env.ANTHROPIC_API_KEY;
+
+  let llmAnswer: string | null = null;
+
+  if (groqKey) {
+    llmAnswer = await callGroq(question, systemPrompt);
+  }
+
+  if (!llmAnswer && openAiKey && local.confidence < 0.9) {
+    llmAnswer = await callOpenAI(question, systemPrompt);
+  }
+
+  if (!llmAnswer && anthropicKey && local.confidence < 0.85) {
+    llmAnswer = await callAnthropic(question, local.answer);
+  }
+
+  if (llmAnswer) {
+    finalAnswer = llmAnswer;
+  }
+
+  return NextResponse.json(
+    {
+      answer: finalAnswer,
+      sources,
+      related,
+      confidence: local.confidence,
+      model: llmAnswer
+        ? groqKey && llmAnswer
+          ? process.env.GROQ_MODEL || "llama-3.3-70b-versatile"
+          : openAiKey
+            ? process.env.OPENAI_MODEL || "gpt-4o-mini"
+            : "anthropic"
+        : "local",
+    },
+    {
+      headers: {
+        "Cache-Control": "no-store",
+      },
+    },
+  );
+}
+
+// GET for healthcheck + suggested questions + which LLM is configured (without leaking keys)
+export async function GET() {
+  const hasGroq = !!process.env.GROQ_API_KEY;
+  const hasOpenAI = !!process.env.OPENAI_API_KEY;
+  const hasAnthropic = !!process.env.ANTHROPIC_API_KEY;
+
+  return NextResponse.json({
+    status: "ok",
+    llm: hasGroq ? "groq" : hasOpenAI ? "openai" : hasAnthropic ? "anthropic" : "local",
+    model: hasGroq
+      ? process.env.GROQ_MODEL || "llama-3.3-70b-versatile"
+      : hasOpenAI
+        ? process.env.OPENAI_MODEL || "gpt-4o-mini"
+        : hasAnthropic
+          ? process.env.ANTHROPIC_MODEL || "claude-3-haiku-20240307"
+          : "local-knowledge",
+    suggestions: [
+      "How do I download a YouTube video to MP3?",
+      "Which platforms are supported?",
+      "Is YT Convert safe and legal?",
+      "Why is my link not recognized?",
+      "How do I install YT Convert as an app?",
+      "What does the Working / Unavailable badge mean?",
+    ],
+  });
+}
