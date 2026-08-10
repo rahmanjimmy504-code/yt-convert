@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { ArrowLeft } from 'lucide-react';
+import FaqAssistant from '@/components/faq-assistant';
 
 export const metadata: Metadata = {
   title: 'FAQ',
@@ -120,6 +121,8 @@ export default function FaqPage() {
             </details>
           ))}
         </div>
+        <FaqAssistant />
+
         <div className="mt-8 text-center">
           <Link href="/" className="inline-flex items-center gap-2 h-11 px-5 rounded-xl bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white text-sm font-semibold shadow-lg shadow-red-500/20 transition-all">
             Convert a link
