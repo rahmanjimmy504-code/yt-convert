@@ -15,11 +15,35 @@ function jsonError(message: string, status: number) {
   return NextResponse.json({ error: message }, { status });
 }
 
+/**
+ * Strips hallucinated placeholder URLs (e.g. https://www.example.com/faq#...)
+ * that LLMs sometimes invent when citing sources, replacing them with the
+ * only generic FAQ path: /faq. The only internal paths that exist are
+ * /, /faq, /privacy, /terms, /status — the FAQ has no anchor links.
+ */
+function sanitizeAnswer(text: string): string {
+  return text.replace(/https?:\/\/(www\.)?example\.com[^\s)]*/gi, "/faq");
+}
+
 function buildSystemPrompt(localAnswer: string, sources: string[]) {
   // Compact knowledge dump – keep under ~4000 tokens for Groq
   const faqDump = KNOWLEDGE.map(k => `Q: ${k.q}\nA: ${k.a}`).join("\n\n");
 
   return `You are YT Convert Assistant – a helpful, friendly AI that ONLY answers about YT Convert, a free multi-platform converter front-end.
+
+STRICT ANTI-HALLUCINATION RULES (OVERRIDE EVERYTHING ELSE):
+- NEVER invent or output URLs, domains, or links. The ONLY site paths you may ever mention are: / (homepage), /faq, /privacy, /terms, /status. No other pages exist.
+- The FAQ has NO anchor links — never write "https://www.example.com/faq#..." or "/faq#some-section". example.com does not exist for this site and no section anchors exist.
+- NEVER cite FAQ sections as hyperlinks or markdown links. When citing, name the FAQ entry in plain words, e.g. "the 'Clipboard auto-copy not working?' entry on /faq".
+- NEVER invent converter names, features, settings, or error messages that are not stated in this prompt.
+- If the knowledge base does not cover the question, honestly say you don't know and point to /faq — do not guess.
+
+CLIPBOARD FACTS (use EXACTLY, always separate desktop from mobile):
+- Auto-copy IS triggered exactly when the user clicks a converter card — a real user gesture — but browsers can still block the clipboard write.
+- If blocked, the site shows this exact message: "Auto-copy was blocked by your browser — press Ctrl+C to copy, then paste in the converter tab".
+- Desktop fallback: Ctrl+C to copy, Ctrl+V to paste (Command+C / Command+V on Mac), or just click the "Copy link" button on the results card.
+- Mobile / iPhone Safari fallback: tap the "Copy link" button, then long-press the converter's input field and choose Paste, granting clipboard permission if asked.
+- NEVER suggest Ctrl, Cmd, or any keyboard shortcut for iPhone/iPad/Android — phones and tablets have no Ctrl keys. For mobile, only mention: "Copy link" button → long-press input → Paste → grant permission.
 
 CORE FACTS YOU MUST OBEY:
 - YT Convert does NOT download/convert/store media itself. It detects platform of pasted link, fetches public metadata (title, thumbnail, duration, author) from oEmbed + Invidious (YouTube) and routes user to third-party converter sites. URL is auto-copied on converter click so user presses Ctrl+V in new tab.
@@ -44,7 +68,7 @@ Sources: ${sources.join(", ")}
 Full FAQ knowledge base for reference:
 ${faqDump}
 
-Be concise (2-6 sentences usually, longer if needed), friendly, helpful. Cite sources when relevant but don't hallucinate converters.`;
+Be concise (2-6 sentences usually, longer if needed), friendly, helpful. Cite FAQ entries by their plain title and /faq only — never output a URL you were not explicitly given, and don't hallucinate converters.`;
 }
 
 async function callGroq(question: string, systemPrompt: string): Promise<string | null> {
@@ -189,7 +213,7 @@ export async function POST(req: NextRequest) {
 
   // local answer first – always computed for grounding + fallback
   const local = answerLocally(question);
-  let finalAnswer = local.answer;
+  let finalAnswer = sanitizeAnswer(local.answer);
   const sources = local.sources;
   const related = local.related;
 
@@ -217,7 +241,9 @@ export async function POST(req: NextRequest) {
   }
 
   if (llmAnswer) {
-    finalAnswer = llmAnswer;
+    // LLMs occasionally invent placeholder links (https://www.example.com/...)
+    // — strip them even when the system prompt says not to.
+    finalAnswer = sanitizeAnswer(llmAnswer);
   }
 
   return NextResponse.json(
