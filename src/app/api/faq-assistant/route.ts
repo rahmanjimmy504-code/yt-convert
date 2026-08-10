@@ -122,44 +122,56 @@ async function callGroq(question: string, systemPrompt: string): Promise<string 
 async function callOpenAI(question: string, systemPrompt: string): Promise<string | null> {
   const key = process.env.OPENAI_API_KEY;
   if (!key) return null;
+  const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
+  // Optional override for OpenAI-compatible gateways / proxies / mocks.
+  const baseUrl = (process.env.OPENAI_BASE_URL || "https://api.openai.com/v1").replace(/\/+$/, "");
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 8000);
+  const timeout = setTimeout(() => controller.abort(), 10000);
   try {
-    const resp = await fetch("https://api.openai.com/v1/chat/completions", {
+    const resp = await fetch(`${baseUrl}/chat/completions`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${key}`,
       },
       body: JSON.stringify({
-        model: process.env.OPENAI_MODEL || "gpt-4o-mini",
+        model,
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: question },
         ],
-        max_tokens: 600,
-        temperature: 0.3,
+        max_tokens: 700,
+        temperature: 0.35,
+        top_p: 0.9,
       }),
       signal: controller.signal,
     });
-    clearTimeout(timeout);
-    if (!resp.ok) return null;
+
+    if (!resp.ok) {
+      const txt = await resp.text().catch(() => "");
+      console.warn("OpenAI API error", resp.status, txt.slice(0, 300));
+      return null;
+    }
+
     const data = (await resp.json()) as {
       choices?: Array<{ message?: { content?: string } }>;
     };
-    return data.choices?.[0]?.message?.content?.trim() || null;
-  } catch {
+    const content = data.choices?.[0]?.message?.content?.trim();
+    if (content && content.length > 10) return content;
+    return null;
+  } catch (e) {
+    console.warn("OpenAI call failed", e);
     return null;
   } finally {
     clearTimeout(timeout);
   }
 }
 
-async function callAnthropic(question: string, localAnswer: string): Promise<string | null> {
+async function callAnthropic(question: string, systemPrompt: string): Promise<string | null> {
   const key = process.env.ANTHROPIC_API_KEY;
   if (!key) return null;
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 8000);
+  const timeout = setTimeout(() => controller.abort(), 10000);
   try {
     const resp = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
@@ -170,17 +182,25 @@ async function callAnthropic(question: string, localAnswer: string): Promise<str
       },
       body: JSON.stringify({
         model: process.env.ANTHROPIC_MODEL || "claude-3-haiku-20240307",
-        max_tokens: 600,
-        system: `You are YT Convert Assistant, only answer about YT Convert. Grounding: ${localAnswer}`,
+        max_tokens: 700,
+        // Use the same full system prompt (anti-hallucination rules + knowledge
+        // base) as the other providers, not just a one-line grounding note.
+        system: systemPrompt,
         messages: [{ role: "user", content: question }],
       }),
       signal: controller.signal,
     });
     clearTimeout(timeout);
-    if (!resp.ok) return null;
+    if (!resp.ok) {
+      const txt = await resp.text().catch(() => "");
+      console.warn("Anthropic API error", resp.status, txt.slice(0, 300));
+      return null;
+    }
     const data = (await resp.json()) as { content?: Array<{ text?: string }> };
-    return data.content?.[0]?.text?.trim() || null;
-  } catch {
+    const text = data.content?.[0]?.text?.trim();
+    return text && text.length > 10 ? text : null;
+  } catch (e) {
+    console.warn("Anthropic call failed", e);
     return null;
   } finally {
     clearTimeout(timeout);
@@ -220,24 +240,32 @@ export async function POST(req: NextRequest) {
   // Build comprehensive system prompt for LLMs
   const systemPrompt = buildSystemPrompt(local.answer, sources);
 
-  // Try LLMs in priority order: Groq (user-provided) -> OpenAI -> Anthropic
-  // Groq is tried even for high-confidence questions when key exists – user expects AI power.
-  const groqKey = process.env.GROQ_API_KEY;
-  const openAiKey = process.env.OPENAI_API_KEY;
-  const anthropicKey = process.env.ANTHROPIC_API_KEY;
-
+  // Try LLMs in priority order: Groq -> OpenAI -> Anthropic.
+  //
+  // Whichever provider is configured is ALWAYS consulted, for every question
+  // (the local answer is embedded in the system prompt as grounding, and the
+  // local result remains the fallback when no key is set or the call fails).
+  // Previously OpenAI/Anthropic were gated behind local.confidence thresholds
+  // (< 0.9 / < 0.85), but the local scorer reaches 0.9+ for nearly every
+  // on-topic question — so even with a valid key set, users got rigid canned
+  // answers instead of an AI response. That gate is why the assistant felt
+  // "not like an AI", and it has been removed.
   let llmAnswer: string | null = null;
+  let llmProvider: "groq" | "openai" | "anthropic" | null = null;
 
-  if (groqKey) {
+  if (process.env.GROQ_API_KEY) {
     llmAnswer = await callGroq(question, systemPrompt);
+    if (llmAnswer) llmProvider = "groq";
   }
 
-  if (!llmAnswer && openAiKey && local.confidence < 0.9) {
+  if (!llmAnswer && process.env.OPENAI_API_KEY) {
     llmAnswer = await callOpenAI(question, systemPrompt);
+    if (llmAnswer) llmProvider = "openai";
   }
 
-  if (!llmAnswer && anthropicKey && local.confidence < 0.85) {
-    llmAnswer = await callAnthropic(question, local.answer);
+  if (!llmAnswer && process.env.ANTHROPIC_API_KEY) {
+    llmAnswer = await callAnthropic(question, systemPrompt);
+    if (llmAnswer) llmProvider = "anthropic";
   }
 
   if (llmAnswer) {
@@ -246,19 +274,25 @@ export async function POST(req: NextRequest) {
     finalAnswer = sanitizeAnswer(llmAnswer);
   }
 
+  // Report the provider that ACTUALLY answered (previously this checked which
+  // keys existed, misreporting the model whenever an earlier provider failed
+  // and a later one produced the answer).
+  const model =
+    llmProvider === "groq"
+      ? process.env.GROQ_MODEL || "llama-3.3-70b-versatile"
+      : llmProvider === "openai"
+        ? process.env.OPENAI_MODEL || "gpt-4o-mini"
+        : llmProvider === "anthropic"
+          ? process.env.ANTHROPIC_MODEL || "claude-3-haiku-20240307"
+          : "local";
+
   return NextResponse.json(
     {
       answer: finalAnswer,
       sources,
       related,
       confidence: local.confidence,
-      model: llmAnswer
-        ? groqKey && llmAnswer
-          ? process.env.GROQ_MODEL || "llama-3.3-70b-versatile"
-          : openAiKey
-            ? process.env.OPENAI_MODEL || "gpt-4o-mini"
-            : "anthropic"
-        : "local",
+      model,
     },
     {
       headers: {

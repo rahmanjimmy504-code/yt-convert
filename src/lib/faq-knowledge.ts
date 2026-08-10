@@ -280,7 +280,7 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
   {
     id: "shortcuts",
     q: "What keyboard shortcuts exist?",
-    a: "Press '/' to focus the link box, 'Enter' to fetch info instantly, 'Esc' to start over or close dialogs, '?' to toggle the shortcuts panel. Also drag & drop a link anywhere on the page to load it. On the FAQ page you can still press Esc to go back? Actually click Back.",
+    a: "Press '/' to focus the link box, 'Enter' to fetch info instantly, 'Esc' to start over or close dialogs, '?' to toggle the shortcuts panel. Also drag & drop a link anywhere on the page to load it. (These shortcuts live on the homepage; on the FAQ page, use the Back link to return.)",
     keywords: [
       "shortcut",
       "keyboard shortcut",
