@@ -239,7 +239,7 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
   {
     id: "clipboard",
     q: "Clipboard auto-copy not working?",
-    a: "Most browsers block clipboard writes unless triggered by a user gesture. YT Convert does the copy exactly when you click a converter card. If blocked, you'll see 'Auto-copy was blocked' message. Fallback: use the 'Copy link' button on the results card, or Ctrl+C manually, then paste in the converter tab with Ctrl+V. On iPhone Safari, you may need to tap-hold and Paste after granting clipboard permission.",
+    a: "YT Convert triggers the copy exactly when you click a converter card (a user gesture), but browsers can still block it. If blocked, you see: 'Auto-copy was blocked by your browser — press Ctrl+C to copy, then paste in the converter tab'. Fallback: use the 'Copy link' button. Desktop: Ctrl+C / Ctrl+V (Command+C / Command+V on Mac). Mobile / iPhone Safari: tap 'Copy link', then long-press input → Paste and grant permission if asked. Never use Ctrl+C / Cmd+C on iPhone.",
     keywords: [
       "clipboard",
       "auto-copy",
@@ -247,6 +247,8 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
       "paste not working",
       "ctrl+v",
       "clipboard blocked",
+      "iphone paste",
+      "safari clipboard",
     ],
   },
   {
