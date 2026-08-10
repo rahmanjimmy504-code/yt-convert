@@ -76,6 +76,14 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
       "price",
       "login",
       "subscription",
+      "pay",
+      "paying",
+      "payment",
+      "how much",
+      "charge",
+      "money",
+      "fee",
+      "trial",
     ],
   },
   {
@@ -116,6 +124,13 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
       "try another",
       "download failed",
       "converter error",
+      "download button",
+      "button does nothing",
+      "nothing happens",
+      "not downloading",
+      "wont download",
+      "can't download",
+      "cant download",
     ],
   },
   {
@@ -175,6 +190,9 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
       "cookies",
       "gdpr",
       "what data collected",
+      "what data",
+      "data you collect",
+      "data collected",
       "personal data",
       "ip address",
     ],
@@ -200,12 +218,18 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
     keywords: [
       "legal",
       "is it legal",
+      "illegal",
       "copyright",
       "law",
       "piracy",
       "lawful use",
       "terms of service",
       "can I download copyrighted",
+      "get caught",
+      "in trouble",
+      "sued",
+      "arrested",
+      "dmca",
     ],
   },
   {
@@ -234,6 +258,12 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
       "tutorial",
       "guide",
       "how do I download",
+      "how to save",
+      "save video",
+      "save music",
+      "save audio",
+      "rip",
+      "grab",
     ],
   },
   {
@@ -275,6 +305,10 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
       "listen before",
       "watch before",
       "preview toggle",
+      "before converting",
+      "before downloading",
+      "listen first",
+      "watch it first",
     ],
   },
   {
@@ -355,13 +389,32 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
   },
   {
     id: "pwa-offline",
-    q: "Does the PWA work offline?",
-    a: "Partially: the service worker (public/sw.js) uses network-first for navigations with offline fallback to cached home page, and cache-first for hashed /_next/static assets. API calls (/api/video-info etc.) are never cached. So you can open the shell offline, but you need internet to fetch video info and to use converters. The SW is registered only in production builds.",
+    q: "Can I use YT Convert without internet?",
+    a: "No — you need an internet connection for the actual work. Detecting the platform, fetching the title/thumbnail/duration, and every converter site all require a live connection. Only the app shell works offline: once installed as a PWA, the service worker caches the page and static assets so the app can still OPEN without internet (network-first for pages with a cached fallback, cache-first for /_next/static assets), but API calls like /api/video-info are never cached, so nothing can be looked up or converted until you are back online.",
     keywords: [
       "offline",
       "pwa offline",
       "service worker",
       "does it work without internet",
+      "without internet",
+      "no internet",
+      "internet connection",
+      "internet required",
+      "requires internet",
+      "need internet",
+      "needs internet",
+      "internet",
+      "wifi",
+      "wi-fi",
+      "no wifi",
+      "without wifi",
+      "no connection",
+      "without connection",
+      "connection required",
+      "offline mode",
+      "work offline",
+      "plane",
+      "airplane mode",
     ],
   },
   {
@@ -382,6 +435,11 @@ const STOPWORDS = new Set([
   "the",
   "is",
   "are",
+  "was",
+  "were",
+  "be",
+  "been",
+  "being",
   "a",
   "an",
   "and",
@@ -392,30 +450,105 @@ const STOPWORDS = new Set([
   "what",
   "how",
   "why",
+  "when",
+  "where",
+  "which",
+  "who",
   "do",
   "does",
+  "did",
+  "done",
   "can",
+  "could",
+  "will",
+  "would",
+  "shall",
+  "should",
+  "may",
+  "might",
+  "must",
   "i",
   "my",
   "you",
+  "your",
   "it",
+  "its",
   "this",
   "that",
-  "be",
+  "these",
+  "those",
   "for",
   "on",
   "with",
-  "your",
+  "from",
+  "about",
+  "at",
+  "by",
+  "as",
+  "if",
+  "not",
+  "no",
+  "so",
+  "have",
+  "has",
+  "had",
   "isnt",
   "doesnt",
   "dont",
+  "cant",
+  "wont",
 ]);
+
+/**
+ * Hand-picked spelling/inflection variants that naive suffix rules mangle.
+ * Maps the raw lowercase token to its canonical form before suffix stripping.
+ */
+const TOKEN_VARIANTS: Record<string, string> = {
+  used: "use",
+  uses: "use",
+  using: "use",
+  usable: "use",
+  saved: "save",
+  saving: "save",
+  paid: "pay",
+  paying: "pay",
+  payment: "pay",
+  payments: "pay",
+  wifi: "internet",
+  caught: "catch",
+};
+
+/**
+ * Conservative token normalizer: collapses common English inflections so that
+ * e.g. "downloading", "downloads" and "downloaded" all match a "download"
+ * token in an FAQ entry. Deliberately conservative (length guards) so domain
+ * words like "ads", "press" or "red" survive untouched. Applied identically
+ * to question tokens and entry tokens, so even imperfect stems stay matched.
+ */
+function normalizeToken(raw: string): string {
+  const variant = TOKEN_VARIANTS[raw];
+  if (variant) return variant;
+
+  let t = raw;
+  if (t.length > 5 && t.endsWith("ing")) {
+    t = t.slice(0, -3);
+    // "getting" -> "gett" -> "get"
+    if (t.length > 2 && t[t.length - 1] === t[t.length - 2]) t = t.slice(0, -1);
+  } else if (t.length > 4 && t.endsWith("ed")) {
+    t = t.slice(0, -2);
+  }
+  if (t.length > 3 && t.endsWith("s") && !t.endsWith("ss")) {
+    t = t.slice(0, -1);
+  }
+  return t;
+}
 
 function tokenize(text: string): string[] {
   return text
     .toLowerCase()
     .split(/[^a-z0-9]+/g)
-    .filter(t => t.length > 2 && !STOPWORDS.has(t));
+    .filter(t => t.length > 2 && !STOPWORDS.has(t))
+    .map(normalizeToken);
 }
 
 const YT_KEYWORDS = [
@@ -464,6 +597,23 @@ const YT_KEYWORDS = [
   "ads",
   "safe",
   "offline",
+  "internet",
+  "wifi",
+  "wi-fi",
+  "free",
+  "account",
+  "pay",
+  "cost",
+  "price",
+  "fee",
+  "money",
+  "caught",
+  "trouble",
+  "illegal",
+  "sued",
+  "data",
+  "collect",
+  "track",
   "dark",
   "shortcut",
   "paste",
@@ -528,6 +678,10 @@ export function answerLocally(questionRaw: string): AssistantResult {
     let score = 0;
     const entryQTokens = tokenize(entry.q.toLowerCase());
     const entryATokens = tokenize(entry.a.toLowerCase());
+    // Individual tokens of this entry's keyword phrases, for exact matching.
+    // (Previously this was a substring test, so "use" matched inside "user",
+    // "used", "because", etc.)
+    const entryKwTokens = new Set(entry.keywords.flatMap(kw => tokenize(kw)));
     // keyword phrase matches weighted high
     for (const kw of entry.keywords) {
       if (qLower.includes(kw.toLowerCase())) {
@@ -538,8 +692,8 @@ export function answerLocally(questionRaw: string): AssistantResult {
     for (const tok of qTokens) {
       if (entryQTokens.includes(tok)) score += 2;
       if (entryATokens.includes(tok)) score += 0.3;
-      // also keyword token overlap
-      if (entry.keywords.join(" ").toLowerCase().includes(tok)) score += 0.5;
+      // also keyword token overlap (exact normalized token, not substring)
+      if (entryKwTokens.has(tok)) score += 0.5;
     }
     // extra: direct substring of the canonical question
     if (qLower.includes(entry.q.toLowerCase().slice(0, 20))) score += 4;
@@ -548,7 +702,7 @@ export function answerLocally(questionRaw: string): AssistantResult {
   }).sort((a, b) => b.score - a.score);
 
   const top = scored[0];
-  if (!top || top.score < 1.5) {
+  if (!top || top.score < 2) {
     // fallback generic
     return {
       answer:
@@ -559,24 +713,21 @@ export function answerLocally(questionRaw: string): AssistantResult {
     };
   }
 
-  // optionally combine top 2 if close
+  // Optionally merge a second entry — but only when the question is genuinely
+  // about TWO topics (both entries score strongly and nearly equally). The old
+  // gate (second >= 70% of top and >= 2 points) fired on weak, incidental
+  // overlaps and glued unrelated canned answers together with "Also:" — e.g.
+  // "Can YT Convert be used without internet?" returned the "What is YT
+  // Convert" entry plus the step-by-step guide instead of the offline answer.
   const second = scored[1];
-  let combinedAnswer = top.entry.a;
+  let answer = top.entry.a;
   const sources = [top.entry.q];
   let confidence = Math.min(0.95, 0.5 + top.score * 0.08);
 
-  if (second && second.score >= top.score * 0.7 && second.score >= 2) {
-    // avoid duplicating if same topic
-    if (second.entry.id !== top.entry.id) {
-      combinedAnswer = `${top.entry.a}\n\nAlso: ${second.entry.a}`;
-      sources.push(second.entry.q);
-      confidence = Math.min(0.95, confidence + 0.1);
-    }
-  }
-
-  // make slightly conversational
-  if (qLower.includes("?") || qLower.startsWith("how") || qLower.startsWith("what") || qLower.startsWith("why")) {
-    combinedAnswer = combinedAnswer; // keep as is, already answer-y
+  if (second && second.entry.id !== top.entry.id && second.score >= 5 && second.score >= top.score * 0.8) {
+    answer = `${top.entry.a}\n\nAlso: ${second.entry.a}`;
+    sources.push(second.entry.q);
+    confidence = Math.min(0.95, confidence + 0.1);
   }
 
   const related = scored
@@ -586,7 +737,7 @@ export function answerLocally(questionRaw: string): AssistantResult {
     .slice(0, 3);
 
   return {
-    answer: combinedAnswer,
+    answer,
     sources,
     confidence,
     related,

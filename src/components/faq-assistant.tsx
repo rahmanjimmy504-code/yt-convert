@@ -29,6 +29,7 @@ const SUGGESTED: string[] = [
   'Why is my link not recognized?',
   'How do I install YT Convert as an app?',
   'What does the Working / Unavailable badge mean?',
+  'Can YT Convert be used without internet?',
   'How does auto-copy work?',
 ];
 

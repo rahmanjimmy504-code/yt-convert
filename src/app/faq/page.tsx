@@ -58,6 +58,10 @@ const FAQS: { q: string; a: string }[] = [
     a: 'Yes. YT Convert is a progressive web app (PWA): on Android, open the site in Chrome and choose \u201cAdd to Home screen\u201d or \u201cInstall app\u201d; on iPhone, tap Share \u2192 \u201cAdd to Home Screen\u201d. It installs like a native app with its own icon and opens full-screen without the browser chrome.',
   },
   {
+    q: 'Can I use YT Convert without internet?',
+    a: 'Only partially. The installed app shell can open offline (the service worker caches the page and static assets), but fetching video info and using any converter requires an active internet connection \u2014 API responses are never cached.',
+  },
+  {
     q: 'What analytics does the site collect?',
     a: 'Only aggregate, cookieless counters: which platform a lookup was for, whether it succeeded, which converter was clicked, and bucketed error messages with numbers redacted. No IP addresses, full URLs, accounts, or personal data are stored, and there is no cross-site tracking. The counters exist so the site owner can see which platforms fail and keep converters honest. They are in-memory only and reset on every deploy.',
   },

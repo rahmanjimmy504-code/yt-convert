@@ -25,9 +25,21 @@ function sanitizeAnswer(text: string): string {
   return text.replace(/https?:\/\/(www\.)?example\.com[^\s)]*/gi, "/faq");
 }
 
-function buildSystemPrompt(localAnswer: string, sources: string[]) {
+function buildSystemPrompt(localAnswer: string, sources: string[], confidence: number) {
   // Compact knowledge dump – keep under ~4000 tokens for Groq
   const faqDump = KNOWLEDGE.map(k => `Q: ${k.q}\nA: ${k.a}`).join("\n\n");
+
+  // Only ground the LLM in the local match when the matcher is confident.
+  // Presenting a low-confidence (possibly wrong-topic) canned answer as
+  // "ground truth" made the LLM confidently repeat the wrong entry — e.g.
+  // answering "Can YT Convert be used without internet?" with the generic
+  // "what is YT Convert" description.
+  const grounding =
+    confidence >= 0.7 && sources.length > 0
+      ? `The built-in matcher is confident this question maps to: "${sources.join("; ")}".
+Use its answer as your factual basis — rephrase naturally, keep every fact accurate:
+${localAnswer}`
+      : `The built-in matcher is NOT confident it found the right FAQ entry for this question — its guess may be about the wrong topic, so DO NOT repeat it. Instead, find the entry in the full FAQ knowledge base below that actually answers the question and respond from that. If no entry fits, honestly say you don't know and point to /faq.`;
 
   return `You are YT Convert Assistant – a helpful, friendly AI that ONLY answers about YT Convert, a free multi-platform converter front-end.
 
@@ -61,9 +73,7 @@ HOW TO USE (step-by-step):
 
 If user asks off-topic (weather, jokes, general knowledge, coding unrelated to YT Convert), politely say you only answer about YT Convert and list what you can help with.
 
-Ground truth local answer (use this as primary source, improve phrasing but keep facts accurate):
-${localAnswer}
-Sources: ${sources.join(", ")}
+${grounding}
 
 Full FAQ knowledge base for reference:
 ${faqDump}
@@ -237,8 +247,8 @@ export async function POST(req: NextRequest) {
   const sources = local.sources;
   const related = local.related;
 
-  // Build comprehensive system prompt for LLMs
-  const systemPrompt = buildSystemPrompt(local.answer, sources);
+  // Build comprehensive system prompt for LLMs (confidence-aware grounding)
+  const systemPrompt = buildSystemPrompt(local.answer, sources, local.confidence);
 
   // Try LLMs in priority order: Groq -> OpenAI -> Anthropic.
   //
@@ -325,6 +335,7 @@ export async function GET() {
       "Why is my link not recognized?",
       "How do I install YT Convert as an app?",
       "What does the Working / Unavailable badge mean?",
+      "Can YT Convert be used without internet?",
     ],
   });
 }
