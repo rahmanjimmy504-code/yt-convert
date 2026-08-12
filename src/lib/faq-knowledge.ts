@@ -23,7 +23,7 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
   {
     id: "what-is",
     q: "What does YT Convert actually do?",
-    a: "YT Convert detects the platform of a link you paste (YouTube, Spotify, TikTok and 9 more), shows you the title, thumbnail and other metadata, and then routes you to a third-party converter site that performs the actual download. When you click a converter, your link is sent automatically (and also copied as a backup) so you only have to pick quality / kbps and download.",
+    a: "YT Convert detects the platform of a link you paste (YouTube, Spotify, TikTok and 9 more), shows you the title, thumbnail and other metadata, and then routes you to a third-party converter site that performs the actual download. AUTO-SEND converters use a verified deep link or form. COPY NEEDED converters cannot be auto-filled — copy the link and paste it on the next page.",
     keywords: [
       "what does",
       "what is",
@@ -115,7 +115,7 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
   {
     id: "converter-not-work",
     q: "A converter did not work. What now?",
-    a: "Converter sites occasionally change domains or go offline. Each converter card shows a live 'Working' / 'Unavailable' badge (checked automatically every 15 minutes, with a manual 'Check again' button), so if one is down you can see it before clicking. Clicking a converter sends your link automatically so the converter should already be filled in — just pick quality / kbps. If the box is empty, paste with Ctrl+V (the URL is also auto-copied) and press Convert. If it still fails, try another converter from the list.",
+    a: "Converter sites occasionally change domains or go offline. Each converter card shows a live 'Working' / 'Unavailable' badge (checked automatically every 15 minutes, with a manual 'Check again' button), so if one is down you can see it before clicking. AUTO-SEND converters receive a verified handoff. COPY NEEDED converters open a copy step first — paste the link if the converter box is empty. If it still fails, try another converter from the list.",
     keywords: [
       "not working",
       "converter failed",
@@ -248,7 +248,7 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
   {
     id: "how-to-use",
     q: "How do I use YT Convert step by step?",
-    a: "1) Copy a link from YouTube, Spotify, TikTok, etc. 2) Paste it into YT Convert's box — info auto-fetches after 800ms if CAPTCHA is done, or press Go/Enter. 3) Pick MP3 (audio) or MP4 (video) format — converters supporting it rank higher. 4) Click a converter card — your link is sent to the converter automatically and also copied as a backup. 5) On the converter page, choose quality / kbps and download. If the box is empty, press Ctrl+V (or long-press Paste on mobile) then Convert.",
+    a: "1) Copy a link from YouTube, Spotify, TikTok, etc. 2) Paste it into YT Convert's box — info auto-fetches after 800ms if CAPTCHA is done, or press Go/Enter. 3) Pick MP3 (audio) or MP4 (video) format — converters supporting it rank higher. 4) Click an AUTO-SEND converter for a verified handoff, or COPY NEEDED to copy then paste. 5) On the converter page, choose quality / kbps and download.",
     keywords: [
       "how to use",
       "how does it work",
@@ -269,7 +269,7 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
   {
     id: "clipboard",
     q: "Clipboard auto-copy not working?",
-    a: "Clicking a converter sends your link to the site automatically, so you usually only pick quality. The URL is also copied as a backup. YT Convert triggers the copy exactly when you click a converter card (a user gesture), but browsers can still block it. If the converter box is empty, paste with Ctrl+V (desktop) or use the 'Copy link' button then long-press → Paste on mobile. Never use Ctrl+C / Cmd+C on iPhone.",
+    a: "Only AUTO-SEND converters receive the URL automatically. COPY NEEDED converters show a selectable link and a 'Copy link and continue' button because those sites cannot be auto-filled. If copy is blocked, select the URL and copy it manually, then paste on the converter page (Ctrl+V on desktop, long-press Paste on mobile).",
     keywords: [
       "clipboard",
       "auto-copy",
@@ -665,7 +665,7 @@ export function answerLocally(questionRaw: string): AssistantResult {
     if (!generic.test(qLower)) {
       return {
         answer:
-          "I'm focused only on YT Convert — the free tool that lets you fetch metadata from 13 platforms (YouTube, Spotify, TikTok, etc.) and routes you to third-party converters via auto-copied links.\n\nI can help with:\n• How to use it step-by-step, MP3 vs MP4, clipboard\n• Supported platforms & why a link might not be recognized\n• Converter badges (Working/Unavailable), ads, and reporting unsafe sites\n• Privacy & analytics, history storage, PWA install, shortcuts, dark mode, CAPTCHA\n\nCould you rephrase your question to be about YT Convert? For example: \"How do I download a YouTube link to MP3?\"",
+          "I'm focused only on YT Convert — the free tool that lets you fetch metadata from 13 platforms (YouTube, Spotify, TikTok, etc.) and routes you to third-party converters (AUTO-SEND when verified, otherwise COPY NEEDED).\n\nI can help with:\n• How to use it step-by-step, MP3 vs MP4, clipboard\n• Supported platforms & why a link might not be recognized\n• Converter badges (Working/Unavailable), ads, and reporting unsafe sites\n• Privacy & analytics, history storage, PWA install, shortcuts, dark mode, CAPTCHA\n\nCould you rephrase your question to be about YT Convert? For example: \"How do I download a YouTube link to MP3?\"",
         sources: [],
         confidence: 0.4,
         related: ["What does YT Convert actually do?", "Which platforms are supported?", "How do I use YT Convert step by step?"],
@@ -706,7 +706,7 @@ export function answerLocally(questionRaw: string): AssistantResult {
     // fallback generic
     return {
       answer:
-        "Good question! I couldn't find an exact match, but here's the core of YT Convert:\n\nYT Convert itself doesn't download or convert — it detects your platform (YouTube, YT Music, SoundCloud, X, Instagram, Spotify, Deezer, Apple Music, Amazon Music, TikTok, Facebook, Snapchat, BeReal), fetches public metadata (title, thumbnail, duration), then lets you pick a third-party converter. Your link is sent automatically so you just pick quality / kbps on the converter page.\n\nTry:\n1) Use a full https:// link to an exact video/track, not a channel\n2) Complete the CAPTCHA, press Go, choose MP3 for audio or MP4 for video\n3) If a converter is down (red badge) or looks unsafe, flag it and try another (green Working badge, BEST label)\n\nIf you tell me your exact link type or error message, I can give a more specific answer.",
+        "Good question! I couldn't find an exact match, but here's the core of YT Convert:\n\nYT Convert itself doesn't download or convert — it detects your platform (YouTube, YT Music, SoundCloud, X, Instagram, Spotify, Deezer, Apple Music, Amazon Music, TikTok, Facebook, Snapchat, BeReal), fetches public metadata (title, thumbnail, duration), then lets you pick a third-party converter. AUTO-SEND cards use a verified handoff; COPY NEEDED cards ask you to paste.\n\nTry:\n1) Use a full https:// link to an exact video/track, not a channel\n2) Complete the CAPTCHA, press Go, choose MP3 for audio or MP4 for video\n3) If a converter is down (red badge) or looks unsafe, flag it and try another (green Working badge, BEST label)\n\nIf you tell me your exact link type or error message, I can give a more specific answer.",
       sources: [],
       confidence: 0.25,
       related: scored.slice(0, 3).map(s => s.entry.q),

@@ -5,6 +5,7 @@ import {
   checkConverterUrl,
   converterGoPath,
   getConverterByName,
+  hasAutomaticHandoff,
   isSafeHandoffMediaUrl,
   isSafePostHandoff,
   resolveConverterStatus,
@@ -67,19 +68,19 @@ describe('catalog', () => {
 describe('handoff', () => {
   const media = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
 
-  it('appends both an encoded ?url= and a raw-link hash by default', () => {
+  it('builds the 9Convert embed deep link from the YouTube id', () => {
     const nine = getConverterByName('9Convert')!;
     expect(buildConverterLaunchUrl(nine, media)).toBe(
-      `https://9convert.org/?url=${encodeURIComponent(media)}#${media}`,
+      'https://embed.dlsrv.online/v2/full?videoId=dQw4w9WgXcQ',
     );
+    expect(hasAutomaticHandoff(nine)).toBe(true);
   });
 
-  it('keeps the converter path when appending query and hash fallbacks', () => {
+  it('does not invent query or hash params for clipboard converters', () => {
     const save = getConverterByName('SaveInsta')!;
     const instagram = 'https://www.instagram.com/reel/abc/';
-    expect(buildConverterLaunchUrl(save, instagram)).toBe(
-      `https://saveinsta.to/en1?url=${encodeURIComponent(instagram)}#${instagram}`,
-    );
+    expect(buildConverterLaunchUrl(save, instagram)).toBe('https://saveinsta.to/en1');
+    expect(hasAutomaticHandoff(save)).toBe(false);
   });
 
   it('uses FastDL address-bar prefix', () => {
@@ -87,32 +88,55 @@ describe('handoff', () => {
     expect(buildConverterLaunchUrl(fast, 'https://www.instagram.com/reel/abc/')).toBe(
       'https://f-d.app/https://www.instagram.com/reel/abc/',
     );
+    expect(hasAutomaticHandoff(fast)).toBe(true);
   });
 
-  it('uses the tweet path that Twitsave actually consumes', () => {
+  it('builds Twitsave GET /info?url=', () => {
     const twitsave = getConverterByName('Twitsave')!;
-    expect(buildConverterLaunchUrl(twitsave, 'https://x.com/example/status/123456789?s=20')).toBe(
-      'https://twitsave.com/example/status/123456789',
+    const tweet = 'https://x.com/example/status/123456789?s=20';
+    expect(buildConverterLaunchUrl(twitsave, tweet)).toBe(
+      `https://twitsave.com/info?url=${encodeURIComponent(tweet)}`,
     );
-    expect(buildConverterLaunchUrl(twitsave, 'https://twitter.com/another/status/987654321')).toBe(
-      'https://twitsave.com/another/status/987654321',
-    );
+    expect(hasAutomaticHandoff(twitsave)).toBe(true);
   });
 
-  it('falls back to query and hash for a non-tweet Twitsave link', () => {
-    const twitsave = getConverterByName('Twitsave')!;
-    const unusual = 'https://x.com/example';
-    expect(buildConverterLaunchUrl(twitsave, unusual)).toBe(
-      `https://twitsave.com/en?url=${encodeURIComponent(unusual)}#${unusual}`,
+  it('keeps Lucida verified ?url= handoff', () => {
+    const lucida = getConverterByName('Lucida')!;
+    const deezer = 'https://www.deezer.com/track/3135556';
+    expect(buildConverterLaunchUrl(lucida, deezer)).toBe(
+      `https://lucida.to/?url=${encodeURIComponent(deezer)}`,
     );
+    expect(hasAutomaticHandoff(lucida)).toBe(true);
   });
 
-  it('uses FBDown POST action and keeps it same-origin', () => {
+  it('uses FBDown POST to /download.php with URLz', () => {
     const fb = getConverterByName('FBDown')!;
-    expect(fb.handoff).toEqual({ kind: 'post', action: 'https://fdown.net/', field: 'URLz' });
-    expect(buildConverterLaunchUrl(fb, media)).toBe('https://fdown.net/');
-    expect(isSafePostHandoff(fb, 'https://fdown.net/')).toBe(true);
+    expect(fb.handoff).toEqual({
+      kind: 'post',
+      action: 'https://fdown.net/download.php',
+      field: 'URLz',
+    });
+    expect(buildConverterLaunchUrl(fb, media)).toBe('https://fdown.net/download.php');
+    expect(isSafePostHandoff(fb, 'https://fdown.net/download.php')).toBe(true);
     expect(isSafePostHandoff(fb, 'https://evil.example/')).toBe(false);
+    expect(hasAutomaticHandoff(fb)).toBe(true);
+  });
+
+  it('lists only verified AUTO-SEND converters', () => {
+    expect(
+      ALL_CONVERTERS.filter(hasAutomaticHandoff)
+        .map(c => c.name)
+        .sort(),
+    ).toEqual(['9Convert', 'FBDown', 'FastDL', 'Lucida', 'Twitsave']);
+  });
+
+  it('lists SSSTik as a TikTok clipboard converter', () => {
+    const ssstik = getConverterByName('SSSTik')!;
+    expect(ssstik.platforms).toEqual(['tiktok']);
+    expect(hasAutomaticHandoff(ssstik)).toBe(false);
+    expect(buildConverterLaunchUrl(ssstik, 'https://www.tiktok.com/@x/video/1')).toBe(
+      'https://ssstik.io/',
+    );
   });
 
   it('builds a same-origin /go path', () => {

@@ -1,6 +1,6 @@
 # YT Convert
 
-A clean, fast multi-platform converter website built with Next.js. Paste a link from a supported platform, see the thumbnail and metadata instantly, then pick a converter — your link is sent to the converter automatically so you only choose quality / kbps.
+A clean, fast multi-platform converter website built with Next.js. Paste a link from a supported platform, see the thumbnail and metadata instantly, then pick a converter. AUTO-SEND converters use a verified deep link or form. COPY NEEDED converters cannot be auto-filled.
 
 **YT Convert does not perform conversions itself.** It detects the platform of a pasted link, fetches video/audio metadata from public APIs, and routes you to a third-party converter site that handles the actual download.
 
@@ -262,7 +262,7 @@ Converters are defined as an array of `Converter` objects in `src/lib/converters
   formats: FormatKey[];       // 'mp3' | 'mp4' — which output formats it offers
   recommended?: boolean;      // Pins the card near the top when true
   status: 'working' | 'unavailable' | 'unknown';  // Curated Working / Unavailable badge
-  handoff?: ConverterHandoff; // How /go pre-fills the converter (default: ?url=)
+  handoff?: ConverterHandoff; // How /go attaches the URL (default: clipboard)
 }
 ```
 
@@ -271,7 +271,7 @@ Converters are ranked per-request by `getConverters()`:
 2. Sort: the user's favorite (stored in `localStorage` under `yt-convert-fav`) is pinned to the top, then converters supporting the currently selected format (`mp3`/`mp4`) come before the rest.
 3. Break remaining ties with the `recommended` flag.
 
-To add a new converter, add an entry to the `ALL_CONVERTERS` array in `src/lib/converters.ts`. No other file needs to change — the platform filter, format sort, availability probe, report validation, and `/go` handoff pick it up automatically. Override `handoff` when the site does not read `?url=` (FastDL uses a `f-d.app/` prefix; FBDown uses a POST form).
+To add a new converter, add an entry to the `ALL_CONVERTERS` array in `src/lib/converters.ts`. No other file needs to change — the platform filter, format sort, availability probe, report validation, and `/go` handoff pick it up automatically. Omit `handoff` unless the converter has a **tested** deep link, GET/POST form, or prefix protocol. Default is `clipboard` (COPY NEEDED). Do not invent `?url=` or hash parameters. Verified AUTO-SEND examples: 9Convert (`youtube-id-query` embed), Twitsave (`GET /info?url=`), FBDown (`POST /download.php` `URLz`), FastDL (`https://f-d.app/` prefix), Lucida (`?url=`).
 
 ### Adding a Platform
 
@@ -331,7 +331,7 @@ On Android: Chrome menu → "Install app" / "Add to Home screen". On iOS: Share 
 - **Platform detection** — accepts full URLs or bare domains; more-specific subdomains (e.g. `music.youtube.com`) are matched before their parent domains.
 - **Rich video info** — thumbnail, title, author, duration, view count, and publish date from oEmbed + Invidious.
 - **Format-aware converter ranking** — converters that support the selected format (MP3 or MP4) rank above those that don't (after your starred favorite, which is pinned to the top).
-- **Auto-handoff** — clicking a converter opens `/go`, which attaches your media URL (`?url=`, FastDL prefix, or a POST form) and usually auto-starts conversion so you only pick quality / kbps. The URL is still copied as a backup.
+- **Honest handoff** — clicking a converter opens `/go` synchronously. AUTO-SEND cards use a verified protocol (query/prefix/YouTube-id/POST). COPY NEEDED cards show a selectable URL and “Copy link and continue”, then open the landing page. Never claim auto-paste unless the protocol was tested.
 - **Auto-fetch** — after you paste a URL longer than 15 characters, info is fetched automatically after 800 ms (cancelled if you edit the input again).
 - **Favorites** — star a converter to keep it at the top of your ranked list (persisted in `localStorage`).
 - **History** — the last 6 lookups are stored in `localStorage`; the 4 most recent are shown as tappable chips.
