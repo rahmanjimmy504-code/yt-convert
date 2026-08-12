@@ -20,6 +20,8 @@ on:
     paths:
       - 'src/lib/extract.ts'
       - 'src/lib/invidious.ts'
+      - 'src/lib/piped.ts'
+      - 'src/lib/po-token.ts'
       - 'src/lib/youtube-formats.ts'
       - 'src/lib/media-hosts.ts'
       - 'scripts/verify-youtube.mjs'

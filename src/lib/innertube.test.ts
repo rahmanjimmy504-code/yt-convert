@@ -25,19 +25,42 @@ afterEach(() => {
 describe('Innertube client table', () => {
   it('only ships clients known to return direct URLs', () => {
     const names = INNERTUBE_CLIENTS.map(c => c.clientName);
-    expect(names).toEqual(['ANDROID', 'IOS', 'ANDROID_VR', 'VISIONOS', 'TVHTML5_SIMPLY_EMBEDDED_PLAYER']);
+    expect(names).toEqual([
+      'ANDROID',
+      'IOS',
+      'ANDROID_VR',
+      'VISIONOS',
+      'WEB_EMBEDDED_PLAYER',
+      'TVHTML5_SIMPLY_EMBEDDED_PLAYER',
+    ]);
   });
 
   it('tries ANDROID first and pairs each client with a matching id', () => {
     expect(INNERTUBE_CLIENTS[0].clientName).toBe('ANDROID');
     const ids = Object.fromEntries(INNERTUBE_CLIENTS.map(c => [c.clientName, c.clientId]));
-    expect(ids).toMatchObject({ ANDROID: '3', IOS: '5', ANDROID_VR: '28', VISIONOS: '101', TVHTML5_SIMPLY_EMBEDDED_PLAYER: '85' });
+    expect(ids).toMatchObject({
+      ANDROID: '3',
+      IOS: '5',
+      ANDROID_VR: '28',
+      VISIONOS: '101',
+      WEB_EMBEDDED_PLAYER: '56',
+      TVHTML5_SIMPLY_EMBEDDED_PLAYER: '85',
+    });
   });
 
   it('does not include the retired ANDROID_TESTSUITE client', () => {
     // YouTube retired ANDROID_TESTSUITE and yt-dlp removed it; sending it
     // would be a guaranteed-dead request on every lookup.
     expect(INNERTUBE_CLIENTS.some(c => c.clientName === 'ANDROID_TESTSUITE')).toBe(false);
+  });
+
+  it('ships the web embedded client with a public API key and embed context', () => {
+    const web = INNERTUBE_CLIENTS.find(c => c.clientName === 'WEB_EMBEDDED_PLAYER');
+    expect(web).toBeDefined();
+    // The web embed player requires the (non-secret) public Innertube key.
+    expect(web?.apiKey).toMatch(/^AIza[0-9A-Za-z_-]+$/);
+    expect(web?.embed).toBe(true);
+    expect(web?.clientId).toBe('56');
   });
 
   it('uses client versions new enough to be accepted', () => {
@@ -332,7 +355,7 @@ describe('innertubeFormats', () => {
     expect(pickYouTubeFormat(result.formats, 'audio', 'best')).toBeNull();
   });
 
-  it('falls through to TVHTML5 embedded client when regular clients return LOGIN_REQUIRED (age-gate bypass)', async () => {
+  it('falls through to the embedded clients when regular clients return LOGIN_REQUIRED (age-gate bypass)', async () => {
     const calls: string[] = [];
     vi.stubGlobal(
       'fetch',
@@ -340,16 +363,20 @@ describe('innertubeFormats', () => {
         const body = JSON.parse(String(init.body));
         const client = body.context.client.clientName;
         calls.push(client);
-        // Regular clients refuse age-gated content.
+        // Non-embedded (phone/VR/visionOS) clients refuse age-gated content.
+        if (!body.context.thirdParty) {
+          return jsonResponse({
+            playabilityStatus: { status: 'LOGIN_REQUIRED', reason: 'Sign in to confirm your age' },
+          });
+        }
+        // Embedded players bypass the age gate — they must receive the
+        // thirdParty embedUrl in the context. The TV client wins here.
+        expect(body.context.thirdParty.embedUrl).toContain('dQw4w9WgXcQ');
         if (client !== 'TVHTML5_SIMPLY_EMBEDDED_PLAYER') {
           return jsonResponse({
             playabilityStatus: { status: 'LOGIN_REQUIRED', reason: 'Sign in to confirm your age' },
           });
         }
-        // The TV embedded player bypasses the age gate — it must receive the
-        // thirdParty embedUrl in the context.
-        expect(body.context.thirdParty).toBeDefined();
-        expect(body.context.thirdParty.embedUrl).toContain('dQw4w9WgXcQ');
         return jsonResponse({
           playabilityStatus: { status: 'OK' },
           streamingData: {
@@ -379,8 +406,10 @@ describe('innertubeFormats', () => {
     );
 
     const result = await innertubeFormats('dQw4w9WgXcQ');
-    // All 4 regular clients + the TV embedded client were tried.
+    // A regular client, the web embedded client, and the TV embedded client
+    // were all attempted.
     expect(calls).toContain('ANDROID');
+    expect(calls).toContain('WEB_EMBEDDED_PLAYER');
     expect(calls).toContain('TVHTML5_SIMPLY_EMBEDDED_PLAYER');
     // The embedded client's formats came through — no more LOGIN_REQUIRED.
     expect(result.formats.length).toBeGreaterThan(0);
@@ -388,6 +417,83 @@ describe('innertubeFormats', () => {
     // Audio is available from the embedded client.
     const audio = pickYouTubeFormat(result.formats, 'audio', 'best');
     expect(audio?.itag).toBe(140);
+  });
+
+  it('appends the public API key only for the WEB_EMBEDDED_PLAYER client', async () => {
+    const urls: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        urls.push(url);
+        // Non-embedded clients return no direct streams so the loop falls
+        // through to WEB_EMBEDDED_PLAYER (whose URL carries the key) and then
+        // to TVHTML5, which finally returns usable streams.
+        if (!url.includes('key=')) {
+          return jsonResponse({
+            playabilityStatus: { status: 'OK' },
+            streamingData: { formats: [{ itag: 18, signatureCipher: 's=abc' }] },
+          });
+        }
+        return jsonResponse({
+          playabilityStatus: { status: 'OK' },
+          streamingData: {
+            formats: [{ itag: 22, mimeType: 'video/mp4', url: GV_VIDEO }],
+            adaptiveFormats: [{ itag: 140, mimeType: 'audio/mp4', url: GV_AUDIO }],
+          },
+        });
+      }),
+    );
+    await innertubeFormats('dQw4w9WgXcQ');
+    // The first call (ANDROID) has no key.
+    expect(urls[0]).not.toContain('key=');
+    // Exactly one call carries the key: the WEB_EMBEDDED_PLAYER request.
+    const webCalls = urls.filter(u => u.includes('key='));
+    expect(webCalls).toHaveLength(1);
+    expect(webCalls[0]).toContain('AIza');
+    expect(webCalls[0]).toMatch(/[?&]key=AIza/);
+  });
+
+  it('attaches an externally-provided PO token to non-TV client requests', async () => {
+    const calls: Array<{ client: string; hasPoToken: boolean; hasVisitorData: boolean }> = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init: RequestInit) => {
+        const body = JSON.parse(String(init.body));
+        calls.push({
+          client: body.context.client.clientName,
+          hasPoToken: Boolean(body.serviceIntegrityDimensions?.poToken),
+          hasVisitorData: Boolean(body.context.client.visitorData),
+        });
+        // Return usable streams only on the last (TV) client so every client
+        // in the table is exercised.
+        if (body.context.client.clientName === 'TVHTML5_SIMPLY_EMBEDDED_PLAYER') {
+          return jsonResponse({
+            playabilityStatus: { status: 'OK' },
+            streamingData: {
+              formats: [{ itag: 22, mimeType: 'video/mp4', url: GV_VIDEO }],
+              adaptiveFormats: [{ itag: 140, mimeType: 'audio/mp4', url: GV_AUDIO }],
+            },
+          });
+        }
+        return jsonResponse({
+          playabilityStatus: { status: 'OK' },
+          streamingData: { formats: [{ itag: 18, signatureCipher: 's=abc' }] },
+        });
+      }),
+    );
+    await innertubeFormats('dQw4w9WgXcQ', {
+      poToken: { visitorData: 'VISITOR_DATA_TOKEN', poToken: 'PO_TOKEN_VALUE' },
+    });
+    // The first client (ANDROID) receives both visitorData and the poToken.
+    expect(calls[0].client).toBe('ANDROID');
+    expect(calls[0].hasVisitorData).toBe(true);
+    expect(calls[0].hasPoToken).toBe(true);
+    // The PO token is NOT attached to the TV embedded client (it ignores it
+    // and including it risks a refusal), though visitor data is still set.
+    const tv = calls.find(c => c.client === 'TVHTML5_SIMPLY_EMBEDDED_PLAYER');
+    expect(tv).toBeDefined();
+    expect(tv?.hasPoToken).toBe(false);
+    expect(tv?.hasVisitorData).toBe(true);
   });
 
   it('reports the playability status when every client refuses (including TV embedded)', async () => {

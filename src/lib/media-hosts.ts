@@ -17,11 +17,42 @@ const ALLOWED_SUFFIXES = [
   'twimg.com',
   'cdninstagram.com',
   'fbcdn.net',
+  // Piped tertiary fallback — each instance serves streams from its own
+  // proxy host. The well-known public proxies are listed by default; an
+  // operator can approve additional self-hosted proxies via PIPED_PROXY_HOSTS
+  // (comma-separated suffixes, e.g. "pipedproxy.example.com").
+  'kavin.rocks',
+  'pipedproxy.kavin.rocks',
+  'adminforge.de',
+  'leptons.xyz',
+  'drgns.space',
+  'ducks.party',
+  'piped.yt',
 ] as const;
+
+/**
+ * Parse the optional PIPED_PROXY_HOSTS allowlist. Each entry is a host suffix
+ * matched like the built-in list (exact host or any sub-host). Entries are
+ * sanitised so an operator cannot accidentally widen the allowlist to a
+ * bare TLD or inject a wildcard.
+ */
+function extraPipedSuffixes(): string[] {
+  const raw = process.env.PIPED_PROXY_HOSTS || '';
+  if (!raw) return [];
+  const out: string[] = [];
+  for (const part of raw.split(',')) {
+    const host = part.trim().toLowerCase().replace(/^\.+|\.+$/g, '');
+    // Require at least one dot and a 2+ char TLD; reject obvious junk.
+    if (!host || host.includes('/') || host.includes('*') || !/\.[a-z]{2,}$/.test(host)) continue;
+    out.push(host);
+  }
+  return out;
+}
 
 function isAllowedHost(host: string): boolean {
   const h = host.toLowerCase();
-  return ALLOWED_SUFFIXES.some(suffix => h === suffix || h.endsWith(`.${suffix}`));
+  if (ALLOWED_SUFFIXES.some(suffix => h === suffix || h.endsWith(`.${suffix}`))) return true;
+  return extraPipedSuffixes().some(suffix => h === suffix || h.endsWith(`.${suffix}`));
 }
 
 function isIpLiteral(host: string): boolean {

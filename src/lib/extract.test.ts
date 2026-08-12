@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   extractInstagramShortcode,
+  extractMedia,
   extractTikTokId,
   extractTweetId,
   innertubeFormats,
+  isExtractError,
   sanitizeYouTubeCookies,
   twitterSyndicationToken,
 } from './extract';
@@ -151,5 +153,132 @@ describe('innertubeFormats cookie forwarding', () => {
 
     await innertubeFormats('dQw4w9WgXcQ');
     expect(capturedHeaders[0]['cookie']).toBeUndefined();
+  });
+});
+
+describe('extractMedia YouTube fallbacks', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const GV_VIDEO = 'https://rr1---sn-test.googlevideo.com/videoplayback?id=v';
+  const GV_AUDIO = 'https://rr2---sn-test.googlevideo.com/videoplayback?id=a';
+  const PIPED_VIDEO = 'https://pipedproxy-bom.kavin.rocks/videoplayback?id=v';
+  const PIPED_AUDIO = 'https://pipedproxy-bom.kavin.rocks/videoplayback?id=a';
+
+  function playerOk(videoUrl: string, audioUrl: string) {
+    return {
+      playabilityStatus: { status: 'OK' },
+      streamingData: {
+        formats: [{ itag: 22, mimeType: 'video/mp4', url: videoUrl, height: 720, audioQuality: 'AUDIO_QUALITY_MEDIUM' }],
+        adaptiveFormats: [{ itag: 140, mimeType: 'audio/mp4', url: audioUrl, bitrate: 128_000 }],
+      },
+    };
+  }
+
+  function emptyPlayer() {
+    return { playabilityStatus: { status: 'OK' }, streamingData: {} };
+  }
+
+  function pipedOk(videoUrl: string, audioUrl: string) {
+    return {
+      audioStreams: [{ mimeType: 'audio/mp4', codec: 'mp4a.40.2', bitrate: 128_000, url: audioUrl }],
+      videoStreams: [{ mimeType: 'video/mp4', codec: 'avc1.64001F', height: 720, bitrate: 2_500_000, url: videoUrl }],
+    };
+  }
+
+  it('uses Innertube directly when it returns streams (no Piped hop)', async () => {
+    const urls: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        urls.push(url);
+        return new Response(JSON.stringify(playerOk(GV_VIDEO, GV_AUDIO)), {
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }),
+    );
+    const result = await extractMedia('youtube', 'https://www.youtube.com/watch?v=Y1Z3Q3O7IRE', 'mp4', 'best');
+    expect(isExtractError(result)).toBe(false);
+    if (!isExtractError(result)) {
+      expect(result.url).toBe(GV_VIDEO);
+    }
+    // No pipedapi.* host should have been contacted.
+    expect(urls.some(u => u.includes('pipedapi'))).toBe(false);
+  });
+
+  it('falls back to Piped when Innertube and Invidious return nothing', async () => {
+    const contacted: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        contacted.push(url);
+        // Innertube player + Invidious both answer but with no streams.
+        if (url.includes('youtubei/v1/player')) {
+          return new Response(JSON.stringify(emptyPlayer()), { headers: { 'Content-Type': 'application/json' } });
+        }
+        if (url.includes('/api/v1/videos/')) {
+          return new Response(JSON.stringify({}), { headers: { 'Content-Type': 'application/json' } });
+        }
+        // Piped answer.
+        if (url.includes('pipedapi')) {
+          return new Response(JSON.stringify(pipedOk(PIPED_VIDEO, PIPED_AUDIO)), {
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        return new Response('{}', { status: 404 });
+      }),
+    );
+    const result = await extractMedia('youtube', 'https://www.youtube.com/watch?v=Y1Z3Q3O7IRE', 'mp4', 'best');
+    expect(isExtractError(result)).toBe(false);
+    if (!isExtractError(result)) {
+      expect(result.url).toBe(PIPED_VIDEO);
+      expect(result.note).toMatch(/piped/i);
+    }
+    expect(contacted.some(u => u.includes('pipedapi'))).toBe(true);
+  });
+
+  it('returns a clear music-label / copyright error when Piped reports one', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        if (url.includes('youtubei/v1/player')) {
+          return new Response(JSON.stringify(emptyPlayer()), { headers: { 'Content-Type': 'application/json' } });
+        }
+        if (url.includes('pipedapi')) {
+          return new Response(
+            JSON.stringify({ error: 'This video contains content from a music label, blocked in your country' }),
+            { headers: { 'Content-Type': 'application/json' } },
+          );
+        }
+        return new Response('{}', { status: 404 });
+      }),
+    );
+    const result = await extractMedia('youtube', 'https://www.youtube.com/watch?v=Y1Z3Q3O7IRE', 'mp4', 'best');
+    expect(isExtractError(result)).toBe(true);
+    if (isExtractError(result)) {
+      expect(result.error).toMatch(/music label|copyright/i);
+      expect(result.error).toMatch(/try a converter below/i);
+    }
+  });
+
+  it('reports an age-restriction message when every client returns LOGIN_REQUIRED', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        if (url.includes('youtubei/v1/player')) {
+          return new Response(
+            JSON.stringify({ playabilityStatus: { status: 'LOGIN_REQUIRED', reason: 'Sign in to confirm your age' } }),
+            { headers: { 'Content-Type': 'application/json' } },
+          );
+        }
+        return new Response('{}', { status: 404 });
+      }),
+    );
+    const result = await extractMedia('youtube', 'https://www.youtube.com/watch?v=Y1Z3Q3O7IRE', 'mp4', 'best');
+    expect(isExtractError(result)).toBe(true);
+    if (isExtractError(result)) {
+      expect(result.error).toMatch(/age-restricted|signed-in account/i);
+    }
   });
 });

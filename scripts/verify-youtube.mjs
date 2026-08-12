@@ -48,6 +48,7 @@ import {
   invidiousFormats,
   playabilityMessage,
 } from '../src/lib/extract.ts';
+import { pipedFormats } from '../src/lib/piped.ts';
 import { extensionForMime, pickYouTubeFormat, planVideoDownload } from '../src/lib/youtube-formats.ts';
 import { isAllowedMediaUrl } from '../src/lib/media-hosts.ts';
 import { extractYouTubeId } from '../src/lib/platforms.ts';
@@ -74,7 +75,26 @@ console.log(`Clients: ${INNERTUBE_CLIENTS.map(c => `${c.clientName} ${c.clientVe
 console.log('--- per-client player probe ---');
 for (const client of INNERTUBE_CLIENTS) {
   try {
-    const res = await fetch('https://www.youtube.com/youtubei/v1/player?prettyPrint=false', {
+    const endpoint = client.apiKey
+      ? `https://www.youtube.com/youtubei/v1/player?prettyPrint=false&key=${encodeURIComponent(client.apiKey)}`
+      : 'https://www.youtube.com/youtubei/v1/player?prettyPrint=false';
+    const context = {
+      client: {
+        clientName: client.clientName,
+        clientVersion: client.clientVersion,
+        hl: 'en',
+        gl: 'US',
+        utcOffsetMinutes: 0,
+        userAgent: client.userAgent,
+        ...(client.extra || {}),
+      },
+    };
+    if (client.embed) {
+      context.thirdParty = {
+        embedUrl: client.thirdPartyEmbedUrl || `https://www.youtube.com/watch?v=${videoId}`,
+      };
+    }
+    const res = await fetch(endpoint, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -86,17 +106,7 @@ for (const client of INNERTUBE_CLIENTS) {
         videoId,
         contentCheckOk: true,
         racyCheckOk: true,
-        context: {
-          client: {
-            clientName: client.clientName,
-            clientVersion: client.clientVersion,
-            hl: 'en',
-            gl: 'US',
-            utcOffsetMinutes: 0,
-            userAgent: client.userAgent,
-            ...(client.extra || {}),
-          },
-        },
+        context,
       }),
       signal: AbortSignal.timeout(20_000),
     });
@@ -123,28 +133,40 @@ for (const client of INNERTUBE_CLIENTS) {
   }
 }
 
-/* -- 2. The real code path -- */
+/* -- 2. The real code path: Innertube -> Invidious -> Piped -- */
 console.log('\n--- innertubeFormats() ---');
 const result = await innertubeFormats(videoId);
 let formats = result.formats;
+let via = 'innertube';
 
 if (!formats.length) {
   const explained = playabilityMessage(result.status, result.reason);
   check(false, 'innertubeFormats() returned direct-URL formats', explained || 'no formats from any client');
   console.log('  → falling back to Invidious…');
   formats = await invidiousFormats(videoId);
+  if (formats.length) via = 'invidious';
   check(formats.length > 0, 'invidiousFormats() fallback returned formats', `${formats.length} formats`);
 } else {
   check(true, 'innertubeFormats() returned direct-URL formats', `${formats.length} formats`);
 }
 
 if (!formats.length) {
-  console.log('\n✗ No formats at all — extraction is broken for this video.');
+  console.log('  → falling back to Piped…');
+  const piped = await pipedFormats(videoId);
+  formats = piped.formats;
+  if (formats.length) via = 'piped';
+  check(formats.length > 0, 'pipedFormats() fallback returned formats', piped.error || `${formats.length} formats`);
+}
+
+if (!formats.length) {
+  console.log('\n✗ No formats from any source (Innertube, Invidious, or Piped) — extraction is broken for this video.');
   process.exit(1);
 }
 
-const allGoogle = formats.every(f => /(^|\.)googlevideo\.com/.test(new URL(f.url).hostname));
-check(allGoogle, 'every returned format URL is on googlevideo.com');
+// Innertube/Invidious serve googlevideo.com; the Piped fallback serves from
+// each instance's own pipedproxy.* host. Both are allowlisted media hosts.
+const allAllowed = formats.every(f => isAllowedMediaUrl(f.url));
+check(allAllowed, `every returned format URL is an allowlisted media host (source: ${via})`);
 
 /* -- 3. Picker + plan honesty + allowlist + real range request -- */
 const cases = [

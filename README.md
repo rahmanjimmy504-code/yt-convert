@@ -2,13 +2,13 @@
 
 A clean, fast multi-platform converter website built with Next.js. Paste a link from a supported platform, see the thumbnail and metadata instantly, then download here when we can — or pick a fallback converter. AUTO-SEND converters use a verified deep link or form. COPY NEEDED converters cannot be auto-filled.
 
-**We convert where we legally and technically can.** Download here extracts a public stream (YouTube / YT Music via Innertube + Invidious, SoundCloud progressive, public X / TikTok / Instagram / Facebook URLs) and proxies it to your browser. Files are never stored. DRM catalogs (Spotify, Deezer, Apple Music, Amazon Music) are not ripped. Snapchat and BeReal have no public media URL we can proxy. Third-party converter cards stay as fallback when extraction fails.
+**We convert where we legally and technically can.** Download here extracts a public stream (YouTube / YT Music via Innertube → Invidious → Piped, SoundCloud progressive, public X / TikTok / Instagram / Facebook URLs) and proxies it to your browser. Files are never stored. DRM catalogs (Spotify, Deezer, Apple Music, Amazon Music) are not ripped. Snapchat and BeReal have no public media URL we can proxy. Third-party converter cards stay as fallback when extraction fails.
 
 ## Supported Platforms
 
 | Platform | `PlatformKey` | First-party convert | Notes |
 |---|---|---|---|
-| YouTube | `youtube` | Yes | Innertube ANDROID/IOS + Invidious; progressive MP4 + m4a audio; `*.googlevideo.com` only |
+| YouTube | `youtube` | Yes | Innertube (ANDROID/IOS/VR/VisionOS + embedded players) → Invidious → Piped; progressive MP4 + m4a audio; allowlisted CDNs only |
 | YT Music | `youtubemusic` | Yes | Same pipeline as YouTube |
 | SoundCloud | `soundcloud` | Yes | Public progressive stream via their API (real MP3/M4A container) |
 | X (Twitter) | `twitter` | Attempt | Syndication / embed guest; honest fail → Twitsave |
@@ -95,7 +95,10 @@ yt-convert/
 │       ├── embed.ts                 # Native player embed URLs (Preview toggle)
 │       ├── og-card.tsx              # Shared OG/Twitter card artwork (JSX for ImageResponse)
 │       ├── convert-ticket.ts        # HMAC convert tickets (URL + IP + expiry)
-│       ├── extract.ts               # Per-platform public-stream extractors
+│       ├── extract.ts               # Per-platform public-stream extractors (Innertube → Invidious → Piped)
+│       ├── invidious.ts             # Public Invidious instance list + URL builder
+│       ├── piped.ts                 # Public Piped API client (tertiary YouTube fallback)
+│       ├── po-token.ts              # Optional external PO-token server client
 │       ├── media-hosts.ts           # SSRF allowlist for the convert proxy
 │       ├── youtube-formats.ts       # Progressive MP4 / m4a picker
 │       ├── platforms.ts             # Platform definitions, detection, canConvertPlatform
@@ -115,6 +118,7 @@ yt-convert/
 ├── package.json
 ├── package-lock.json
 ├── .env.example
+├── po-token-server/         # Optional sidecar: authenticated PO-token minting service (Docker)
 └── README.md
 ```
 
@@ -163,8 +167,24 @@ The dev server runs at **http://localhost:3000** by default. Edit any file under
 | `CONVERT_TICKET_SECRET` | *(falls back to `CAPTCHA_SECRET`)* | HMAC secret for short-lived convert tickets issued after a CAPTCHA lookup |
 | `ADMIN_TOKEN` | *(empty)* | Unlocks the admin dashboard at `/status` (must be ≥ 16 chars). Without it the dashboard is disabled (404) |
 | `DISABLE_ANALYTICS` | *(empty)* | Set to `1` to turn off the privacy-friendly aggregate counters entirely |
+| `NEXT_PUBLIC_YT_COOKIES_ENABLED` | *(empty)* | Set to `1` to show the opt-in "YouTube session cookies" UI for age-gate bypass (off by default; cookies are per-request, never stored) |
+| `PIPED_PROXY_HOSTS` | *(empty)* | Comma-separated extra host suffixes to allow as Piped stream proxies (self-hosted Piped instances); the well-known public proxies are already allowed |
+| `PO_TOKEN_SERVER_URL` | *(empty)* | URL of an external PO-token sidecar (see `po-token-server/`). When set together with `PO_TOKEN_SERVER_AUTH`, tokens are fetched and attached to Innertube requests for music-label / BotGuard-blocked videos |
+| `PO_TOKEN_SERVER_AUTH` | *(empty)* | Bearer token for the PO-token sidecar (must match its `AUTH_TOKEN`) |
+| `YT_API_KEY` | *(built-in)* | Override the public, non-secret Innertube API key used by the `WEB_EMBEDDED_PLAYER` client if YouTube rotates it |
 
 Set values in a `.env.local` file (excluded from Git via `.gitignore`) or in your hosting platform's environment settings.
+
+### YouTube extraction chain & the PO-token sidecar
+
+YouTube / YT Music downloads try sources in order, stopping at the first that returns a direct, allowlisted stream:
+
+1. **Innertube clients** — `ANDROID`, `IOS`, `ANDROID_VR`, `VISIONOS`, then two embedded-player clients (`WEB_EMBEDDED_PLAYER` with the public API key, and `TVHTML5_SIMPLY_EMBEDDED_PLAYER`). The embedded clients bypass most age-gate / `LOGIN_REQUIRED` responses automatically because smart-TV/web embeds have no login flow.
+2. **Invidious instances** — public metadata/stream mirrors (secondary; often rate-limited).
+3. **Piped instances** — public NewPipeExtractor-backed mirrors that handle PO tokens / BotGuard server-side; the most reliable fallback for music-label videos. Stream URLs come from each instance's own `pipedproxy.*` host, which is why those hosts are on the media allowlist.
+4. **External PO-token server** (optional) — if `PO_TOKEN_SERVER_URL` + `PO_TOKEN_SERVER_AUTH` are configured, a token is fetched once (cached ~30 min) and attached to the Innertube requests under `serviceIntegrityDimensions`.
+
+The main app **never emulates BotGuard / generates PO tokens itself**. If you need tokens, run the small authenticated sidecar in [`po-token-server/`](po-token-server/README.md) (Docker, uses `jsdom` — no system browser) on any host and point `PO_TOKEN_SERVER_URL` at it over HTTPS. It is fully optional: with neither variable set, extraction behaves exactly as before, falling through Innertube → Invidious → Piped.
 
 ### Custom production domain
 
@@ -262,7 +282,7 @@ On any unhandled error during `fetchInfo()`, the route logs the error and return
 
 **Endpoint:** `GET /api/convert?url=<encoded-url>&format=mp3|mp4&ticket=<ticket>&title=<optional>`
 
-Streams a public media file to the browser. The file is not written to disk. Requires a convert ticket issued by `/api/video-info` after CAPTCHA (bound to the exact URL and client IP, 10-minute TTL). Rate-limited to **10 requests per 60 s per IP**. The proxy only fetches allowlisted media hosts (`*.googlevideo.com`, SoundCloud CDNs, TikTok CDNs, `*.twimg.com`, `*.cdninstagram.com`, `*.fbcdn.net`) and re-checks every redirect (SSRF).
+Streams a public media file to the browser. The file is not written to disk. Requires a convert ticket issued by `/api/video-info` after CAPTCHA (bound to the exact URL and client IP, 10-minute TTL). Rate-limited to **10 requests per 60 s per IP**. The proxy only fetches allowlisted media hosts (`*.googlevideo.com`, SoundCloud CDNs, TikTok CDNs, `*.twimg.com`, `*.cdninstagram.com`, `*.fbcdn.net`, and the public Piped proxy hosts such as `*.kavin.rocks`) and re-checks every redirect (SSRF).
 
 Audio is delivered in the real container (often `.m4a` / AAC). A file is never labeled `.mp3` unless it is actually MP3. Video is progressive MP4 when the platform provides one.
 
@@ -384,6 +404,9 @@ Recommended production environment variables:
 | `CAPTCHA_SECRET` | Long random string |
 | `CONVERT_TICKET_SECRET` | Long random string (or reuse `CAPTCHA_SECRET`) |
 | `ADMIN_TOKEN` | Long random string (≥ 16 chars) to unlock `/status` |
+| `PO_TOKEN_SERVER_URL` / `PO_TOKEN_SERVER_AUTH` | *(optional)* Point at a deployed `po-token-server/` sidecar to unblock music-label / BotGuard videos |
+
+For music-label videos that still fail after the Piped fallback, deploy the sidecar (see [`po-token-server/README.md`](po-token-server/README.md) — `docker compose up -d --build`, then expose port 4416 over HTTPS) and set `PO_TOKEN_SERVER_URL` + `PO_TOKEN_SERVER_AUTH` in Vercel. The sidecar is independent of the Vercel deployment and never sees user cookies.
 
 ## License
 
