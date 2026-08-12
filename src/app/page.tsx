@@ -158,6 +158,10 @@ export default function Home() {
   const [reportDone, setReportDone] = useState(false);
   const [convertError, setConvertError] = useState('');
   const [converting, setConverting] = useState(false);
+  // YouTube session cookies for age-gate bypass (opt-in, behind feature flag).
+  // Stored in localStorage so power users don't have to re-paste every time.
+  const [ytCookies, setYtCookies] = useState('');
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Scroll target after a lookup: the whole ready result (which contains both
   // the first-party "Download here" panel AND the converter list), so the
@@ -191,6 +195,9 @@ export default function Home() {
     if ((AUDIO_KBPS_OPTIONS as readonly string[]).includes(aq)) setAudioQuality(aq);
     const vq = sGet('yt-convert-video-quality');
     if ((VIDEO_QUALITY_OPTIONS as readonly string[]).includes(vq)) setVideoQuality(vq);
+    // Load saved YouTube cookies (opt-in feature for age-gate bypass).
+    const savedCookies = sGet('yt-convert-yt-cookies');
+    if (savedCookies) setYtCookies(savedCookies);
     return () => {
       if (scrollTimer.current) clearTimeout(scrollTimer.current);
       if (copyTimer.current) clearTimeout(copyTimer.current);
@@ -344,7 +351,12 @@ export default function Home() {
     try {
       const r = await fetch('/api/video-info?url=' + encodeURIComponent(u), {
         signal: controller.signal,
-        headers: { 'X-Captcha-Token': captchaToken },
+        headers: {
+          'X-Captcha-Token': captchaToken,
+          // Forward user-supplied YouTube session cookies for age-gate bypass.
+          // Only sent when the feature flag is on and the user has pasted cookies.
+          ...(ytCookies.trim() ? { 'X-YouTube-Cookies': ytCookies.trim() } : {}),
+        },
       });
       if (!r.ok) {
         const d = await r.json().catch(() => ({}));
@@ -401,7 +413,7 @@ export default function Home() {
       setPhase('ready');
       scrollToResult();
     }
-  }, [url, captchaToken, scrollToResult]);
+  }, [url, captchaToken, ytCookies, scrollToResult]);
 
   const handlePaste = useCallback(async () => {
     try {
@@ -485,7 +497,12 @@ export default function Home() {
     setConverting(true);
     setConvertError('');
     try {
-      const response = await fetch(href);
+      const response = await fetch(href, {
+        headers: {
+          // Forward user-supplied YouTube session cookies for age-gate bypass.
+          ...(ytCookies.trim() ? { 'X-YouTube-Cookies': ytCookies.trim() } : {}),
+        },
+      });
       const type = response.headers.get('content-type') || '';
       if (!response.ok || type.includes('application/json')) {
         const data = (await response.json().catch(() => ({}))) as { error?: string };
@@ -555,7 +572,7 @@ export default function Home() {
     // Drop any in-flight lookup so its result can't reappear after the reset.
     abortRef.current?.abort();
     reqIdRef.current++;
-    setUrl(''); setPhase('input'); setError(''); setVideoInfo(null); setLaunched(null); setLinkCopied(false); setPreviewOpen(false); setShowHelp(false); setConvertError(''); setConverting(false);
+    setUrl(''); setPhase('input'); setError(''); setVideoInfo(null); setLaunched(null); setLinkCopied(false); setPreviewOpen(false); setShowHelp(false); setConvertError(''); setConverting(false); setShowAdvanced(false);
     setCaptchaToken('');
     setCaptchaResetKey(key => key + 1);
     setFormat('mp4'); sSet('yt-convert-format', 'mp4');
@@ -875,6 +892,64 @@ export default function Home() {
                     </div>
                   )}
 
+                  {/* YouTube session cookies — opt-in age-gate bypass.
+                      Only shown for YouTube / YT Music when the feature flag is on. */}
+                  {process.env.NEXT_PUBLIC_YT_COOKIES_ENABLED === '1' &&
+                    (videoInfo.platform === 'youtube' || videoInfo.platform === 'youtubemusic') && (
+                    <div className="rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
+                      <button
+                        type="button"
+                        onClick={() => setShowAdvanced(v => !v)}
+                        className="w-full flex items-center justify-between px-3 py-2 text-[11px] font-semibold text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors"
+                        aria-expanded={showAdvanced}
+                      >
+                        <span className="flex items-center gap-1.5">
+                          <Zap className="w-3 h-3" />
+                          YouTube session cookies
+                          {ytCookies.trim() && (
+                            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400">ACTIVE</span>
+                          )}
+                        </span>
+                        <span className="text-gray-400">{showAdvanced ? '▲' : '▼'}</span>
+                      </button>
+                      {showAdvanced && (
+                        <div className="px-3 pb-3 space-y-2">
+                          <p className="text-[10px] text-gray-500 dark:text-gray-400">
+                            For age-restricted or login-required videos. Paste your YouTube session cookies here
+                            (from browser DevTools → Application → Cookies → <code className="bg-gray-100 dark:bg-gray-800 px-0.5 rounded">.youtube.com</code>).
+                            The cookies are forwarded to YouTube for this download only and are never stored on our server.
+                          </p>
+                          <textarea
+                            value={ytCookies}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              setYtCookies(v);
+                              sSet('yt-convert-yt-cookies', v);
+                            }}
+                            placeholder="SAPISID=xxx; __Secure-3PAPISID=xxx; HSID=xxx; SSID=xxx; ..."
+                            rows={3}
+                            spellCheck={false}
+                            autoCorrect="off"
+                            autoCapitalize="off"
+                            className="w-full text-[11px] font-mono rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 p-2 focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent resize-y placeholder:text-gray-300 dark:placeholder:text-gray-600"
+                          />
+                          <div className="flex items-center justify-between gap-2">
+                            <button
+                              type="button"
+                              onClick={() => { setYtCookies(''); sSet('yt-convert-yt-cookies', ''); }}
+                              className="text-[10px] text-gray-400 hover:text-red-500 transition-colors"
+                            >
+                              Clear cookies
+                            </button>
+                            <span className="text-[10px] text-gray-400">
+                              Stored locally in your browser only
+                            </span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   {downloadPanel.kind === 'ready' ? (
                     <button
                       type="button"
@@ -900,7 +975,24 @@ export default function Home() {
                     </button>
                   )}
                   {convertError && (
-                    <p role="alert" className="text-xs text-red-600 dark:text-red-400">{convertError} Third-party converters remain as fallback.</p>
+                    <div role="alert" className="space-y-1.5">
+                      <p className="text-xs text-red-600 dark:text-red-400">{convertError} Third-party converters remain as fallback.</p>
+                      {/* When the error is age-restriction related and cookies are
+                          available but not yet provided, nudge the user to try cookies. */}
+                      {process.env.NEXT_PUBLIC_YT_COOKIES_ENABLED === '1' &&
+                        /age-restrict|signed-in|login.required|LOGIN_REQUIRED/i.test(convertError) &&
+                        !ytCookies.trim() &&
+                        (videoInfo.platform === 'youtube' || videoInfo.platform === 'youtubemusic') && (
+                        <button
+                          type="button"
+                          onClick={() => setShowAdvanced(true)}
+                          className="text-[11px] font-medium text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/30 border border-amber-300/60 dark:border-amber-800/60 rounded-lg px-2.5 py-1.5 flex items-center gap-1.5 hover:bg-amber-100 dark:hover:bg-amber-950/50 transition-colors"
+                        >
+                          <Zap className="w-3 h-3" />
+                          Try with your YouTube session cookies to bypass the age gate
+                        </button>
+                      )}
+                    </div>
                   )}
                 </div>
               )}

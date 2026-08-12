@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { canConvertPlatform, convertUnavailableReason, detectPlatform, extractYouTubeId, type FormatKey } from '@/lib/platforms';
 import { verifyConvertTicket } from '@/lib/convert-ticket';
-import { extractMedia, isExtractError } from '@/lib/extract';
+import { extractMedia, isExtractError, sanitizeYouTubeCookies } from '@/lib/extract';
 import { fetchAllowedMedia, MediaHostError } from '@/lib/media-hosts';
 import { isValidQuality, sanitizeDownloadFilename } from '@/lib/youtube-formats';
 import { clientIp, rateLimit } from '@/lib/rate-limit';
@@ -76,8 +76,14 @@ export async function GET(request: Request) {
     });
   }
 
+  // Optional: user-supplied YouTube session cookies for age-gate bypass.
+  // These are never logged or cached; they are forwarded only to the
+  // Innertube player endpoint for this single request.
+  const rawCookies = request.headers.get('x-youtube-cookies') || '';
+  const youTubeCookies = sanitizeYouTubeCookies(rawCookies) ?? undefined;
+
   try {
-    const extracted = await extractMedia(platform, rawUrl, format, quality);
+    const extracted = await extractMedia(platform, rawUrl, format, quality, { youTubeCookies });
     if (isExtractError(extracted)) {
       recordEvent({ type: 'lookup', platform, ok: false, error: 'convert failed' });
       return json(extracted.error, 502);
