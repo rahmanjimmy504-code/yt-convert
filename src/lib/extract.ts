@@ -205,7 +205,7 @@ async function invidiousFormats(videoId: string): Promise<PlayerFormat[]> {
   return [];
 }
 
-async function extractYouTube(pageUrl: string, format: FormatKey): Promise<ExtractResult> {
+async function extractYouTube(pageUrl: string, format: FormatKey, quality?: string): Promise<ExtractResult> {
   const id = extractYouTubeId(pageUrl);
   if (!id) return fail('Invalid YouTube URL');
 
@@ -216,7 +216,7 @@ async function extractYouTube(pageUrl: string, format: FormatKey): Promise<Extra
   }
 
   const kind = format === 'mp4' ? 'video' : 'audio';
-  const picked = pickYouTubeFormat(formats, kind);
+  const picked = pickYouTubeFormat(formats, kind, quality);
   if (!picked?.url) {
     return fail(
       kind === 'video'
@@ -501,11 +501,16 @@ function drmFail(platform: string): ExtractResult {
 
 /* -------------------------------------------------------------------------- */
 
-export async function extractMedia(platform: PlatformKey, pageUrl: string, format: FormatKey): Promise<ExtractResult> {
+export async function extractMedia(
+  platform: PlatformKey,
+  pageUrl: string,
+  format: FormatKey,
+  quality?: string,
+): Promise<ExtractResult> {
   switch (platform) {
     case 'youtube':
     case 'youtubemusic':
-      return extractYouTube(pageUrl, format);
+      return extractYouTube(pageUrl, format, quality);
     case 'soundcloud':
       return extractSoundCloud(pageUrl, format);
     case 'tiktok':

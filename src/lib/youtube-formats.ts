@@ -49,26 +49,87 @@ function isM4a(format: PlayerFormat): boolean {
   return /audio\/(mp4|aac|x-m4a)|mp4a/i.test(mimeOf(format));
 }
 
-export function pickYouTubeFormat(
-  formats: PlayerFormat[],
-  kind: 'audio' | 'video',
-): PlayerFormat | null {
-  const usable = formats.filter(f => typeof f.url === 'string' && isGoogleVideoUrl(f.url));
-  if (kind === 'video') {
-    const progressive = usable.filter(isProgressiveMp4);
-    progressive.sort((a, b) => {
+/** Audio bitrate options (kbps) shown in the UI and accepted by the API. */
+export const AUDIO_KBPS_OPTIONS = ['best', '320', '256', '192', '128', '64'] as const;
+/** Video resolution options (height, without the p) shown in the UI/API. */
+export const VIDEO_QUALITY_OPTIONS = ['best', '1080', '720', '480', '360'] as const;
+export type AudioQuality = (typeof AUDIO_KBPS_OPTIONS)[number];
+export type VideoQuality = (typeof VIDEO_QUALITY_OPTIONS)[number];
+
+/** Validates the `quality` query param against the chosen format. */
+export function isValidQuality(format: 'mp3' | 'mp4', quality: string): boolean {
+  return format === 'mp3'
+    ? (AUDIO_KBPS_OPTIONS as readonly string[]).includes(quality)
+    : (VIDEO_QUALITY_OPTIONS as readonly string[]).includes(quality);
+}
+
+function pickClosestHeight(list: PlayerFormat[], target: number): PlayerFormat | null {
+  if (list.length === 0) return null;
+  // Prefer the highest resolution at or below the target.
+  const atOrBelow = list.filter(f => (f.height || 0) <= target);
+  if (atOrBelow.length > 0) {
+    atOrBelow.sort((a, b) => {
       const h = (b.height || 0) - (a.height || 0);
       if (h) return h;
       return (b.bitrate || 0) - (a.bitrate || 0);
     });
-    return progressive[0] || null;
+    return atOrBelow[0];
+  }
+  // Nothing small enough: fall back to the lowest resolution available
+  // (closest above the target) rather than failing the download.
+  const above = list.slice();
+  above.sort((a, b) => {
+    const h = (a.height || 0) - (b.height || 0);
+    if (h) return h;
+    return (a.bitrate || 0) - (b.bitrate || 0);
+  });
+  return above[0];
+}
+
+function pickClosestBitrate(list: PlayerFormat[], targetKbps: number): PlayerFormat | null {
+  if (list.length === 0) return null;
+  const kbps = (f: PlayerFormat) => Math.round((f.bitrate || 0) / 1000);
+  // Prefer the highest bitrate at or below the target.
+  const atOrBelow = list.filter(f => kbps(f) <= targetKbps);
+  if (atOrBelow.length > 0) {
+    atOrBelow.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
+    return atOrBelow[0];
+  }
+  // Otherwise the lowest available bitrate (closest above the target).
+  const above = list.slice();
+  above.sort((a, b) => (a.bitrate || 0) - (b.bitrate || 0));
+  return above[0];
+}
+
+export function pickYouTubeFormat(
+  formats: PlayerFormat[],
+  kind: 'audio' | 'video',
+  quality: string = 'best',
+): PlayerFormat | null {
+  const usable = formats.filter(f => typeof f.url === 'string' && isGoogleVideoUrl(f.url));
+  if (kind === 'video') {
+    const progressive = usable.filter(isProgressiveMp4);
+    if (progressive.length === 0) return null;
+    if (quality === 'best' || !/^\d+$/.test(quality)) {
+      progressive.sort((a, b) => {
+        const h = (b.height || 0) - (a.height || 0);
+        if (h) return h;
+        return (b.bitrate || 0) - (a.bitrate || 0);
+      });
+      return progressive[0];
+    }
+    return pickClosestHeight(progressive, parseInt(quality, 10));
   }
 
   const audio = usable.filter(isAudioOnly);
   const preferred = audio.filter(isM4a);
   const pool = preferred.length > 0 ? preferred : audio;
-  pool.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
-  return pool[0] || null;
+  if (pool.length === 0) return null;
+  if (quality === 'best' || !/^\d+$/.test(quality)) {
+    pool.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
+    return pool[0];
+  }
+  return pickClosestBitrate(pool, parseInt(quality, 10));
 }
 
 /** File extension that matches the real container. Never labels AAC as .mp3. */

@@ -3,7 +3,7 @@ import { canConvertPlatform, convertUnavailableReason, detectPlatform, extractYo
 import { verifyConvertTicket } from '@/lib/convert-ticket';
 import { extractMedia, isExtractError } from '@/lib/extract';
 import { fetchAllowedMedia, MediaHostError } from '@/lib/media-hosts';
-import { sanitizeDownloadFilename } from '@/lib/youtube-formats';
+import { isValidQuality, sanitizeDownloadFilename } from '@/lib/youtube-formats';
 import { clientIp, rateLimit } from '@/lib/rate-limit';
 import { recordEvent } from '@/lib/stats';
 
@@ -33,12 +33,14 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const rawUrl = (searchParams.get('url') || '').trim();
   const format = (searchParams.get('format') || '').trim() as FormatKey;
+  const quality = (searchParams.get('quality') || 'best').trim();
   const ticket = (searchParams.get('ticket') || '').trim();
   const title = (searchParams.get('title') || '').trim();
 
   if (!rawUrl) return json('Missing url parameter', 400);
   if (rawUrl.length > 2048) return json('URL is too long', 400);
   if (format !== 'mp3' && format !== 'mp4') return json('Format must be mp3 or mp4', 400);
+  if (!isValidQuality(format, quality)) return json('Unsupported quality for this format', 400);
 
   const platform = detectPlatform(rawUrl);
   if (!platform) return json('Unsupported URL.', 400);
@@ -75,7 +77,7 @@ export async function GET(request: Request) {
   }
 
   try {
-    const extracted = await extractMedia(platform, rawUrl, format);
+    const extracted = await extractMedia(platform, rawUrl, format, quality);
     if (isExtractError(extracted)) {
       recordEvent({ type: 'lookup', platform, ok: false, error: 'convert failed' });
       return json(extracted.error, 502);
