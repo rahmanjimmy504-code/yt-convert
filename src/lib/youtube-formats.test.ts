@@ -191,6 +191,13 @@ describe('extensionForMime / sanitizeDownloadFilename', () => {
     expect(extensionForMime('video/mp4', 'mp4')).toBe('mp4');
   });
 
+  it('keeps a progressive video/mp4 (with an mp4a audio codec) as .mp4', () => {
+    // Regression: a video/mp4 whose codec string contains "mp4a.40.2" was
+    // wrongly matched by the bare-mp4a audio rule and labelled .m4a.
+    expect(extensionForMime('video/mp4; codecs="avc1.64001F, mp4a.40.2"', 'm4a')).toBe('mp4');
+    expect(extensionForMime('video/mp4; codecs="avc1.42001E"', 'm4a')).toBe('mp4');
+  });
+
   it('builds a safe download filename', () => {
     expect(sanitizeDownloadFilename('My Video: "Hello"/World', 'm4a')).toBe('My Video HelloWorld.m4a');
     expect(sanitizeDownloadFilename('', 'mp4')).toBe('download.mp4');

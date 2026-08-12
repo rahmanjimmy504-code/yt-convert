@@ -135,12 +135,18 @@ export function pickYouTubeFormat(
 /** File extension that matches the real container. Never labels AAC as .mp3. */
 export function extensionForMime(mime: string, fallback: 'm4a' | 'mp3' | 'mp4' | 'bin' = 'bin'): string {
   const m = mime.toLowerCase();
-  if (/audio\/mpeg|audio\/mp3/.test(m)) return 'mp3';
-  if (/audio\/(mp4|aac|x-m4a)|mp4a/.test(m)) return 'm4a';
-  if (/audio\/ogg|application\/ogg/.test(m)) return 'ogg';
-  if (/audio\/webm|opus/.test(m)) return 'webm';
+  // Check video containers first: a progressive video/mp4 codec string often
+  // contains an audio codec such as "mp4a.40.2", so matching the audio codec
+  // token first would wrongly label a video file .m4a.
   if (/video\/mp4|application\/mp4/.test(m)) return 'mp4';
   if (/video\/webm/.test(m)) return 'webm';
+  if (/audio\/mpeg|audio\/mp3/.test(m)) return 'mp3';
+  if (/audio\/(mp4|aac|x-m4a)/.test(m)) return 'm4a';
+  // The bare "mp4a" token only applies when the MIME type is not already a
+  // video container (otherwise it is just the audio track inside an MP4).
+  if (!/^video\//.test(m) && /mp4a/.test(m)) return 'm4a';
+  if (/audio\/ogg|application\/ogg/.test(m)) return 'ogg';
+  if (/audio\/webm|opus/.test(m)) return 'webm';
   return fallback;
 }
 
