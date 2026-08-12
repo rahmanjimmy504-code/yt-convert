@@ -1,0 +1,20 @@
+{
+  "name": "yt-convert-po-token-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Authenticated sidecar that mints YouTube PO tokens (proof-of-origin) for the yt-convert main app. The main app never performs BotGuard attestation itself.",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "healthcheck": "node scripts/healthcheck.js"
+  },
+  "dependencies": {
+    "jsdom": "^26.0.0",
+    "youtube-po-token-generator": "^0.5.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

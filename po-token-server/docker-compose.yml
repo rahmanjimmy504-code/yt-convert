@@ -1,0 +1,32 @@
+# PO-token sidecar for yt-convert.
+#
+# Quick start:
+#   1. cp .env.example .env  and set AUTH_TOKEN to a long random value
+#   2. docker compose up -d --build
+#   3. Expose port 4416 to the public yt-convert deployment (via a reverse
+#      proxy / tunnel / security group), then set in the main app's Vercel env:
+#         PO_TOKEN_SERVER_URL=https://your-public-host
+#         PO_TOKEN_SERVER_AUTH=<the same AUTH_TOKEN>
+#
+# The container never needs to see the main app's secrets or users' cookies;
+# it only mints tokens from YouTube.
+
+services:
+  po-token:
+    build: .
+    image: yt-convert-po-token-server:latest
+    container_name: yt-convert-po-token
+    restart: unless-stopped
+    ports:
+      - "4416:4416"
+    environment:
+      PORT: "4416"
+      HOST: "0.0.0.0"
+      AUTH_TOKEN: "${AUTH_TOKEN}"
+      TOKEN_TTL_MS: "${TOKEN_TTL_MS:-1800000}"
+    healthcheck:
+      test: ["CMD", "node", "scripts/healthcheck.js"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
