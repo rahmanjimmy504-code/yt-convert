@@ -8,8 +8,15 @@ A GitHub Actions workflow that runs the **live** YouTube extraction check
 ### Why it lives here instead of `.github/workflows/`
 
 The automation account that opened this PR does not hold the `workflows`
-permission, so it cannot create files under `.github/workflows/`. Install it
-yourself with a single command:
+permission, so it can create neither `.github/workflows/*` via git push nor
+via the REST contents API (both are rejected). The file therefore ships here
+and has to be moved into place once, by a human.
+
+**From a phone / browser (no shell needed):** open the "add the workflow"
+link in the pull request description. It opens GitHub's file editor with the
+path and contents already filled in — scroll down and tap **Commit changes**.
+
+**From a shell:**
 
 ```bash
 mkdir -p .github/workflows
@@ -25,11 +32,15 @@ terminates TLS to `youtube.com` and `googlevideo.com`, which makes it
 impossible to prove locally that extraction actually works. GitHub-hosted
 runners have open egress, so the live check runs reliably there.
 
-### What it does
+### When it runs
 
-- **Manual run:** Actions tab → *Verify YouTube extraction (live)* → *Run
-  workflow*, optionally with a different video URL.
-- **Weekly run:** Mondays 06:00 UTC, so a YouTube-side change that breaks the
+- **On pull requests** that touch the extraction code, so the live result
+  appears in the PR checks automatically. This is the path that works when
+  nobody has shell access.
+- **Manually:** Actions tab → *Verify YouTube extraction (live)* → *Run
+  workflow*, optionally against a different video URL. Note that this button
+  only appears once the workflow exists on the default branch.
+- **Weekly:** Mondays 06:00 UTC, so a YouTube-side change that breaks the
   Innertube clients surfaces before users report it.
 
 The job fails (exit 1) if extraction stops producing a playable direct URL.
