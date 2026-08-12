@@ -3,6 +3,8 @@
  * to this shape so the picker can be unit-tested without network access.
  */
 
+import { isAllowedMediaUrl } from './media-hosts';
+
 export interface PlayerFormat {
   url?: string;
   mimeType?: string;
@@ -24,6 +26,18 @@ export function isGoogleVideoUrl(raw: string): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * A format URL is usable when it is either a direct googlevideo.com link
+ * (Innertube / Invidious) OR an allowlisted third-party media CDN (the
+ * Piped fallback serves from pipedproxy.* hosts). Centralising this check
+ * keeps every picker path SSRF-safe without forcing every caller to know
+ * which upstream a format came from.
+ */
+export function isUsableFormatUrl(raw: string): boolean {
+  if (typeof raw !== 'string' || raw.length === 0) return false;
+  return isGoogleVideoUrl(raw) || isAllowedMediaUrl(raw);
 }
 
 function mimeOf(format: PlayerFormat): string {
@@ -129,7 +143,7 @@ export function pickYouTubeFormat(
   kind: 'audio' | 'video',
   quality: string = 'best',
 ): PlayerFormat | null {
-  const usable = formats.filter(f => typeof f.url === 'string' && isGoogleVideoUrl(f.url));
+  const usable = formats.filter(f => typeof f.url === 'string' && isUsableFormatUrl(f.url));
   if (kind === 'video') {
     return pickProgressiveForQuality(usable.filter(isProgressiveMp4), quality);
   }
@@ -175,7 +189,7 @@ function maxHeight(usable: PlayerFormat[]): number {
 }
 
 export function planVideoDownload(formats: PlayerFormat[], quality: string): MuxPlan | null {
-  const usable = formats.filter(f => typeof f.url === 'string' && isGoogleVideoUrl(f.url));
+  const usable = formats.filter(f => typeof f.url === 'string' && isUsableFormatUrl(f.url));
   if (usable.length === 0) return null;
 
   const progressive = usable.filter(isProgressiveMp4);

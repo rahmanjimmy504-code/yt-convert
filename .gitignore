@@ -2,6 +2,7 @@
 
 # dependencies
 /node_modules
+/po-token-server/node_modules
 /.pnp
 .pnp.js
 

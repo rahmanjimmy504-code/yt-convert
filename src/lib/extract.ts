@@ -1,5 +1,7 @@
 import { type FormatKey, type PlatformKey, extractYouTubeId } from './platforms';
 import { INVIDIOUS_INSTANCES, invidiousVideoUrl } from './invidious';
+import { pipedFormats } from './piped';
+import { getPoToken } from './po-token';
 import { isAllowedMediaUrl } from './media-hosts';
 import {
   extensionForMime,
@@ -98,6 +100,19 @@ export interface InnertubeClient {
    * bypass for age-restricted videos that would otherwise need cookies.
    */
   embed?: boolean;
+  /**
+   * Optional public Innertube API key appended to the player query string
+   * (?key=...). Required by the WEB_EMBEDDED_PLAYER client. This is a
+   * non-secret value baked into every YouTube web player.
+   */
+  apiKey?: string;
+  /**
+   * When set together with `embed`, use this origin as the thirdParty
+   * embedUrl instead of https://www.youtube.com/watch?v=... A non-YouTube
+   * origin is what the WEB_EMBEDDED_PLAYER sends for third-party embeds and
+   * can succeed where a same-origin embedUrl is refused.
+   */
+  thirdPartyEmbedUrl?: string;
 }
 
 /**
@@ -164,6 +179,35 @@ export const INNERTUBE_CLIENTS: InnertubeClient[] = [
       deviceModel: 'RealityDevice17,1',
       osName: 'visionOS',
       osVersion: '26.5.23O471',
+    },
+  },
+  {
+    // Web embedded player. Unlike the TV client, this one is asked to act as
+    // an embed on a THIRD-PARTY origin (embedUrl is not youtube.com), which
+    // is the configuration YouTube's own iframe embed uses and which often
+    // still returns direct streams for label/age-gated content when the
+    // phone clients refuse. Carries a public INNERTUBE_API_KEY so the player
+    // endpoint accepts the request (this is the same key yt-dlp ships; it is
+    // not a secret). Tried before the TV client: it is closer to a real
+    // browser and tends to hand back a fuller format ladder.
+    name: 'web_embedded',
+    clientName: 'WEB_EMBEDDED_PLAYER',
+    clientVersion: '1.20240726.00.00',
+    userAgent:
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+    clientId: '56',
+    embed: true,
+    // The web embed client requires the public Innertube API key on the
+    // player query string. This is a well-known, non-secret value shipped in
+    // every YouTube web player; an operator can override it via YT_API_KEY
+    // if YouTube rotates it before this list is updated.
+    apiKey: process.env.YT_API_KEY || 'AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8',
+    // A non-YouTube embed origin is what makes this a genuine third-party
+    // embed (the same origin YouTube's own iframe embed reports), which is
+    // why it can bypass gates the same-origin TV client occasionally hits.
+    thirdPartyEmbedUrl: 'https://www.youtube.com',
+    extra: {
+      clientName: 'WEB_EMBEDDED_PLAYER',
     },
   },
   {
@@ -284,6 +328,15 @@ export function sanitizeYouTubeCookies(raw: string): string | null {
 export interface InnertubeOptions {
   /** Optional raw Cookie header for signed-in sessions (age-gate bypass). */
   cookies?: string;
+  /**
+   * Optional service-generated PO token + visitor data, fetched from an
+   * external PO-token server (see ./po-token). When present the token is
+   * attached under `serviceIntegrityDimensions` so YouTube treats the request
+   * as coming from an attested client — this is what unblocks music-label
+   * videos that otherwise return SABR-only / empty streamingData. The main
+   * app NEVER generates this token itself.
+   */
+  poToken?: { visitorData: string; poToken: string };
 }
 
 export async function innertubeFormats(
@@ -313,34 +366,57 @@ export async function innertubeFormats(
         // PO-token emulation); YouTube accepts bare cookies without SAPISIDHASH
         // for most age-gate bypasses on the player endpoint.
       }
-      // Build the Innertube context. Embed clients (TVHTML5_SIMPLY_EMBEDDED_PLAYER)
-      // need `thirdParty.embedUrl` so YouTube treats the request as coming from
-      // an embedded player — this is what bypasses the age gate automatically.
-      const context: Record<string, unknown> = {
-        client: {
-          clientName: client.clientName,
-          clientVersion: client.clientVersion,
-          hl: 'en',
-          gl: 'US',
-          utcOffsetMinutes: 0,
-          userAgent: client.userAgent,
-          ...(client.extra || {}),
-        },
+      // Build the Innertube context. Embed clients (WEB_EMBEDDED_PLAYER,
+      // TVHTML5_SIMPLY_EMBEDDED_PLAYER) need `thirdParty.embedUrl` so YouTube
+      // treats the request as coming from an embedded player — this is what
+      // bypasses the age gate automatically.
+      const clientContext: Record<string, unknown> = {
+        clientName: client.clientName,
+        clientVersion: client.clientVersion,
+        hl: 'en',
+        gl: 'US',
+        utcOffsetMinutes: 0,
+        userAgent: client.userAgent,
+        ...(client.extra || {}),
       };
+      // Attach externally-generated visitor data when available. The token
+      // itself goes under serviceIntegrityDimensions (below), but visitorData
+      // must live on the client context.
+      if (options?.poToken?.visitorData) {
+        clientContext.visitorData = options.poToken.visitorData;
+      }
+      const context: Record<string, unknown> = { client: clientContext };
       if (client.embed) {
         context.thirdParty = {
-          embedUrl: `https://www.youtube.com/watch?v=${videoId}`,
+          embedUrl: client.thirdPartyEmbedUrl || `https://www.youtube.com/watch?v=${videoId}`,
         };
       }
-      const response = await fetch('https://www.youtube.com/youtubei/v1/player?prettyPrint=false', {
+
+      // Assemble the request body. PO tokens (content-bound) go under
+      // serviceIntegrityDimensions.poToken. Attaching them only to clients
+      // that benefit (web-similar clients) avoids sending them to the TV
+      // embed, where they are ignored.
+      const body: Record<string, unknown> = {
+        videoId,
+        contentCheckOk: true,
+        racyCheckOk: true,
+        context,
+      };
+      if (options?.poToken?.poToken && client.clientName !== 'TVHTML5_SIMPLY_EMBEDDED_PLAYER') {
+        body.serviceIntegrityDimensions = { poToken: options.poToken.poToken };
+      }
+
+      // The WEB_EMBEDDED_PLAYER client requires the public API key on the
+      // query string. Other clients reject or ignore it, so only append it
+      // when the client declares one.
+      const endpoint = client.apiKey
+        ? `https://www.youtube.com/youtubei/v1/player?prettyPrint=false&key=${encodeURIComponent(client.apiKey)}`
+        : 'https://www.youtube.com/youtubei/v1/player?prettyPrint=false';
+
+      const response = await fetch(endpoint, {
         method: 'POST',
         headers,
-        body: JSON.stringify({
-          videoId,
-          contentCheckOk: true,
-          racyCheckOk: true,
-          context,
-        }),
+        body: JSON.stringify(body),
         signal: AbortSignal.timeout(PLAYER_TIMEOUT_MS),
       });
       if (!response.ok) continue;
@@ -433,21 +509,45 @@ async function extractYouTube(
   const id = extractYouTubeId(pageUrl);
   if (!id) return fail('Invalid YouTube URL');
 
+  // If an external PO-token server is configured, fetch a token up front so
+  // it can be attached to the Innertube player requests. A failure here is
+  // non-fatal: we proceed without it and the downstream fallbacks run.
+  const poToken = await getPoToken().catch(() => null);
+
   // Primary: Innertube clients that return direct googlevideo URLs.
-  const innertube = await innertubeFormats(id, { cookies: options?.youTubeCookies });
+  const innertube = await innertubeFormats(id, {
+    cookies: options?.youTubeCookies,
+    poToken: poToken ?? undefined,
+  });
   let formats = innertube.formats;
   // Secondary only: public Invidious instances are frequently rate-limited or
   // have playback disabled, so they must never be the primary path.
   if (!formats.length) formats = await invidiousFormats(id);
+  // Tertiary: public Piped instances. Piped runs NewPipeExtractor server-side
+  // where maintainers keep up with PO tokens / BotGuard, so it is the most
+  // reliable fallback for music-label and otherwise-throttled videos. Only
+  // reached after every direct client and Invidious instance came up empty.
+  let pipedError: string | undefined;
+  if (!formats.length) {
+    const piped = await pipedFormats(id);
+    formats = piped.formats;
+    pipedError = piped.error;
+  }
 
   if (!formats.length) {
     // Prefer an honest, specific reason over the generic message when YouTube
     // told us why (age-gate, private, region-lock, removed...).
     const explained = playabilityMessage(innertube.status, innertube.reason);
+    if (explained) return fail(`${explained} Try a converter below.`);
+    // Piped sometimes returns a descriptive reason ("Video unavailable",
+    // "This video is age-restricted", "region-locked") when Innertube gave us
+    // nothing actionable. Surface it so the error isn't a vague "try again".
+    if (pipedError) {
+      const friendly = friendlyPipedError(pipedError);
+      return fail(`${friendly} Try a converter below.`);
+    }
     return fail(
-      explained
-        ? `${explained} Try a converter below.`
-        : 'YouTube did not return a playable stream. Try a converter below.',
+      'YouTube did not return a playable stream. This can happen for music-label videos, region-locked uploads, or recently removed content. Try a converter below.',
     );
   }
 
@@ -456,18 +556,50 @@ async function extractYouTube(
   if (!picked?.url) {
     return fail(
       kind === 'video'
-        ? 'No progressive MP4 with audio is available for this video.'
-        : 'No audio-only stream is available for this video.',
+        ? 'No progressive MP4 with audio is available for this video. Higher resolutions may need a converter that combines separate video and audio tracks — try one below.'
+        : 'No audio-only stream is available for this video. Try a converter below.',
     );
   }
 
   const mimeType = picked.mimeType || (kind === 'video' ? 'video/mp4' : 'audio/mp4');
+  const viaPiped = !/googlevideo\.com/i.test(new URL(picked.url, 'https://x').hostname);
   return ok({
     url: picked.url,
     mimeType,
     extension: extensionForMime(mimeType, kind === 'video' ? 'mp4' : 'm4a'),
     qualityLabel: picked.qualityLabel,
+    note: viaPiped ? 'Piped fallback stream' : undefined,
   });
+}
+
+/**
+ * Translate a raw Piped error string into a user-facing sentence. Piped
+ * echoes YouTube's reason text, which varies widely; we match on stable
+ * keywords and otherwise sanitise what we were given.
+ */
+function friendlyPipedError(raw: string): string {
+  const msg = raw.replace(/\s+/g, ' ').trim().slice(0, 200);
+  if (/age[- ]?restrict|sign in|login/i.test(msg)) {
+    return 'This video is age-restricted, so YouTube requires a signed-in account.';
+  }
+  // Check copyright / music-label blocks BEFORE the generic region keyword,
+  // because label takedowns often also say "blocked in your country".
+  if (/copyright|music\W?label|\blabel\b|content\W?id|uploader has blocked|blocked it|blocked on copyright/i.test(msg)) {
+    return 'This video is blocked by its music label or copyright holder in this region.';
+  }
+  if (/region|country|not available in/i.test(msg)) {
+    return 'This video is region-locked and unavailable from this server.';
+  }
+  if (/private/i.test(msg)) {
+    return 'This video is private and cannot be downloaded.';
+  }
+  if (/removed|deleted|unavailable|not available/i.test(msg)) {
+    return 'This video has been removed by the uploader or is unavailable.';
+  }
+  if (/blocked/i.test(msg)) {
+    return 'This video is blocked and cannot be downloaded from this server.';
+  }
+  return msg ? `YouTube refused playback: ${msg}.` : 'YouTube did not return a playable stream.';
 }
 
 /* -------------------------------------------------------------------------- */
