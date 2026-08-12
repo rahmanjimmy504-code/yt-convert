@@ -8,6 +8,7 @@ export default defineConfig({
       // Deterministic signing secret for the CAPTCHA token tests so tokens
       // are stable within a run (production falls back to a per-process one).
       CAPTCHA_SECRET: 'test-only-captcha-secret',
+      CONVERT_TICKET_SECRET: 'test-only-convert-ticket-secret',
     },
   },
 });

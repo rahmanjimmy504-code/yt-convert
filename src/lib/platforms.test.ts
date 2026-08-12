@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { detectPlatform, extractYouTubeId, platformColor, platformLabel } from './platforms';
+import {
+  PLATFORM_KEYS,
+  canConvertPlatform,
+  convertUnavailableReason,
+  detectPlatform,
+  extractYouTubeId,
+  platformColor,
+  platformLabel,
+  type PlatformKey,
+} from './platforms';
 
 describe('detectPlatform', () => {
   it('returns null for empty input', () => {
@@ -146,6 +155,43 @@ describe('extractYouTubeId', () => {
 
   it('extracts purely by marker, without checking the host (host checks live in detectPlatform)', () => {
     expect(extractYouTubeId('https://example.com/watch?v=dQw4w9WgXcQ')).toBe('dQw4w9WgXcQ');
+  });
+});
+
+describe('canConvertPlatform', () => {
+  const expected: Record<PlatformKey, boolean> = {
+    youtube: true,
+    youtubemusic: true,
+    soundcloud: true,
+    twitter: true,
+    instagram: true,
+    tiktok: true,
+    facebook: true,
+    spotify: false,
+    deezer: false,
+    applemusic: false,
+    amazonmusic: false,
+    snapchat: false,
+    br: false,
+  };
+
+  it('matches the exact capability map so DRM platforms cannot silently become true', () => {
+    expect([...PLATFORM_KEYS].sort()).toEqual(Object.keys(expected).sort());
+    for (const key of PLATFORM_KEYS) {
+      expect(canConvertPlatform(key)).toBe(expected[key]);
+    }
+  });
+
+  it('explains every non-convertible platform', () => {
+    for (const key of PLATFORM_KEYS) {
+      if (!canConvertPlatform(key)) {
+        expect(convertUnavailableReason(key).length).toBeGreaterThan(10);
+      } else {
+        expect(convertUnavailableReason(key)).toBe('');
+      }
+    }
+    expect(convertUnavailableReason('spotify')).toMatch(/DRM/i);
+    expect(convertUnavailableReason('applemusic')).toMatch(/FairPlay|DRM/i);
   });
 });
 

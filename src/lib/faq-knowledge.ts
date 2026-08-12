@@ -23,7 +23,7 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
   {
     id: "what-is",
     q: "What does YT Convert actually do?",
-    a: "YT Convert detects the platform of a link you paste (YouTube, Spotify, TikTok and 9 more), shows you the title, thumbnail and other metadata, and then routes you to a third-party converter site that performs the actual download. AUTO-SEND converters use a verified deep link or form. COPY NEEDED converters cannot be auto-filled — copy the link and paste it on the next page.",
+    a: "YT Convert detects the platform of a link you paste (YouTube, Spotify, TikTok and 9 more) and shows title, thumbnail and other metadata. Where we legally and technically can, Download here extracts a public stream and proxies it to your browser — we never store the file. DRM catalogs (Spotify, Deezer, Apple Music, Amazon Music) are not ripped. Third-party converter cards stay as fallback. AUTO-SEND converters use a verified deep link or form. COPY NEEDED converters cannot be auto-filled.",
     keywords: [
       "what does",
       "what is",
@@ -37,7 +37,7 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
   {
     id: "does-not-convert",
     q: "Does YT Convert download or convert files itself?",
-    a: "No. Conversions happen entirely on the third-party converter sites listed on the results screen. This site never downloads, stores, or processes your media — it only fetches public metadata (title, thumbnail, duration) to help you pick the right converter.",
+    a: "Where we legally and technically can (YouTube, YT Music, SoundCloud, and public posts on X, TikTok, Instagram, or Facebook), we extract a public stream and proxy it through Download here. We do not store files on the server. Spotify, Deezer, Apple Music and Amazon Music are DRM-protected — preview only / use a licensed downloader; we do not strip Widevine or FairPlay. Snapchat and BeReal have no public media URL we can proxy. If first-party extraction fails, the third-party converter list is the fallback.",
     keywords: [
       "does yt convert download",
       "does it convert itself",
@@ -45,6 +45,8 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
       "do you store files",
       "direct download",
       "your own converter",
+      "download here",
+      "first-party",
     ],
   },
   {
@@ -214,7 +216,7 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
   {
     id: "legal",
     q: "Is it legal to convert and download media?",
-    a: "Only download content you own, that is in the public domain, or that is offered under a license permitting downloads. Most platforms' terms of service restrict downloading, and copyrighted material generally requires permission from the rights holder. YT Convert is intended for personal, lawful use only. We don't encourage piracy, and conversions happen on third-party sites — review their terms as well. If you are unsure, get permission from the owner.",
+    a: "Only download content you own, that is in the public domain, or that is offered under a license permitting downloads. Most platforms' terms of service restrict downloading, and copyrighted material generally requires permission from the rights holder. YT Convert is intended for personal, lawful use only. We convert where we legally and technically can and never store files. DRM catalogs are not ripped. Third-party converters have their own terms — review them as well.",
     keywords: [
       "legal",
       "is it legal",
@@ -248,7 +250,7 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
   {
     id: "how-to-use",
     q: "How do I use YT Convert step by step?",
-    a: "1) Copy a link from YouTube, Spotify, TikTok, etc. 2) Paste it into YT Convert's box — info auto-fetches after 800ms if CAPTCHA is done, or press Go/Enter. 3) Pick MP3 (audio) or MP4 (video) format — converters supporting it rank higher. 4) Click an AUTO-SEND converter for a verified handoff, or COPY NEEDED to copy then paste. 5) On the converter page, choose quality / kbps and download.",
+    a: "1) Copy a link from YouTube, Spotify, TikTok, etc. 2) Paste it into YT Convert's box — info auto-fetches after 800ms if CAPTCHA is done, or press Go/Enter. 3) Pick MP3 (audio) or MP4 (video). 4) If Download here is shown, use it — we proxy a public stream and never store the file. Audio is sent as its real container (often M4A, not labeled MP3 unless it is MP3). 5) If first-party convert is unavailable or fails, click an AUTO-SEND converter or COPY NEEDED, then finish on that site.",
     keywords: [
       "how to use",
       "how does it work",

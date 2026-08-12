@@ -18,13 +18,14 @@ function Section({ heading, children }: { heading: string; children: React.React
 
 export default function PrivacyPage() {
   return (
-    <LegalPage title="Privacy Policy" updated="August 8, 2026">
+    <LegalPage title="Privacy Policy" updated="August 12, 2026">
       <Section heading="What we process">
         <p>
-          YT Convert is a link tool. When you paste a link, your browser sends it to our server only to look up
-          public metadata (title, author, thumbnail, duration) so the page can show a preview. We do not ask for an
-          account, we do not store the media you convert, and we do not save your pasted links after the lookup
-          completes.
+          YT Convert is a link tool. When you paste a link, your browser sends it to our server to look up
+          public metadata (title, author, thumbnail, duration) and, where we legally and technically can, to
+          extract a public stream URL and proxy that file to you. We do not ask for an account, we do not store
+          converted media (the file is streamed through and discarded), and we do not save your pasted links after
+          the lookup completes. DRM-protected catalogs are not downloaded.
         </p>
         <p>
           Your conversion history and preferences (favorite converter, format, dark mode) are stored only in your own
@@ -34,7 +35,9 @@ export default function PrivacyPage() {
 
       <Section heading="Human verification">
         <p>
-          Metadata lookups are protected by a one-time human-verification check. When Cloudflare Turnstile is
+          Metadata lookups are protected by a one-time human-verification check. A successful lookup mints a
+          short-lived convert ticket (HMAC, bound to the link and your connection) so Download here cannot be
+          used without that check. When Cloudflare Turnstile is
           enabled, Cloudflare processes the verification on your device according to its own privacy policy. When the
           built-in backup CAPTCHA is used, the server briefly holds the challenge and its answer in memory (with a
           short expiry) and discards them once the check is resolved; no personal data is collected.
