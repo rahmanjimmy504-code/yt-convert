@@ -19,11 +19,11 @@ export const metadata: Metadata = {
 const FAQS: { q: string; a: string }[] = [
   {
     q: 'What does YT Convert actually do?',
-    a: 'YT Convert detects the platform of a link you paste (YouTube, Spotify, TikTok and 9 more), shows you the title, thumbnail and other metadata, and then routes you to a third-party converter site that performs the actual download. Cards marked AUTO-SEND use a verified deep link or form. Cards marked COPY NEEDED cannot be auto-filled — copy the link and paste it on the converter page.',
+    a: 'YT Convert detects the platform of a link you paste (YouTube, Spotify, TikTok and 9 more) and shows title, thumbnail and other metadata. Where we legally and technically can, Download here extracts a public stream and proxies it — we never store the file. DRM catalogs are not ripped. Third-party cards stay as fallback. AUTO-SEND uses a verified deep link or form; COPY NEEDED cannot be auto-filled.',
   },
   {
     q: 'Does YT Convert download or convert files itself?',
-    a: 'No. Conversions happen entirely on the third-party converter sites listed on the results screen. This site never downloads, stores, or processes your media — it only fetches public metadata (title, thumbnail, duration) to help you pick the right converter.',
+    a: 'Where we legally and technically can (YouTube, YT Music, SoundCloud, and public posts on X, TikTok, Instagram, or Facebook), we extract a public stream and proxy it through Download here. We do not store files. Spotify, Deezer, Apple Music and Amazon Music are DRM-protected (preview only / use a licensed downloader). Snapchat and BeReal have no public media URL we can proxy. If first-party extraction fails, use a third-party converter.',
   },
   {
     q: 'Which platforms are supported?',
@@ -71,7 +71,7 @@ const FAQS: { q: string; a: string }[] = [
   },
   {
     q: 'Is it legal to convert and download media?',
-    a: 'Only download content you own, that is in the public domain, or that is offered under a license permitting downloads. Most platforms\u2019 terms of service restrict downloading, and copyrighted material generally requires permission from the rights holder. YT Convert is intended for personal, lawful use only.',
+    a: 'Only download content you own, that is in the public domain, or that is offered under a license permitting downloads. Most platforms\u2019 terms of service restrict downloading, and copyrighted material generally requires permission from the rights holder. YT Convert is intended for personal, lawful use only. We convert where we legally and technically can and never store files. DRM catalogs are not ripped.',
   },
   {
     q: 'Do you store my links or history?',

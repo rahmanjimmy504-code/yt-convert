@@ -1,26 +1,26 @@
 # YT Convert
 
-A clean, fast multi-platform converter website built with Next.js. Paste a link from a supported platform, see the thumbnail and metadata instantly, then pick a converter. AUTO-SEND converters use a verified deep link or form. COPY NEEDED converters cannot be auto-filled.
+A clean, fast multi-platform converter website built with Next.js. Paste a link from a supported platform, see the thumbnail and metadata instantly, then download here when we can — or pick a fallback converter. AUTO-SEND converters use a verified deep link or form. COPY NEEDED converters cannot be auto-filled.
 
-**YT Convert does not perform conversions itself.** It detects the platform of a pasted link, fetches video/audio metadata from public APIs, and routes you to a third-party converter site that handles the actual download.
+**We convert where we legally and technically can.** Download here extracts a public stream (YouTube / YT Music via Innertube + Invidious, SoundCloud progressive, public X / TikTok / Instagram / Facebook URLs) and proxies it to your browser. Files are never stored. DRM catalogs (Spotify, Deezer, Apple Music, Amazon Music) are not ripped. Snapchat and BeReal have no public media URL we can proxy. Third-party converter cards stay as fallback when extraction fails.
 
 ## Supported Platforms
 
-| Platform | `PlatformKey` | Notes |
-|---|---|---|
-| YouTube | `youtube` | oEmbed + Invidious fallback; 11-char video ID extraction |
-| YT Music | `youtubemusic` | Same pipeline as YouTube |
-| SoundCloud | `soundcloud` | oEmbed |
-| X (Twitter) | `twitter` | oEmbed (`publish.twitter.com`) |
-| Instagram | `instagram` | oEmbed |
-| Spotify | `spotify` | oEmbed; falls back to placeholder metadata |
-| Deezer | `deezer` | oEmbed; falls back to placeholder metadata |
-| Apple Music | `applemusic` | Placeholder metadata only |
-| Amazon Music | `amazonmusic` | Placeholder metadata only |
-| TikTok | `tiktok` | oEmbed; falls back to placeholder metadata |
-| Facebook | `facebook` | Placeholder metadata only |
-| Snapchat | `snapchat` | Placeholder metadata only |
-| BeReal | `br` | Placeholder metadata only |
+| Platform | `PlatformKey` | First-party convert | Notes |
+|---|---|---|---|
+| YouTube | `youtube` | Yes | Innertube ANDROID/IOS + Invidious; progressive MP4 + m4a audio; `*.googlevideo.com` only |
+| YT Music | `youtubemusic` | Yes | Same pipeline as YouTube |
+| SoundCloud | `soundcloud` | Yes | Public progressive stream via their API (real MP3/M4A container) |
+| X (Twitter) | `twitter` | Attempt | Syndication / embed guest; honest fail → Twitsave |
+| Instagram | `instagram` | Attempt | Public embed / `og:video`; login wall → FastDL / COPY NEEDED |
+| Spotify | `spotify` | No (DRM) | Preview only / use a licensed downloader |
+| Deezer | `deezer` | No (DRM) | Preview only / use a licensed downloader |
+| Apple Music | `applemusic` | No (FairPlay) | Preview only / use a licensed downloader |
+| Amazon Music | `amazonmusic` | No (DRM) | Preview only / use a licensed downloader |
+| TikTok | `tiktok` | Attempt | Official embed/player JSON (watermark noted when present) |
+| Facebook | `facebook` | Attempt | Public video / share pages only → FBDown fallback |
+| Snapchat | `snapchat` | No | No public media URL we can proxy |
+| BeReal | `br` | No | No public downloadable file |
 
 ## Tech Stack
 
@@ -60,8 +60,10 @@ yt-convert/
 │   │   │   │   └── report/route.ts  # POST — user reports for dead/unsafe converters
 │   │   │   ├── events/route.ts      # POST — cookieless client events (clicks, errors)
 │   │   │   ├── status/route.ts      # GET — admin dashboard API (Bearer ADMIN_TOKEN)
+│   │   │   ├── convert/
+│   │   │   │   └── route.ts         # GET /api/convert — ticketed first-party stream proxy
 │   │   │   └── video-info/
-│   │   │       └── route.ts         # GET /api/video-info?url=... — metadata lookup
+│   │   │       └── route.ts         # GET /api/video-info?url=... — metadata + convert ticket
 │   │   ├── faq/
 │   │   │   └── page.tsx             # FAQ page (static, FAQPage JSON-LD)
 │   │   ├── status/
@@ -92,7 +94,11 @@ yt-convert/
 │       ├── cookies.ts               # Cookie helpers + consent-choice storage (single first-party cookie)
 │       ├── embed.ts                 # Native player embed URLs (Preview toggle)
 │       ├── og-card.tsx              # Shared OG/Twitter card artwork (JSX for ImageResponse)
-│       ├── platforms.ts             # Platform definitions, detection, colour/label helpers
+│       ├── convert-ticket.ts        # HMAC convert tickets (URL + IP + expiry)
+│       ├── extract.ts               # Per-platform public-stream extractors
+│       ├── media-hosts.ts           # SSRF allowlist for the convert proxy
+│       ├── youtube-formats.ts       # Progressive MP4 / m4a picker
+│       ├── platforms.ts             # Platform definitions, detection, canConvertPlatform
 │       ├── rate-limit.ts            # Shared per-IP in-memory rate limiter
 │       ├── site.ts                  # Canonical site URL (custom production domain)
 │       └── stats.ts                 # Privacy-friendly analytics + error/report store
@@ -154,6 +160,7 @@ The dev server runs at **http://localhost:3000** by default. Edit any file under
 | `NEXT_PUBLIC_RECAPTCHA_SITE_KEY` / `RECAPTCHA_SECRET_KEY` *(+ scoped variants)* | *(empty)* | Google reCAPTCHA v2 (optional fallback / alternative) |
 | `NEXT_PUBLIC_HCAPTCHA_SITE_KEY` / `HCAPTCHA_SECRET_KEY` *(+ scoped variants)* | *(empty)* | hCaptcha (optional fallback / alternative) |
 | `CAPTCHA_SECRET` | *(random per process)* | Stable secret used to sign the local fallback's proof tokens; set it in multi-instance production deployments |
+| `CONVERT_TICKET_SECRET` | *(falls back to `CAPTCHA_SECRET`)* | HMAC secret for short-lived convert tickets issued after a CAPTCHA lookup |
 | `ADMIN_TOKEN` | *(empty)* | Unlocks the admin dashboard at `/status` (must be ≥ 16 chars). Without it the dashboard is disabled (404) |
 | `DISABLE_ANALYTICS` | *(empty)* | Set to `1` to turn off the privacy-friendly aggregate counters entirely |
 
@@ -220,6 +227,9 @@ interface VideoInfo {
   views: string;      // human-readable, e.g. "1.2M"
   published: string;  // "Jan 1, 2024" format, empty string if unavailable
   platform: PlatformKey;
+  canConvert: boolean;
+  convertReason?: string;  // one-line reason when canConvert is false
+  convertTicket?: string;  // short-lived HMAC ticket for GET /api/convert
 }
 ```
 
@@ -244,9 +254,17 @@ Strings taken from upstream oEmbed/Invidious payloads are sanitized (control cha
 
 #### Caching
 
-A small in-memory `Map` caches responses for **5 minutes** (`CACHE_TTL_MS = 5 * 60 * 1000`), capped at **100 entries** (the oldest inserted entry is evicted when full). In addition, successful responses (including in-memory cache hits) carry an HTTP `Cache-Control` header of `public, s-maxage=300, stale-while-revalidate=600`, so CDNs and browsers can serve stale content for up to 10 more minutes while revalidating.
+A small in-memory `Map` caches metadata (never tickets) for **5 minutes** (`CACHE_TTL_MS = 5 * 60 * 1000`), capped at **100 entries**. Successful responses include a fresh convert ticket and are sent with `Cache-Control: private, no-store` so tickets are never shared via a CDN.
 
 On any unhandled error during `fetchInfo()`, the route logs the error and returns **`500` "Failed to fetch video info. Please try again."**
+
+### API: `/api/convert`
+
+**Endpoint:** `GET /api/convert?url=<encoded-url>&format=mp3|mp4&ticket=<ticket>&title=<optional>`
+
+Streams a public media file to the browser. The file is not written to disk. Requires a convert ticket issued by `/api/video-info` after CAPTCHA (bound to the exact URL and client IP, 10-minute TTL). Rate-limited to **10 requests per 60 s per IP**. The proxy only fetches allowlisted media hosts (`*.googlevideo.com`, SoundCloud CDNs, TikTok CDNs, `*.twimg.com`, `*.cdninstagram.com`, `*.fbcdn.net`) and re-checks every redirect (SSRF).
+
+Audio is delivered in the real container (often `.m4a` / AAC). A file is never labeled `.mp3` unless it is actually MP3. Video is progressive MP4 when the platform provides one.
 
 ### Adding a Converter
 
@@ -329,6 +347,7 @@ On Android: Chrome menu → "Install app" / "Add to Home screen". On iOS: Share 
 ## Features
 
 - **Platform detection** — accepts full URLs or bare domains; more-specific subdomains (e.g. `music.youtube.com`) are matched before their parent domains.
+- **Download here** — first-party convert for YouTube, YT Music, SoundCloud, and public social posts; honest refusal for DRM catalogs and Snapchat/BeReal.
 - **Rich video info** — thumbnail, title, author, duration, view count, and publish date from oEmbed + Invidious.
 - **Format-aware converter ranking** — converters that support the selected format (MP3 or MP4) rank above those that don't (after your starred favorite, which is pinned to the top).
 - **Honest handoff** — clicking a converter opens `/go` synchronously. AUTO-SEND cards use a verified protocol (query/prefix/YouTube-id/POST). COPY NEEDED cards show a selectable URL and “Copy link and continue”, then open the landing page. Never claim auto-paste unless the protocol was tested.
@@ -363,6 +382,7 @@ Recommended production environment variables:
 | `NEXT_PUBLIC_TURNSTILE_SITE_KEY_PROD` / `TURNSTILE_SECRET_KEY_PROD` | Turnstile keys for production |
 | `NEXT_PUBLIC_TURNSTILE_SITE_KEY_PREVIEW` / `TURNSTILE_SECRET_KEY_PREVIEW` | Separate Turnstile keys for previews |
 | `CAPTCHA_SECRET` | Long random string |
+| `CONVERT_TICKET_SECRET` | Long random string (or reuse `CAPTCHA_SECRET`) |
 | `ADMIN_TOKEN` | Long random string (≥ 16 chars) to unlock `/status` |
 
 ## License

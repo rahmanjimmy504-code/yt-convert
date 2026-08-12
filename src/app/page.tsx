@@ -51,6 +51,9 @@ interface VideoInfo {
   views: string;
   published: string;
   platform: string;
+  canConvert?: boolean;
+  convertReason?: string;
+  convertTicket?: string;
 }
 
 interface HistoryItem {
@@ -77,7 +80,7 @@ function sSetJ(k: string, v: unknown) {
   if (typeof window !== 'undefined') localStorage.setItem(k, JSON.stringify(v));
 }
 
-const tips = ['Paste any link from YouTube, Spotify, SoundCloud, X, Instagram, Deezer, Apple Music, Amazon Music, TikTok, Facebook, Snapchat or BeReal.', 'AUTO-SEND converters receive your link. COPY NEEDED converters ask you to paste.', 'If one converter has ads, try another.', 'All converters are free, no sign-up needed.', 'Press Enter after pasting to fetch info instantly.', 'Shortcuts: press / to jump to the link box, Esc to start over.', 'Drag and drop a link anywhere on the page to load it.', 'Click Preview to watch or listen before converting.', 'Press ? to see all keyboard shortcuts.'];
+const tips = ['Paste any link from YouTube, Spotify, SoundCloud, X, Instagram, Deezer, Apple Music, Amazon Music, TikTok, Facebook, Snapchat or BeReal.', 'Where we can, Download here proxies a public stream. DRM catalogs are not ripped.', 'AUTO-SEND converters receive your link. COPY NEEDED converters ask you to paste.', 'If one converter has ads, try another.', 'All converters are free, no sign-up needed.', 'Press Enter after pasting to fetch info instantly.', 'Shortcuts: press / to jump to the link box, Esc to start over.', 'Drag and drop a link anywhere on the page to load it.', 'Click Preview to watch or listen before converting.', 'Press ? to see all keyboard shortcuts.'];
 const placeholders = ['https://www.youtube.com/watch?v=...', 'https://open.spotify.com/track/...', 'https://soundcloud.com/...', 'https://x.com/user/status/...', 'https://www.instagram.com/reel/...', 'https://music.apple.com/...', 'https://music.amazon.com/...', 'https://www.deezer.com/track/...', 'https://music.youtube.com/watch?v=...', 'https://www.tiktok.com/...', 'https://www.facebook.com/...', 'https://www.snapchat.com/add/...', 'https://bereal.com/...'];
 
 /** Copy text to the clipboard, reporting whether it actually worked. */
@@ -143,6 +146,8 @@ export default function Home() {
   const [reportSending, setReportSending] = useState(false);
   const [reportError, setReportError] = useState('');
   const [reportDone, setReportDone] = useState(false);
+  const [convertError, setConvertError] = useState('');
+  const [converting, setConverting] = useState(false);
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const convertersRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -309,7 +314,7 @@ export default function Home() {
       setPhase('error');
       return;
     }
-    setError(''); setPhase('loading'); setVideoInfo(null); setLaunched(null); setLinkCopied(false); setPreviewOpen(false);
+    setError(''); setPhase('loading'); setVideoInfo(null); setLaunched(null); setLinkCopied(false); setPreviewOpen(false); setConvertError('');
     // Cancel the previous lookup (if any) so it can't clobber this one.
     abortRef.current?.abort();
     const controller = new AbortController();
@@ -354,6 +359,9 @@ export default function Home() {
         views: data.views || '',
         published: data.published || '',
         platform: data.platform || plat,
+        canConvert: data.canConvert === true,
+        convertReason: data.convertReason || '',
+        convertTicket: data.convertTicket || '',
       });
       setHistory(prev => {
         const h = [{ title: data.title || 'Unknown', url: u, platform: plat, time: Date.now() }, ...prev.filter((x: HistoryItem) => x.url !== u)].slice(0, 6);
@@ -366,7 +374,7 @@ export default function Home() {
       if (stale() || (err instanceof Error && err.name === 'AbortError')) return;
       // Network/5xx failure: degrade gracefully so the converter list is
       // still reachable even though no metadata could be fetched.
-      setVideoInfo({ title: 'Could not load info', author: '', thumbnail: '', duration: '', views: '', published: '', platform: plat });
+      setVideoInfo({ title: 'Could not load info', author: '', thumbnail: '', duration: '', views: '', published: '', platform: plat, canConvert: false });
       setPhase('ready');
       scrollToConverters();
     }
@@ -436,6 +444,41 @@ export default function Home() {
     sendEvent({ type: 'converter_click', converter: c.name, platform: videoInfo?.platform || detectPlatform(u) || '' });
   };
 
+  const downloadHere = async () => {
+    if (!videoInfo?.convertTicket || converting) return;
+    const u = url.trim();
+    const href = `/api/convert?url=${encodeURIComponent(u)}&format=${format}&ticket=${encodeURIComponent(videoInfo.convertTicket)}&title=${encodeURIComponent(videoInfo.title || '')}`;
+    setConverting(true);
+    setConvertError('');
+    try {
+      const response = await fetch(href);
+      const type = response.headers.get('content-type') || '';
+      if (!response.ok || type.includes('application/json')) {
+        const data = (await response.json().catch(() => ({}))) as { error?: string };
+        setConvertError(data.error || 'Could not convert this link. Try a converter below.');
+        return;
+      }
+      const blob = await response.blob();
+      const dispo = response.headers.get('content-disposition') || '';
+      const star = dispo.match(/filename\*=UTF-8''([^;]+)/i);
+      const quoted = dispo.match(/filename="([^"]+)"/i);
+      const name = decodeURIComponent((star?.[1] || quoted?.[1] || 'download').replace(/["']/g, ''));
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = objectUrl;
+      link.download = name;
+      link.rel = 'noopener';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 30_000);
+    } catch {
+      setConvertError('Could not convert this link. Try a converter below.');
+    } finally {
+      setConverting(false);
+    }
+  };
+
   const submitReport = async () => {
     if (!reportFor || reportSending) return;
     setReportSending(true);
@@ -478,7 +521,7 @@ export default function Home() {
     // Drop any in-flight lookup so its result can't reappear after the reset.
     abortRef.current?.abort();
     reqIdRef.current++;
-    setUrl(''); setPhase('input'); setError(''); setVideoInfo(null); setLaunched(null); setLinkCopied(false); setPreviewOpen(false); setShowHelp(false);
+    setUrl(''); setPhase('input'); setError(''); setVideoInfo(null); setLaunched(null); setLinkCopied(false); setPreviewOpen(false); setShowHelp(false); setConvertError(''); setConverting(false);
     setCaptchaToken('');
     setCaptchaResetKey(key => key + 1);
     setFormat('mp4'); sSet('yt-convert-format', 'mp4');
@@ -509,7 +552,7 @@ export default function Home() {
     await copyLink();
   }, [url, videoInfo, copyLink]);
   const clearUrl = useCallback(() => {
-    setUrl(''); setPhase('input'); setError(''); setVideoInfo(null); setLaunched(null); setPreviewOpen(false);
+    setUrl(''); setPhase('input'); setError(''); setVideoInfo(null); setLaunched(null); setPreviewOpen(false); setConvertError('');
     setCaptchaToken('');
     setCaptchaResetKey(key => key + 1);
     inputRef.current?.focus();
@@ -710,6 +753,34 @@ export default function Home() {
               </div>
             </div>
 
+            {videoInfo.canConvert && videoInfo.convertTicket ? (
+              <div className="bg-white dark:bg-gray-900 rounded-2xl border-2 border-red-200 dark:border-red-900 p-5 space-y-3 mb-5">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h2 className="font-semibold text-base">Download here</h2>
+                    <p className="text-[11px] text-gray-500 mt-0.5">
+                      First-party stream — we proxy the public file and do not store it.
+                      {format === 'mp3' ? ' Audio is sent as its real container (often M4A/AAC, not MP3).' : ' Video is progressive MP4 when the platform provides one.'}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={downloadHere}
+                  disabled={converting}
+                  className="w-full h-11 rounded-xl bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white text-sm font-semibold shadow-lg shadow-red-500/20 disabled:opacity-40 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2"
+                >
+                  <Download className="w-4 h-4" />
+                  {converting ? 'Starting download…' : format === 'mp3' ? 'Download audio' : 'Download video'}
+                </button>
+                {convertError && (
+                  <p role="alert" className="text-xs text-red-600 dark:text-red-400">{convertError} Third-party converters remain as fallback.</p>
+                )}
+              </div>
+            ) : videoInfo.convertReason ? (
+              <p className="text-xs text-gray-500 mb-4 px-1">{videoInfo.convertReason} Use a converter below if you have a licensed option.</p>
+            ) : null}
+
             <div ref={convertersRef} className="bg-white dark:bg-gray-900 rounded-2xl border-2 border-gray-200 dark:border-gray-800 p-5 space-y-4">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
@@ -758,7 +829,7 @@ export default function Home() {
               </div>
               <div className="bg-gray-50 dark:bg-gray-800 rounded-xl p-3 space-y-1.5">
                 <p className="text-xs font-semibold text-gray-700 dark:text-gray-300">How to download:</p>
-                <ol className="text-[11px] text-gray-500 list-decimal list-inside pl-1"><li>Click an AUTO-SEND converter, or COPY NEEDED then paste on the next page</li><li>Choose quality / kbps on the converter page</li><li>Download</li></ol>
+                <ol className="text-[11px] text-gray-500 list-decimal list-inside pl-1"><li>Use Download here when it is shown, or click AUTO-SEND / COPY NEEDED below</li><li>COPY NEEDED converters ask you to paste the link on the next page</li><li>Choose quality / kbps on the converter page if you used a third-party site</li></ol>
               </div>
               {launched && (
                 <div role="status" aria-live="polite" className="flex items-center gap-2 text-xs text-green-700 bg-green-50 dark:bg-green-950/30 dark:text-green-400 px-3 py-2 rounded-lg">
@@ -790,6 +861,11 @@ export default function Home() {
                       <div className="flex items-center gap-1.5 flex-wrap">
                         <span className="font-semibold text-sm">{svc.name}</span>
                         {svc.recommended && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400">BEST</span>}
+                        {hasAutomaticHandoff(svc) ? (
+                          <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400">AUTO-SEND</span>
+                        ) : (
+                          <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400">COPY NEEDED</span>
+                        )}
                         {(() => {
                           const live = converterStatus[svc.name];
                           const badge = badgeFor(svc);

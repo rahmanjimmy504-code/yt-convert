@@ -29,9 +29,11 @@ export default function TermsPage() {
 
       <Section heading="What the service does">
         <p>
-          YT Convert is a free link tool. It looks up public metadata for links you paste (so you can preview them)
-          and directs you to third-party converter websites that are not owned or operated by us. We do not host,
-          store, or transmit media files, and we do not operate the conversion itself.
+          YT Convert is a free link tool. It looks up public metadata for links you paste and, where we legally and
+          technically can, extracts a public stream and proxies it to your browser. We do not store those files.
+          DRM-protected catalogs (Spotify, Deezer, Apple Music, Amazon Music) are not ripped. When first-party
+          conversion is not possible or fails, we direct you to third-party converter websites that are not owned
+          or operated by us.
         </p>
       </Section>
 

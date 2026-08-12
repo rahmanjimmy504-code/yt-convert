@@ -116,6 +116,52 @@ export function detectPlatform(input: string): PlatformKey | null {
   return null;
 }
 
+/**
+ * Static first-party convert capability. True means we will attempt to
+ * extract a public stream and proxy it. False is an honest "not possible"
+ * (DRM catalog, or no public media URL). Runtime extraction can still fail
+ * for true platforms (login wall, expired player, etc.).
+ */
+export function canConvertPlatform(platform: PlatformKey): boolean {
+  switch (platform) {
+    case 'youtube':
+    case 'youtubemusic':
+    case 'soundcloud':
+    case 'twitter':
+    case 'instagram':
+    case 'tiktok':
+    case 'facebook':
+      return true;
+    case 'spotify':
+    case 'deezer':
+    case 'applemusic':
+    case 'amazonmusic':
+    case 'snapchat':
+    case 'br':
+      return false;
+  }
+}
+
+/** One-line reason shown when `canConvertPlatform` is false. */
+export function convertUnavailableReason(platform: PlatformKey): string {
+  switch (platform) {
+    case 'spotify':
+      return 'Spotify catalog tracks are DRM-protected (preview only / use a licensed downloader).';
+    case 'deezer':
+      return 'Deezer catalog tracks are DRM-protected (preview only / use a licensed downloader).';
+    case 'applemusic':
+      return 'Apple Music uses FairPlay DRM (preview only / use a licensed downloader).';
+    case 'amazonmusic':
+      return 'Amazon Music catalog tracks are DRM-protected (preview only / use a licensed downloader).';
+    case 'snapchat':
+      return 'Snapchat does not expose a public media file we can proxy.';
+    case 'br':
+      return 'BeReal posts are not available as public downloadable files.';
+    default:
+      return '';
+  }
+}
+
 /** Extract an 11-character YouTube video id from common URL shapes. */
 export function extractYouTubeId(url: string): string | null {
   // Require a non-ID character (or end of string) after the 11-char id so a

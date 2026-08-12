@@ -1,6 +1,15 @@
 import { NextResponse } from 'next/server';
-import { detectPlatform, extractYouTubeId, type PlatformKey } from '@/lib/platforms';
+import {
+  canConvertPlatform,
+  convertUnavailableReason,
+  detectPlatform,
+  extractYouTubeId,
+  type PlatformKey,
+} from '@/lib/platforms';
 import { verifyCaptchaToken } from '@/lib/captcha';
+import { issueConvertTicket } from '@/lib/convert-ticket';
+import { INVIDIOUS_INSTANCES, invidiousVideoUrl } from '@/lib/invidious';
+import { clientIp } from '@/lib/rate-limit';
 import { recordEvent } from '@/lib/stats';
 
 export const runtime = 'nodejs';
@@ -13,6 +22,9 @@ export interface VideoInfo {
   views: string;
   published: string;
   platform: PlatformKey;
+  canConvert?: boolean;
+  convertReason?: string;
+  convertTicket?: string;
 }
 
 const UA = { 'User-Agent': 'Mozilla/5.0 (compatible; YTConvert/1.0)' };
@@ -31,11 +43,6 @@ const cache = new Map<string, { at: number; body: VideoInfo }>();
 
 // Public Invidious instances used as fallbacks for YouTube metadata. Tried in
 // order until one responds, so a single dead instance can't break the lookup.
-const INVIDIOUS_INSTANCES = [
-  'https://inv.nadeko.net/api/v1/videos/',
-  'https://invidious.nerdvpn.de/api/v1/videos/',
-  'https://yewtu.be/api/v1/videos/',
-];
 
 function cacheGet(key: string): VideoInfo | null {
   const hit = cache.get(key);
@@ -164,7 +171,7 @@ async function fetchYouTube(platform: PlatformKey, rawUrl: string): Promise<Vide
     if (!id) return null;
     for (const base of INVIDIOUS_INSTANCES) {
       try {
-        const r = await fetch(`${base}${id}`, { headers: UA, signal: AbortSignal.timeout(5000) });
+        const r = await fetch(invidiousVideoUrl(base, id), { headers: UA, signal: AbortSignal.timeout(5000) });
         if (r.ok) return (await r.json()) as Record<string, unknown>;
       } catch {
         // try the next instance
@@ -234,13 +241,21 @@ async function fetchInfo(platform: PlatformKey, rawUrl: string): Promise<VideoIn
   return info;
 }
 
-const RESPONSE_HEADERS = { 'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=600' };
+const RESPONSE_HEADERS = { 'Cache-Control': 'private, no-store' };
+
+/** Attach a fresh ticket. Never cache tickets — they are IP-bound and short-lived. */
+function withConvertFields(info: VideoInfo, rawUrl: string, ip: string): VideoInfo {
+  const canConvert = canConvertPlatform(info.platform);
+  return {
+    ...info,
+    canConvert,
+    convertReason: canConvert ? undefined : convertUnavailableReason(info.platform) || undefined,
+    convertTicket: canConvert ? issueConvertTicket(rawUrl, ip) : undefined,
+  };
+}
 
 export async function GET(request: Request) {
-  const ip =
-    (request.headers.get('x-forwarded-for') || '').split(',')[0].trim() ||
-    request.headers.get('x-real-ip') ||
-    'unknown';
+  const ip = clientIp(request);
   const retryAfter = rateLimited(ip);
   if (retryAfter > 0) {
     return NextResponse.json(
