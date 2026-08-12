@@ -67,15 +67,18 @@ describe('catalog', () => {
 describe('handoff', () => {
   const media = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
 
-  it('appends ?url= by default', () => {
+  it('appends both an encoded ?url= and a raw-link hash by default', () => {
     const nine = getConverterByName('9Convert')!;
-    expect(buildConverterLaunchUrl(nine, media)).toBe(`https://9convert.org/?url=${encodeURIComponent(media)}`);
+    expect(buildConverterLaunchUrl(nine, media)).toBe(
+      `https://9convert.org/?url=${encodeURIComponent(media)}#${media}`,
+    );
   });
 
-  it('keeps existing path when appending a query', () => {
+  it('keeps the converter path when appending query and hash fallbacks', () => {
     const save = getConverterByName('SaveInsta')!;
-    expect(buildConverterLaunchUrl(save, 'https://www.instagram.com/reel/abc/')).toBe(
-      'https://saveinsta.to/en1?url=https%3A%2F%2Fwww.instagram.com%2Freel%2Fabc%2F',
+    const instagram = 'https://www.instagram.com/reel/abc/';
+    expect(buildConverterLaunchUrl(save, instagram)).toBe(
+      `https://saveinsta.to/en1?url=${encodeURIComponent(instagram)}#${instagram}`,
     );
   });
 
@@ -83,6 +86,24 @@ describe('handoff', () => {
     const fast = getConverterByName('FastDL')!;
     expect(buildConverterLaunchUrl(fast, 'https://www.instagram.com/reel/abc/')).toBe(
       'https://f-d.app/https://www.instagram.com/reel/abc/',
+    );
+  });
+
+  it('uses the tweet path that Twitsave actually consumes', () => {
+    const twitsave = getConverterByName('Twitsave')!;
+    expect(buildConverterLaunchUrl(twitsave, 'https://x.com/example/status/123456789?s=20')).toBe(
+      'https://twitsave.com/example/status/123456789',
+    );
+    expect(buildConverterLaunchUrl(twitsave, 'https://twitter.com/another/status/987654321')).toBe(
+      'https://twitsave.com/another/status/987654321',
+    );
+  });
+
+  it('falls back to query and hash for a non-tweet Twitsave link', () => {
+    const twitsave = getConverterByName('Twitsave')!;
+    const unusual = 'https://x.com/example';
+    expect(buildConverterLaunchUrl(twitsave, unusual)).toBe(
+      `https://twitsave.com/en?url=${encodeURIComponent(unusual)}#${unusual}`,
     );
   });
 

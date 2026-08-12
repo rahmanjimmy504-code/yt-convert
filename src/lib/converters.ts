@@ -22,6 +22,7 @@ export type ConverterHandoff =
   | { kind: 'query'; param?: string }
   | { kind: 'hash'; param?: string }
   | { kind: 'prefix'; prefix: string }
+  | { kind: 'tweet-path' }
   | { kind: 'post'; action: string; field: string };
 
 export interface Converter {
@@ -67,11 +68,11 @@ export const ALL_CONVERTERS: Converter[] = [
   { name: 'Hicoo', url: 'https://hicoo.ai/mp4-converter/youtube-to-mp4', desc: 'YouTube to MP4. 360p to 4K.', color: 'from-emerald-500 to-emerald-600', platforms: ['youtube', 'youtubemusic'], formats: ['mp4'], status: 'working' },
   { name: 'KlickAud', url: 'https://klickaud.org/en15', desc: 'SoundCloud to MP3.', color: 'from-orange-400 to-orange-500', platforms: ['soundcloud'], formats: ['mp3'], recommended: true, status: 'working' },
   { name: 'SSSTik', url: 'https://ssstik.io/', desc: 'X/Twitter video downloader.', color: 'from-sky-400 to-sky-500', platforms: ['twitter'], formats: ['mp4'], recommended: true, status: 'working' },
-  { name: 'Twitsave', url: 'https://twitsave.com/en', desc: 'Save X/Twitter videos in HD.', color: 'from-indigo-500 to-indigo-600', platforms: ['twitter'], formats: ['mp4'], status: 'working' },
+  { name: 'Twitsave', url: 'https://twitsave.com/en', desc: 'Save X/Twitter videos in HD.', color: 'from-indigo-500 to-indigo-600', platforms: ['twitter'], formats: ['mp4'], status: 'working', handoff: { kind: 'tweet-path' } },
   { name: 'SaveInsta', url: 'https://saveinsta.to/en1', desc: 'Instagram photos, videos, reels, stories, and highlights.', color: 'from-pink-400 to-pink-500', platforms: ['instagram'], formats: ['mp4'], recommended: true, status: 'working' },
   { name: 'FastDL', url: 'https://fastdl.app/en4', desc: 'Instagram videos, photos, reels, stories, and highlights.', color: 'from-purple-500 to-purple-600', platforms: ['instagram'], formats: ['mp4'], status: 'working', handoff: { kind: 'prefix', prefix: 'https://f-d.app/' } },
   { name: 'SpotDown', url: 'https://spotdown.org/', desc: 'Spotify tracks to MP3.', color: 'from-green-500 to-green-600', platforms: ['spotify'], formats: ['mp3'], recommended: true, status: 'working' },
-  { name: 'Lucida', url: 'https://lucida.to/', desc: 'Amazon Music and Deezer audio downloads.', color: 'from-sky-500 to-sky-600', platforms: ['deezer', 'amazonmusic'], formats: ['mp3'], recommended: true, status: 'working' },
+  { name: 'Lucida', url: 'https://lucida.to/', desc: 'Amazon Music and Deezer audio downloads.', color: 'from-sky-500 to-sky-600', platforms: ['deezer', 'amazonmusic'], formats: ['mp3'], recommended: true, status: 'working', handoff: { kind: 'query', param: 'url' } },
   { name: 'AM Downloader', url: 'https://apple-music-downloader.com/', desc: 'Apple Music to MP3.', color: 'from-gray-600 to-gray-800', platforms: ['applemusic'], formats: ['mp3'], recommended: true, status: 'working' },
   { name: 'TTSave', url: 'https://ttsave.app/', desc: 'TikTok videos without watermark.', color: 'from-pink-500 to-pink-600', platforms: ['tiktok'], formats: ['mp4'], recommended: true, status: 'working' },
   { name: 'SnapTik', url: 'https://snaptik.app/en3', desc: 'TikTok to MP4, no watermark.', color: 'from-cyan-500 to-cyan-600', platforms: ['tiktok'], formats: ['mp4'], status: 'working' },
@@ -108,6 +109,17 @@ export function buildConverterLaunchUrl(converter: Converter, mediaUrl: string):
   switch (handoff.kind) {
     case 'prefix':
       return `${handoff.prefix}${mediaUrl}`;
+    case 'tweet-path': {
+      // Twitsave consumes the original /user/status/id path. Its landing page
+      // ignores ?url= entirely, so preserve only a real tweet path and use the
+      // normal query/hash fallback for unusual X links.
+      const source = new URL(mediaUrl);
+      const tweetPath = source.pathname.match(/^\/([^/]+)\/status\/(\d+)(?:\/|$)/i);
+      if (tweetPath) {
+        return `${new URL(converter.url).origin}/${tweetPath[1]}/status/${tweetPath[2]}`;
+      }
+      break;
+    }
     case 'hash': {
       const base = converter.url.replace(/#.*$/, '');
       return `${base}#${handoff.param || 'url'}=${encodeURIComponent(mediaUrl)}`;
@@ -115,12 +127,20 @@ export function buildConverterLaunchUrl(converter: Converter, mediaUrl: string):
     case 'post':
       return handoff.action;
     case 'query':
-    default: {
-      const target = new URL(converter.url);
-      target.searchParams.set(handoff.param || 'url', mediaUrl);
-      return target.toString();
-    }
+    default:
+      break;
   }
+
+  // Converter sites vary between reading the query string and the fragment.
+  // Include both: the encoded query is conventional, while the raw fragment
+  // is also available to client-side apps without ever being sent to a server.
+  const target = new URL(converter.url);
+  target.searchParams.set(
+    handoff.kind === 'query' ? handoff.param || 'url' : 'url',
+    mediaUrl,
+  );
+  target.hash = mediaUrl;
+  return target.toString();
 }
 
 /** Same-origin /go path that validates the converter then hands off. */
