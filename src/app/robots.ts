@@ -8,7 +8,7 @@ export default function robots(): MetadataRoute.Robots {
         userAgent: "*",
         allow: "/",
         // The admin dashboard is private — never index it.
-        disallow: ["/status"],
+        disallow: ["/status", "/go"],
       },
     ],
     sitemap: `${getSiteUrl()}/sitemap.xml`,

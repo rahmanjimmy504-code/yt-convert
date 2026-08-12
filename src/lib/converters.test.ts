@@ -1,8 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ALL_CONVERTERS,
+  buildConverterLaunchUrl,
   checkConverterUrl,
+  converterGoPath,
   getConverterByName,
+  isSafeHandoffMediaUrl,
+  isSafePostHandoff,
   resolveConverterStatus,
   statusFromHttpStatus,
 } from './converters';
@@ -57,6 +61,51 @@ describe('catalog', () => {
     expect(getConverterByName('SpotDown')?.status).toBe('working');
     expect(getConverterByName('Y2Mate')).toBeUndefined();
     expect(getConverterByName('Does Not Exist')).toBeUndefined();
+  });
+});
+
+describe('handoff', () => {
+  const media = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
+
+  it('appends ?url= by default', () => {
+    const nine = getConverterByName('9Convert')!;
+    expect(buildConverterLaunchUrl(nine, media)).toBe(`https://9convert.org/?url=${encodeURIComponent(media)}`);
+  });
+
+  it('keeps existing path when appending a query', () => {
+    const save = getConverterByName('SaveInsta')!;
+    expect(buildConverterLaunchUrl(save, 'https://www.instagram.com/reel/abc/')).toBe(
+      'https://saveinsta.to/en1?url=https%3A%2F%2Fwww.instagram.com%2Freel%2Fabc%2F',
+    );
+  });
+
+  it('uses FastDL address-bar prefix', () => {
+    const fast = getConverterByName('FastDL')!;
+    expect(buildConverterLaunchUrl(fast, 'https://www.instagram.com/reel/abc/')).toBe(
+      'https://f-d.app/https://www.instagram.com/reel/abc/',
+    );
+  });
+
+  it('uses FBDown POST action and keeps it same-origin', () => {
+    const fb = getConverterByName('FBDown')!;
+    expect(fb.handoff).toEqual({ kind: 'post', action: 'https://fdown.net/', field: 'URLz' });
+    expect(buildConverterLaunchUrl(fb, media)).toBe('https://fdown.net/');
+    expect(isSafePostHandoff(fb, 'https://fdown.net/')).toBe(true);
+    expect(isSafePostHandoff(fb, 'https://evil.example/')).toBe(false);
+  });
+
+  it('builds a same-origin /go path', () => {
+    expect(converterGoPath('9Convert', media)).toBe(
+      `/go?c=9Convert&u=${encodeURIComponent(media)}`,
+    );
+  });
+
+  it('rejects unsafe media URLs', () => {
+    expect(isSafeHandoffMediaUrl('https://open.spotify.com/track/1')).toBe(true);
+    expect(isSafeHandoffMediaUrl('javascript:alert(1)')).toBe(false);
+    expect(isSafeHandoffMediaUrl('ftp://files.example/a')).toBe(false);
+    expect(isSafeHandoffMediaUrl('')).toBe(false);
+    expect(isSafeHandoffMediaUrl(`https://example.com/${'a'.repeat(2100)}`)).toBe(false);
   });
 });
 

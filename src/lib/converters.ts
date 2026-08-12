@@ -14,6 +14,16 @@ import type { FormatKey, PlatformKey } from './platforms';
 
 export type ConverterStatus = 'working' | 'unavailable' | 'unknown';
 
+/**
+ * How to hand the user's media URL to a third-party converter so the site
+ * can pre-fill (and usually auto-submit) it. Default is `?url=`.
+ */
+export type ConverterHandoff =
+  | { kind: 'query'; param?: string }
+  | { kind: 'hash'; param?: string }
+  | { kind: 'prefix'; prefix: string }
+  | { kind: 'post'; action: string; field: string };
+
 export interface Converter {
   name: string;
   url: string;
@@ -29,6 +39,8 @@ export interface Converter {
    * (Cloudflare 403) so the badge matches what a visitor actually sees.
    */
   status: ConverterStatus;
+  /** How /go attaches the media URL. Omitted = `?url=` query handoff. */
+  handoff?: ConverterHandoff;
 }
 
 export interface ConverterCheckResult {
@@ -57,19 +69,72 @@ export const ALL_CONVERTERS: Converter[] = [
   { name: 'SSSTik', url: 'https://ssstik.io/', desc: 'X/Twitter video downloader.', color: 'from-sky-400 to-sky-500', platforms: ['twitter'], formats: ['mp4'], recommended: true, status: 'working' },
   { name: 'Twitsave', url: 'https://twitsave.com/en', desc: 'Save X/Twitter videos in HD.', color: 'from-indigo-500 to-indigo-600', platforms: ['twitter'], formats: ['mp4'], status: 'working' },
   { name: 'SaveInsta', url: 'https://saveinsta.to/en1', desc: 'Instagram photos, videos, reels, stories, and highlights.', color: 'from-pink-400 to-pink-500', platforms: ['instagram'], formats: ['mp4'], recommended: true, status: 'working' },
-  { name: 'FastDL', url: 'https://fastdl.app/en4', desc: 'Instagram videos, photos, reels, stories, and highlights.', color: 'from-purple-500 to-purple-600', platforms: ['instagram'], formats: ['mp4'], status: 'working' },
+  { name: 'FastDL', url: 'https://fastdl.app/en4', desc: 'Instagram videos, photos, reels, stories, and highlights.', color: 'from-purple-500 to-purple-600', platforms: ['instagram'], formats: ['mp4'], status: 'working', handoff: { kind: 'prefix', prefix: 'https://f-d.app/' } },
   { name: 'SpotDown', url: 'https://spotdown.org/', desc: 'Spotify tracks to MP3.', color: 'from-green-500 to-green-600', platforms: ['spotify'], formats: ['mp3'], recommended: true, status: 'working' },
   { name: 'Lucida', url: 'https://lucida.to/', desc: 'Amazon Music and Deezer audio downloads.', color: 'from-sky-500 to-sky-600', platforms: ['deezer', 'amazonmusic'], formats: ['mp3'], recommended: true, status: 'working' },
   { name: 'AM Downloader', url: 'https://apple-music-downloader.com/', desc: 'Apple Music to MP3.', color: 'from-gray-600 to-gray-800', platforms: ['applemusic'], formats: ['mp3'], recommended: true, status: 'working' },
   { name: 'TTSave', url: 'https://ttsave.app/', desc: 'TikTok videos without watermark.', color: 'from-pink-500 to-pink-600', platforms: ['tiktok'], formats: ['mp4'], recommended: true, status: 'working' },
   { name: 'SnapTik', url: 'https://snaptik.app/en3', desc: 'TikTok to MP4, no watermark.', color: 'from-cyan-500 to-cyan-600', platforms: ['tiktok'], formats: ['mp4'], status: 'working' },
-  { name: 'FBDown', url: 'https://fdown.net/', desc: 'Facebook videos in HD.', color: 'from-blue-600 to-blue-700', platforms: ['facebook'], formats: ['mp4'], recommended: true, status: 'working' },
+  { name: 'FBDown', url: 'https://fdown.net/', desc: 'Facebook videos in HD.', color: 'from-blue-600 to-blue-700', platforms: ['facebook'], formats: ['mp4'], recommended: true, status: 'working', handoff: { kind: 'post', action: 'https://fdown.net/', field: 'URLz' } },
   { name: 'VDFR', url: 'https://vdfr.app/snapchat-video-downloader', desc: 'Download Snapchat videos.', color: 'from-yellow-400 to-yellow-500', platforms: ['snapchat'], formats: ['mp4'], recommended: true, status: 'unavailable' },
   { name: 'ViewSnapStories', url: 'https://viewsnapstories.com/video-downloader', desc: 'Save Snapchat videos fast.', color: 'from-yellow-500 to-yellow-600', platforms: ['snapchat'], formats: ['mp4'], status: 'working' },
 ];
 
 export function getConverterByName(name: string): Converter | undefined {
   return ALL_CONVERTERS.find(c => c.name === name);
+}
+
+export function getConverterHandoff(converter: Converter): ConverterHandoff {
+  return converter.handoff ?? { kind: 'query', param: 'url' };
+}
+
+/** Media URLs we are willing to forward to a third-party converter. */
+export function isSafeHandoffMediaUrl(raw: string): boolean {
+  if (!raw || raw.length > 2048) return false;
+  try {
+    const parsed = new URL(raw);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Build the third-party URL that should already contain (or receive) the
+ * user's media link, so the converter can pre-fill and usually auto-start.
+ */
+export function buildConverterLaunchUrl(converter: Converter, mediaUrl: string): string {
+  const handoff = getConverterHandoff(converter);
+  switch (handoff.kind) {
+    case 'prefix':
+      return `${handoff.prefix}${mediaUrl}`;
+    case 'hash': {
+      const base = converter.url.replace(/#.*$/, '');
+      return `${base}#${handoff.param || 'url'}=${encodeURIComponent(mediaUrl)}`;
+    }
+    case 'post':
+      return handoff.action;
+    case 'query':
+    default: {
+      const target = new URL(converter.url);
+      target.searchParams.set(handoff.param || 'url', mediaUrl);
+      return target.toString();
+    }
+  }
+}
+
+/** Same-origin /go path that validates the converter then hands off. */
+export function converterGoPath(converterName: string, mediaUrl: string): string {
+  return `/go?c=${encodeURIComponent(converterName)}&u=${encodeURIComponent(mediaUrl)}`;
+}
+
+/** POST actions must stay on the converter's own origin (no open redirect). */
+export function isSafePostHandoff(converter: Converter, action: string): boolean {
+  try {
+    return new URL(action).origin === new URL(converter.url).origin;
+  } catch {
+    return false;
+  }
 }
 
 /** 2xx and 3xx responses mean the site answered; anything else is not usable. */

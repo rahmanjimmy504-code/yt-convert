@@ -19,7 +19,7 @@ export const metadata: Metadata = {
 const FAQS: { q: string; a: string }[] = [
   {
     q: 'What does YT Convert actually do?',
-    a: 'YT Convert detects the platform of a link you paste (YouTube, Spotify, TikTok and 9 more), shows you the title, thumbnail and other metadata, and then routes you to a third-party converter site that performs the actual download. The URL is auto-copied to your clipboard so you only have to press Ctrl+V on the converter page.',
+    a: 'YT Convert detects the platform of a link you paste (YouTube, Spotify, TikTok and 9 more), shows you the title, thumbnail and other metadata, and then routes you to a third-party converter site that performs the actual download. When you click a converter, your link is sent automatically so you only have to pick quality / kbps and download.',
   },
   {
     q: 'Does YT Convert download or convert files itself?',
@@ -43,7 +43,7 @@ const FAQS: { q: string; a: string }[] = [
   },
   {
     q: 'A converter did not work. What now?',
-    a: 'Converter sites occasionally change domains or go offline. Each converter card shows a live \u201cWorking\u201d / \u201cUnavailable\u201d badge (checked automatically every 15 minutes, with a manual \u201cCheck again\u201d button), so if one is down you can see it before clicking. If a converter still fails, try another from the ranked list, and make sure you pasted the link into the converter\u2019s input box (the URL is auto-copied when you click a converter card).',
+    a: 'Converter sites occasionally change domains or go offline. Each converter card shows a live \u201cWorking\u201d / \u201cUnavailable\u201d badge (checked automatically every 15 minutes, with a manual \u201cCheck again\u201d button), so if one is down you can see it before clicking. Clicking a converter sends your link automatically \u2014 pick quality / kbps on the next page. If the box is empty, paste with Ctrl+V (the URL is also auto-copied) and try another converter if it still fails.',
   },
   {
     q: 'How do I report a broken or unsafe converter?',
