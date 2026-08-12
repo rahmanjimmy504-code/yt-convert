@@ -1,8 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ALL_CONVERTERS,
+  buildConverterLaunchUrl,
   checkConverterUrl,
+  converterGoPath,
   getConverterByName,
+  isSafeHandoffMediaUrl,
+  isSafePostHandoff,
+  resolveConverterStatus,
   statusFromHttpStatus,
 } from './converters';
 
@@ -35,6 +40,7 @@ describe('catalog', () => {
       expect(converter.url).toMatch(/^https:\/\//);
       expect(converter.platforms.length).toBeGreaterThan(0);
       expect(converter.formats.length).toBeGreaterThan(0);
+      expect(['working', 'unavailable']).toContain(converter.status);
     }
   });
 
@@ -45,9 +51,85 @@ describe('catalog', () => {
       url: 'https://lucida.to/',
       platforms: expect.arrayContaining(['amazonmusic']),
       formats: ['mp3'],
+      status: 'working',
     });
+    expect(getConverterByName('FBDown')).toMatchObject({
+      url: 'https://fdown.net/',
+      status: 'working',
+    });
+    expect(getConverterByName('VDFR')?.status).toBe('unavailable');
+    expect(getConverterByName('SpotDown')?.status).toBe('working');
     expect(getConverterByName('Y2Mate')).toBeUndefined();
     expect(getConverterByName('Does Not Exist')).toBeUndefined();
+  });
+});
+
+describe('handoff', () => {
+  const media = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
+
+  it('appends ?url= by default', () => {
+    const nine = getConverterByName('9Convert')!;
+    expect(buildConverterLaunchUrl(nine, media)).toBe(`https://9convert.org/?url=${encodeURIComponent(media)}`);
+  });
+
+  it('keeps existing path when appending a query', () => {
+    const save = getConverterByName('SaveInsta')!;
+    expect(buildConverterLaunchUrl(save, 'https://www.instagram.com/reel/abc/')).toBe(
+      'https://saveinsta.to/en1?url=https%3A%2F%2Fwww.instagram.com%2Freel%2Fabc%2F',
+    );
+  });
+
+  it('uses FastDL address-bar prefix', () => {
+    const fast = getConverterByName('FastDL')!;
+    expect(buildConverterLaunchUrl(fast, 'https://www.instagram.com/reel/abc/')).toBe(
+      'https://f-d.app/https://www.instagram.com/reel/abc/',
+    );
+  });
+
+  it('uses FBDown POST action and keeps it same-origin', () => {
+    const fb = getConverterByName('FBDown')!;
+    expect(fb.handoff).toEqual({ kind: 'post', action: 'https://fdown.net/', field: 'URLz' });
+    expect(buildConverterLaunchUrl(fb, media)).toBe('https://fdown.net/');
+    expect(isSafePostHandoff(fb, 'https://fdown.net/')).toBe(true);
+    expect(isSafePostHandoff(fb, 'https://evil.example/')).toBe(false);
+  });
+
+  it('builds a same-origin /go path', () => {
+    expect(converterGoPath('9Convert', media)).toBe(
+      `/go?c=9Convert&u=${encodeURIComponent(media)}`,
+    );
+  });
+
+  it('rejects unsafe media URLs', () => {
+    expect(isSafeHandoffMediaUrl('https://open.spotify.com/track/1')).toBe(true);
+    expect(isSafeHandoffMediaUrl('javascript:alert(1)')).toBe(false);
+    expect(isSafeHandoffMediaUrl('ftp://files.example/a')).toBe(false);
+    expect(isSafeHandoffMediaUrl('')).toBe(false);
+    expect(isSafeHandoffMediaUrl(`https://example.com/${'a'.repeat(2100)}`)).toBe(false);
+  });
+});
+
+describe('resolveConverterStatus', () => {
+  it('lets a successful live probe win', () => {
+    expect(resolveConverterStatus('unavailable', { status: 'working', statusCode: 200 })).toBe('working');
+    expect(resolveConverterStatus('working', { status: 'working', statusCode: 301 })).toBe('working');
+  });
+
+  it('keeps a curated working badge when the probe is bot-blocked', () => {
+    expect(resolveConverterStatus('working', { status: 'unavailable', statusCode: 403 })).toBe('working');
+    expect(resolveConverterStatus('working', { status: 'unavailable', statusCode: 401 })).toBe('working');
+    expect(resolveConverterStatus('working', { status: 'unavailable', statusCode: 429 })).toBe('working');
+  });
+
+  it('follows hard probe failures even if the catalog says working', () => {
+    expect(resolveConverterStatus('working', { status: 'unavailable', statusCode: 404 })).toBe('unavailable');
+    expect(resolveConverterStatus('working', { status: 'unavailable', statusCode: 503 })).toBe('unavailable');
+    expect(resolveConverterStatus('working', { status: 'unavailable' })).toBe('unavailable');
+  });
+
+  it('keeps a curated unavailable badge when the probe also fails', () => {
+    expect(resolveConverterStatus('unavailable', { status: 'unavailable', statusCode: 503 })).toBe('unavailable');
+    expect(resolveConverterStatus('unavailable', { status: 'unavailable' })).toBe('unavailable');
   });
 });
 

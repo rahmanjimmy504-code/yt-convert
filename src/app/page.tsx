@@ -36,7 +36,7 @@ import {
   type FormatKey,
   type PlatformKey,
 } from '@/lib/platforms';
-import { ALL_CONVERTERS, type Converter, type ConverterCheckResult } from '@/lib/converters';
+import { ALL_CONVERTERS, converterGoPath, type Converter, type ConverterCheckResult } from '@/lib/converters';
 import { getEmbed } from '@/lib/embed';
 import { OPEN_COOKIE_PREFERENCES_EVENT } from '@/lib/cookies';
 import Captcha from '@/components/captcha';
@@ -77,7 +77,7 @@ function sSetJ(k: string, v: unknown) {
   if (typeof window !== 'undefined') localStorage.setItem(k, JSON.stringify(v));
 }
 
-const tips = ['Paste any link from YouTube, Spotify, SoundCloud, X, Instagram, Deezer, Apple Music, Amazon Music, TikTok, Facebook, Snapchat or BeReal.', 'Your URL is auto-copied when you pick a converter.', 'If one converter has ads, try another.', 'All converters are free, no sign-up needed.', 'Press Enter after pasting to fetch info instantly.', 'Shortcuts: press / to jump to the link box, Esc to start over.', 'Drag and drop a link anywhere on the page to load it.', 'Click Preview to watch or listen before converting.', 'Press ? to see all keyboard shortcuts.'];
+const tips = ['Paste any link from YouTube, Spotify, SoundCloud, X, Instagram, Deezer, Apple Music, Amazon Music, TikTok, Facebook, Snapchat or BeReal.', 'Click a converter and your link is sent automatically — just pick quality.', 'If one converter has ads, try another.', 'All converters are free, no sign-up needed.', 'Press Enter after pasting to fetch info instantly.', 'Shortcuts: press / to jump to the link box, Esc to start over.', 'Drag and drop a link anywhere on the page to load it.', 'Click Preview to watch or listen before converting.', 'Press ? to see all keyboard shortcuts.'];
 const placeholders = ['https://www.youtube.com/watch?v=...', 'https://open.spotify.com/track/...', 'https://soundcloud.com/...', 'https://x.com/user/status/...', 'https://www.instagram.com/reel/...', 'https://music.apple.com/...', 'https://music.amazon.com/...', 'https://www.deezer.com/track/...', 'https://music.youtube.com/watch?v=...', 'https://www.tiktok.com/...', 'https://www.facebook.com/...', 'https://www.snapchat.com/add/...', 'https://bereal.com/...'];
 
 /** Copy text to the clipboard, reporting whether it actually worked. */
@@ -421,11 +421,11 @@ export default function Home() {
 
   const openConverter = async (c: Converter) => {
     const u = url.trim();
-    // Wait for the clipboard write before opening the tab so the URL is ready
-    // when the user lands on the converter site and presses Ctrl+V.
+    // Clipboard is a fallback if the converter does not auto-fill from the
+    // handoff URL. /go attaches the media link and (where possible) submits it.
     const copied = await copyText(u);
     setLaunched({ name: c.name, copied });
-    window.open(c.url, '_blank', 'noopener');
+    window.open(u ? converterGoPath(c.name, u) : c.url, '_blank', 'noopener');
     // Anonymous analytics: which converter was picked for which platform.
     sendEvent({ type: 'converter_click', converter: c.name, platform: videoInfo?.platform || detectPlatform(u) || '' });
   };
@@ -543,9 +543,14 @@ export default function Home() {
 
   const convList = getConverters();
 
-  // Converter availability derived from the latest probe results.
+  // Converter availability: live probe when it has landed, otherwise the
+  // curated catalog badge so cards don't flash "Checking…" for known status.
+  const badgeFor = (c: Converter) => {
+    const live = converterStatus[c.name]?.status;
+    return live && live !== 'unknown' ? live : c.status;
+  };
   const statusMinutesAgo = statusCheckedAt ? Math.max(0, Math.round((Date.now() - statusCheckedAt) / 60000)) : null;
-  const unavailableCount = convList.filter(c => converterStatus[c.name]?.status === 'unavailable').length;
+  const unavailableCount = convList.filter(c => badgeFor(c) === 'unavailable').length;
   const statusSummary = statusCheckedAt
     ? `Checked ${statusMinutesAgo === 0 ? 'just now' : `${statusMinutesAgo} min ago`}`
     : null;
@@ -747,14 +752,14 @@ export default function Home() {
               </div>
               <div className="bg-gray-50 dark:bg-gray-800 rounded-xl p-3 space-y-1.5">
                 <p className="text-xs font-semibold text-gray-700 dark:text-gray-300">How to download:</p>
-                <ol className="text-[11px] text-gray-500 list-decimal list-inside pl-1"><li>Click a converter {'\u2014'} opens in new tab</li><li>Your URL is <strong>auto-copied</strong></li><li>Press Ctrl+V to paste, convert and download</li></ol>
+                <ol className="text-[11px] text-gray-500 list-decimal list-inside pl-1"><li>Click a converter {'\u2014'} your link is sent automatically</li><li>Choose quality / kbps on the converter page</li><li>Download</li></ol>
               </div>
               {launched && (
                 <div role="status" aria-live="polite" className="flex items-center gap-2 text-xs text-green-700 bg-green-50 dark:bg-green-950/30 dark:text-green-400 px-3 py-2 rounded-lg">
                   <Check className="w-4 h-4 flex-shrink-0" />
                   {launched.copied
-                    ? `URL copied! Paste in ${launched.name} tab with Ctrl+V`
-                    : `Auto-copy was blocked by your browser — press Ctrl+C to copy, then paste in the ${launched.name} tab`}
+                    ? `Link sent to ${launched.name} — pick your quality / kbps to download`
+                    : `Link sent to ${launched.name}. If the box is empty, paste with Ctrl+V then Convert.`}
                 </div>
               )}
               <div className="space-y-2.5">
@@ -780,24 +785,25 @@ export default function Home() {
                         <span className="font-semibold text-sm">{svc.name}</span>
                         {svc.recommended && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400">BEST</span>}
                         {(() => {
-                          const status = converterStatus[svc.name];
-                          if (!status || status.status === 'unknown') {
+                          const live = converterStatus[svc.name];
+                          const badge = badgeFor(svc);
+                          if (!badge || badge === 'unknown') {
                             return (
                               <span className="flex items-center gap-1 text-[10px] font-medium text-gray-400">
                                 <span className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-pulse" /> Checking…
                               </span>
                             );
                           }
-                          if (status.status === 'working') {
+                          if (badge === 'working') {
                             return (
-                              <span title={status.checkedAt ? `Working — checked ${new Date(status.checkedAt).toLocaleTimeString()}${status.latencyMs != null ? ` (${status.latencyMs}ms)` : ''}` : 'Working'} className="flex items-center gap-1 text-[10px] font-medium text-green-700 dark:text-green-400">
+                              <span title={live?.checkedAt ? `Working — checked ${new Date(live.checkedAt).toLocaleTimeString()}${live.latencyMs != null ? ` (${live.latencyMs}ms)` : ''}` : 'Working'} className="flex items-center gap-1 text-[10px] font-medium text-green-700 dark:text-green-400">
                                 <CheckCircle2 className="w-3 h-3" /> Working
                               </span>
                             );
                           }
                           return (
                             <span
-                              title={status.error ? `Unavailable — ${status.error}${status.statusCode ? ` (HTTP ${status.statusCode})` : ''}` : 'Unavailable'}
+                              title={live?.error ? `Unavailable — ${live.error}${live.statusCode ? ` (HTTP ${live.statusCode})` : ''}` : 'Unavailable'}
                               className="flex items-center gap-1 text-[10px] font-medium text-red-600 dark:text-red-400"
                             >
                               <XCircle className="w-3 h-3" /> Unavailable

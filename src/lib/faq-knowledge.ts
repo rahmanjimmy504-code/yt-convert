@@ -23,7 +23,7 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
   {
     id: "what-is",
     q: "What does YT Convert actually do?",
-    a: "YT Convert detects the platform of a link you paste (YouTube, Spotify, TikTok and 9 more), shows you the title, thumbnail and other metadata, and then routes you to a third-party converter site that performs the actual download. The URL is auto-copied to your clipboard so you only have to press Ctrl+V on the converter page.",
+    a: "YT Convert detects the platform of a link you paste (YouTube, Spotify, TikTok and 9 more), shows you the title, thumbnail and other metadata, and then routes you to a third-party converter site that performs the actual download. When you click a converter, your link is sent automatically (and also copied as a backup) so you only have to pick quality / kbps and download.",
     keywords: [
       "what does",
       "what is",
@@ -115,7 +115,7 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
   {
     id: "converter-not-work",
     q: "A converter did not work. What now?",
-    a: "Converter sites occasionally change domains or go offline. Each converter card shows a live 'Working' / 'Unavailable' badge (checked automatically every 15 minutes, with a manual 'Check again' button), so if one is down you can see it before clicking. If a converter still fails, try another from the ranked list, and make sure you pasted the link into the converter's input box (the URL is auto-copied when you click a converter card). After clicking a converter, open its tab and press Ctrl+V to paste, then Convert/Download.",
+    a: "Converter sites occasionally change domains or go offline. Each converter card shows a live 'Working' / 'Unavailable' badge (checked automatically every 15 minutes, with a manual 'Check again' button), so if one is down you can see it before clicking. Clicking a converter sends your link automatically so the converter should already be filled in — just pick quality / kbps. If the box is empty, paste with Ctrl+V (the URL is also auto-copied) and press Convert. If it still fails, try another converter from the list.",
     keywords: [
       "not working",
       "converter failed",
@@ -248,7 +248,7 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
   {
     id: "how-to-use",
     q: "How do I use YT Convert step by step?",
-    a: "1) Copy a link from YouTube, Spotify, TikTok, etc. 2) Paste it into YT Convert's box — info auto-fetches after 800ms if CAPTCHA is done, or press Go/Enter. 3) Pick MP3 (audio) or MP4 (video) format — converters supporting it rank higher. 4) Click a converter card — your URL is auto-copied and the converter opens in a new tab. 5) In the converter tab, press Ctrl+V (or long-press Paste on mobile) to paste the URL, then click Convert/Download. If clipboard is blocked, manually copy with the Copy link button.",
+    a: "1) Copy a link from YouTube, Spotify, TikTok, etc. 2) Paste it into YT Convert's box — info auto-fetches after 800ms if CAPTCHA is done, or press Go/Enter. 3) Pick MP3 (audio) or MP4 (video) format — converters supporting it rank higher. 4) Click a converter card — your link is sent to the converter automatically and also copied as a backup. 5) On the converter page, choose quality / kbps and download. If the box is empty, press Ctrl+V (or long-press Paste on mobile) then Convert.",
     keywords: [
       "how to use",
       "how does it work",
@@ -269,7 +269,7 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
   {
     id: "clipboard",
     q: "Clipboard auto-copy not working?",
-    a: "YT Convert triggers the copy exactly when you click a converter card (a user gesture), but browsers can still block it. If blocked, you see: 'Auto-copy was blocked by your browser — press Ctrl+C to copy, then paste in the converter tab'. Fallback: use the 'Copy link' button. Desktop: Ctrl+C / Ctrl+V (Command+C / Command+V on Mac). Mobile / iPhone Safari: tap 'Copy link', then long-press input → Paste and grant permission if asked. Never use Ctrl+C / Cmd+C on iPhone.",
+    a: "Clicking a converter sends your link to the site automatically, so you usually only pick quality. The URL is also copied as a backup. YT Convert triggers the copy exactly when you click a converter card (a user gesture), but browsers can still block it. If the converter box is empty, paste with Ctrl+V (desktop) or use the 'Copy link' button then long-press → Paste on mobile. Never use Ctrl+C / Cmd+C on iPhone.",
     keywords: [
       "clipboard",
       "auto-copy",
@@ -706,7 +706,7 @@ export function answerLocally(questionRaw: string): AssistantResult {
     // fallback generic
     return {
       answer:
-        "Good question! I couldn't find an exact match, but here's the core of YT Convert:\n\nYT Convert itself doesn't download or convert — it detects your platform (YouTube, YT Music, SoundCloud, X, Instagram, Spotify, Deezer, Apple Music, Amazon Music, TikTok, Facebook, Snapchat, BeReal), fetches public metadata (title, thumbnail, duration), then lets you pick a third-party converter. Your link is auto-copied so you just press Ctrl+V in the converter tab.\n\nTry:\n1) Use a full https:// link to an exact video/track, not a channel\n2) Complete the CAPTCHA, press Go, choose MP3 for audio or MP4 for video\n3) If a converter is down (red badge) or looks unsafe, flag it and try another (green Working badge, BEST label)\n\nIf you tell me your exact link type or error message, I can give a more specific answer.",
+        "Good question! I couldn't find an exact match, but here's the core of YT Convert:\n\nYT Convert itself doesn't download or convert — it detects your platform (YouTube, YT Music, SoundCloud, X, Instagram, Spotify, Deezer, Apple Music, Amazon Music, TikTok, Facebook, Snapchat, BeReal), fetches public metadata (title, thumbnail, duration), then lets you pick a third-party converter. Your link is sent automatically so you just pick quality / kbps on the converter page.\n\nTry:\n1) Use a full https:// link to an exact video/track, not a channel\n2) Complete the CAPTCHA, press Go, choose MP3 for audio or MP4 for video\n3) If a converter is down (red badge) or looks unsafe, flag it and try another (green Working badge, BEST label)\n\nIf you tell me your exact link type or error message, I can give a more specific answer.",
       sources: [],
       confidence: 0.25,
       related: scored.slice(0, 3).map(s => s.entry.q),

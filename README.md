@@ -1,6 +1,6 @@
 # YT Convert
 
-A clean, fast multi-platform converter website built with Next.js. Paste a link from a supported platform, see the thumbnail and metadata instantly, then pick a converter — your URL is auto-copied to the clipboard so you can paste it straight into the converter tab.
+A clean, fast multi-platform converter website built with Next.js. Paste a link from a supported platform, see the thumbnail and metadata instantly, then pick a converter — your link is sent to the converter automatically so you only choose quality / kbps.
 
 **YT Convert does not perform conversions itself.** It detects the platform of a pasted link, fetches video/audio metadata from public APIs, and routes you to a third-party converter site that handles the actual download.
 
@@ -78,7 +78,8 @@ yt-convert/
 │   │   ├── opengraph-image.tsx      # Generated OG share card (ImageResponse)
 │   │   ├── twitter-image.tsx        # X/Twitter card — same artwork as the OG image, rendered via `og-card.tsx`
 │   │   ├── page.tsx                 # Main UI (client component)
-│   │   ├── robots.ts                # robots.txt (disallows /status; uses NEXT_PUBLIC_SITE_URL)
+│   │   ├── go/page.tsx              # Handoff: attach media URL and auto-submit the converter
+│   │   ├── robots.ts                # robots.txt (disallows /status and /go; uses NEXT_PUBLIC_SITE_URL)
 │   │   └── sitemap.ts               # sitemap.xml — home + FAQ (uses NEXT_PUBLIC_SITE_URL)
 │   ├── components/
 │   │   ├── captcha.tsx              # Turnstile widget + accessible local CAPTCHA fallback
@@ -260,6 +261,8 @@ Converters are defined as an array of `Converter` objects in `src/lib/converters
   platforms: PlatformKey[];  // Which platforms this converter supports
   formats: FormatKey[];       // 'mp3' | 'mp4' — which output formats it offers
   recommended?: boolean;      // Pins the card near the top when true
+  status: 'working' | 'unavailable' | 'unknown';  // Curated Working / Unavailable badge
+  handoff?: ConverterHandoff; // How /go pre-fills the converter (default: ?url=)
 }
 ```
 
@@ -268,7 +271,7 @@ Converters are ranked per-request by `getConverters()`:
 2. Sort: the user's favorite (stored in `localStorage` under `yt-convert-fav`) is pinned to the top, then converters supporting the currently selected format (`mp3`/`mp4`) come before the rest.
 3. Break remaining ties with the `recommended` flag.
 
-To add a new converter, add an entry to the `ALL_CONVERTERS` array in `src/lib/converters.ts`. No other file needs to change — the platform filter, format sort, availability probe, and report validation pick it up automatically.
+To add a new converter, add an entry to the `ALL_CONVERTERS` array in `src/lib/converters.ts`. No other file needs to change — the platform filter, format sort, availability probe, report validation, and `/go` handoff pick it up automatically. Override `handoff` when the site does not read `?url=` (FastDL uses a `f-d.app/` prefix; FBDown uses a POST form).
 
 ### Adding a Platform
 
@@ -302,7 +305,7 @@ When a converter stops working:
 
 1. Check the badge and any user reports in `/status` (admin) to see whether the outage is confirmed.
 2. Visit the converter's landing page directly in a browser to confirm it still resolves. Note: a live landing page does **not** guarantee the download flow still works — test the full copy → paste → convert → download path.
-3. Update the `url` (and `desc` if needed) in the `ALL_CONVERTERS` array in `src/lib/converters.ts`, or remove the entry if it's gone for good. Users who flagged it are acknowledged via the dashboard.
+3. Update the `url` (and `desc` if needed) in the `ALL_CONVERTERS` array in `src/lib/converters.ts`, set `status` to `'working'` or `'unavailable'` to match a fresh landing-page check, or remove the entry if it's gone for good. Users who flagged it are acknowledged via the dashboard. The curated `status` is what the card badge shows when a live probe is blocked by Cloudflare (403) even though visitors can still open the site.
 
 ### Privacy-friendly analytics & error monitoring
 
@@ -328,7 +331,7 @@ On Android: Chrome menu → "Install app" / "Add to Home screen". On iOS: Share 
 - **Platform detection** — accepts full URLs or bare domains; more-specific subdomains (e.g. `music.youtube.com`) are matched before their parent domains.
 - **Rich video info** — thumbnail, title, author, duration, view count, and publish date from oEmbed + Invidious.
 - **Format-aware converter ranking** — converters that support the selected format (MP3 or MP4) rank above those that don't (after your starred favorite, which is pinned to the top).
-- **Auto-copy** — the pasted URL is written to the clipboard when you click a converter card, with a fallback message if the browser blocks clipboard access.
+- **Auto-handoff** — clicking a converter opens `/go`, which attaches your media URL (`?url=`, FastDL prefix, or a POST form) and usually auto-starts conversion so you only pick quality / kbps. The URL is still copied as a backup.
 - **Auto-fetch** — after you paste a URL longer than 15 characters, info is fetched automatically after 800 ms (cancelled if you edit the input again).
 - **Favorites** — star a converter to keep it at the top of your ranked list (persisted in `localStorage`).
 - **History** — the last 6 lookups are stored in `localStorage`; the 4 most recent are shown as tappable chips.

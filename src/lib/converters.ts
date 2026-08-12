@@ -12,6 +12,18 @@
 
 import type { FormatKey, PlatformKey } from './platforms';
 
+export type ConverterStatus = 'working' | 'unavailable' | 'unknown';
+
+/**
+ * How to hand the user's media URL to a third-party converter so the site
+ * can pre-fill (and usually auto-submit) it. Default is `?url=`.
+ */
+export type ConverterHandoff =
+  | { kind: 'query'; param?: string }
+  | { kind: 'hash'; param?: string }
+  | { kind: 'prefix'; prefix: string }
+  | { kind: 'post'; action: string; field: string };
+
 export interface Converter {
   name: string;
   url: string;
@@ -20,9 +32,16 @@ export interface Converter {
   platforms: PlatformKey[];
   formats: FormatKey[];
   recommended?: boolean;
+  /**
+   * Curated Working / Unavailable badge from a human check of the landing
+   * page. Live probes still run and can upgrade a site that came back; a
+   * curated "working" value also covers bot-challenge false negatives
+   * (Cloudflare 403) so the badge matches what a visitor actually sees.
+   */
+  status: ConverterStatus;
+  /** How /go attaches the media URL. Omitted = `?url=` query handoff. */
+  handoff?: ConverterHandoff;
 }
-
-export type ConverterStatus = 'working' | 'unavailable' | 'unknown';
 
 export interface ConverterCheckResult {
   name: string;
@@ -43,31 +62,110 @@ export interface ConverterCheckResult {
 // Converter catalog lives at module scope: it never changes at runtime, so
 // there is no reason to rebuild the array on every render.
 export const ALL_CONVERTERS: Converter[] = [
-  { name: '9Convert', url: 'https://9convert.org/', desc: 'YouTube to MP3 and MP4. Fast and reliable.', color: 'from-rose-500 to-rose-600', platforms: ['youtube', 'youtubemusic'], formats: ['mp3', 'mp4'], recommended: true },
-  { name: 'AudioConverter', url: 'https://audioconverter.ai/youtube-to-mp4-converter', desc: 'YouTube to MP4. HD and 4K.', color: 'from-sky-500 to-sky-600', platforms: ['youtube', 'youtubemusic'], formats: ['mp4'] },
-  { name: 'Hicoo', url: 'https://hicoo.ai/mp4-converter/youtube-to-mp4', desc: 'YouTube to MP4. 360p to 4K.', color: 'from-emerald-500 to-emerald-600', platforms: ['youtube', 'youtubemusic'], formats: ['mp4'] },
-  { name: 'KlickAud', url: 'https://klickaud.org/en15', desc: 'SoundCloud to MP3.', color: 'from-orange-400 to-orange-500', platforms: ['soundcloud'], formats: ['mp3'], recommended: true },
-  { name: 'SSSTik', url: 'https://ssstik.io/', desc: 'X/Twitter video downloader.', color: 'from-sky-400 to-sky-500', platforms: ['twitter'], formats: ['mp4'], recommended: true },
-  { name: 'Twitsave', url: 'https://twitsave.com/en', desc: 'Save X/Twitter videos in HD.', color: 'from-indigo-500 to-indigo-600', platforms: ['twitter'], formats: ['mp4'] },
-  { name: 'SaveInsta', url: 'https://saveinsta.to/en1', desc: 'Instagram photos, videos, reels, stories, and highlights.', color: 'from-pink-400 to-pink-500', platforms: ['instagram'], formats: ['mp4'], recommended: true },
-  { name: 'FastDL', url: 'https://fastdl.app/en4', desc: 'Instagram videos, photos, reels, stories, and highlights.', color: 'from-purple-500 to-purple-600', platforms: ['instagram'], formats: ['mp4'] },
-  { name: 'SpotDown', url: 'https://spotdown.org/', desc: 'Spotify tracks to MP3.', color: 'from-green-500 to-green-600', platforms: ['spotify'], formats: ['mp3'], recommended: true },
-  { name: 'Lucida', url: 'https://lucida.to/', desc: 'Amazon Music and Deezer audio downloads.', color: 'from-sky-500 to-sky-600', platforms: ['deezer', 'amazonmusic'], formats: ['mp3'], recommended: true },
-  { name: 'AM Downloader', url: 'https://apple-music-downloader.com/', desc: 'Apple Music to MP3.', color: 'from-gray-600 to-gray-800', platforms: ['applemusic'], formats: ['mp3'], recommended: true },
-  { name: 'TTSave', url: 'https://ttsave.app/', desc: 'TikTok videos without watermark.', color: 'from-pink-500 to-pink-600', platforms: ['tiktok'], formats: ['mp4'], recommended: true },
-  { name: 'SnapTik', url: 'https://snaptik.app/en3', desc: 'TikTok to MP4, no watermark.', color: 'from-cyan-500 to-cyan-600', platforms: ['tiktok'], formats: ['mp4'] },
-  { name: 'FBDown', url: 'https://fbdown.net/', desc: 'Facebook videos in HD.', color: 'from-blue-600 to-blue-700', platforms: ['facebook'], formats: ['mp4'], recommended: true },
-  { name: 'VDFR', url: 'https://vdfr.app/snapchat-video-downloader', desc: 'Download Snapchat videos.', color: 'from-yellow-400 to-yellow-500', platforms: ['snapchat'], formats: ['mp4'], recommended: true },
-  { name: 'ViewSnapStories', url: 'https://viewsnapstories.com/video-downloader', desc: 'Save Snapchat videos fast.', color: 'from-yellow-500 to-yellow-600', platforms: ['snapchat'], formats: ['mp4'] },
+  { name: '9Convert', url: 'https://9convert.org/', desc: 'YouTube to MP3 and MP4. Fast and reliable.', color: 'from-rose-500 to-rose-600', platforms: ['youtube', 'youtubemusic'], formats: ['mp3', 'mp4'], recommended: true, status: 'working' },
+  { name: 'AudioConverter', url: 'https://audioconverter.ai/youtube-to-mp4-converter', desc: 'YouTube to MP4. HD and 4K.', color: 'from-sky-500 to-sky-600', platforms: ['youtube', 'youtubemusic'], formats: ['mp4'], status: 'working' },
+  { name: 'Hicoo', url: 'https://hicoo.ai/mp4-converter/youtube-to-mp4', desc: 'YouTube to MP4. 360p to 4K.', color: 'from-emerald-500 to-emerald-600', platforms: ['youtube', 'youtubemusic'], formats: ['mp4'], status: 'working' },
+  { name: 'KlickAud', url: 'https://klickaud.org/en15', desc: 'SoundCloud to MP3.', color: 'from-orange-400 to-orange-500', platforms: ['soundcloud'], formats: ['mp3'], recommended: true, status: 'working' },
+  { name: 'SSSTik', url: 'https://ssstik.io/', desc: 'X/Twitter video downloader.', color: 'from-sky-400 to-sky-500', platforms: ['twitter'], formats: ['mp4'], recommended: true, status: 'working' },
+  { name: 'Twitsave', url: 'https://twitsave.com/en', desc: 'Save X/Twitter videos in HD.', color: 'from-indigo-500 to-indigo-600', platforms: ['twitter'], formats: ['mp4'], status: 'working' },
+  { name: 'SaveInsta', url: 'https://saveinsta.to/en1', desc: 'Instagram photos, videos, reels, stories, and highlights.', color: 'from-pink-400 to-pink-500', platforms: ['instagram'], formats: ['mp4'], recommended: true, status: 'working' },
+  { name: 'FastDL', url: 'https://fastdl.app/en4', desc: 'Instagram videos, photos, reels, stories, and highlights.', color: 'from-purple-500 to-purple-600', platforms: ['instagram'], formats: ['mp4'], status: 'working', handoff: { kind: 'prefix', prefix: 'https://f-d.app/' } },
+  { name: 'SpotDown', url: 'https://spotdown.org/', desc: 'Spotify tracks to MP3.', color: 'from-green-500 to-green-600', platforms: ['spotify'], formats: ['mp3'], recommended: true, status: 'working' },
+  { name: 'Lucida', url: 'https://lucida.to/', desc: 'Amazon Music and Deezer audio downloads.', color: 'from-sky-500 to-sky-600', platforms: ['deezer', 'amazonmusic'], formats: ['mp3'], recommended: true, status: 'working' },
+  { name: 'AM Downloader', url: 'https://apple-music-downloader.com/', desc: 'Apple Music to MP3.', color: 'from-gray-600 to-gray-800', platforms: ['applemusic'], formats: ['mp3'], recommended: true, status: 'working' },
+  { name: 'TTSave', url: 'https://ttsave.app/', desc: 'TikTok videos without watermark.', color: 'from-pink-500 to-pink-600', platforms: ['tiktok'], formats: ['mp4'], recommended: true, status: 'working' },
+  { name: 'SnapTik', url: 'https://snaptik.app/en3', desc: 'TikTok to MP4, no watermark.', color: 'from-cyan-500 to-cyan-600', platforms: ['tiktok'], formats: ['mp4'], status: 'working' },
+  { name: 'FBDown', url: 'https://fdown.net/', desc: 'Facebook videos in HD.', color: 'from-blue-600 to-blue-700', platforms: ['facebook'], formats: ['mp4'], recommended: true, status: 'working', handoff: { kind: 'post', action: 'https://fdown.net/', field: 'URLz' } },
+  { name: 'VDFR', url: 'https://vdfr.app/snapchat-video-downloader', desc: 'Download Snapchat videos.', color: 'from-yellow-400 to-yellow-500', platforms: ['snapchat'], formats: ['mp4'], recommended: true, status: 'unavailable' },
+  { name: 'ViewSnapStories', url: 'https://viewsnapstories.com/video-downloader', desc: 'Save Snapchat videos fast.', color: 'from-yellow-500 to-yellow-600', platforms: ['snapchat'], formats: ['mp4'], status: 'working' },
 ];
 
 export function getConverterByName(name: string): Converter | undefined {
   return ALL_CONVERTERS.find(c => c.name === name);
 }
 
+export function getConverterHandoff(converter: Converter): ConverterHandoff {
+  return converter.handoff ?? { kind: 'query', param: 'url' };
+}
+
+/** Media URLs we are willing to forward to a third-party converter. */
+export function isSafeHandoffMediaUrl(raw: string): boolean {
+  if (!raw || raw.length > 2048) return false;
+  try {
+    const parsed = new URL(raw);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Build the third-party URL that should already contain (or receive) the
+ * user's media link, so the converter can pre-fill and usually auto-start.
+ */
+export function buildConverterLaunchUrl(converter: Converter, mediaUrl: string): string {
+  const handoff = getConverterHandoff(converter);
+  switch (handoff.kind) {
+    case 'prefix':
+      return `${handoff.prefix}${mediaUrl}`;
+    case 'hash': {
+      const base = converter.url.replace(/#.*$/, '');
+      return `${base}#${handoff.param || 'url'}=${encodeURIComponent(mediaUrl)}`;
+    }
+    case 'post':
+      return handoff.action;
+    case 'query':
+    default: {
+      const target = new URL(converter.url);
+      target.searchParams.set(handoff.param || 'url', mediaUrl);
+      return target.toString();
+    }
+  }
+}
+
+/** Same-origin /go path that validates the converter then hands off. */
+export function converterGoPath(converterName: string, mediaUrl: string): string {
+  return `/go?c=${encodeURIComponent(converterName)}&u=${encodeURIComponent(mediaUrl)}`;
+}
+
+/** POST actions must stay on the converter's own origin (no open redirect). */
+export function isSafePostHandoff(converter: Converter, action: string): boolean {
+  try {
+    return new URL(action).origin === new URL(converter.url).origin;
+  } catch {
+    return false;
+  }
+}
+
 /** 2xx and 3xx responses mean the site answered; anything else is not usable. */
 export function statusFromHttpStatus(status: number): ConverterStatus {
   return status >= 200 && status < 400 ? 'working' : 'unavailable';
+}
+
+/** Cloudflare / WAF challenge codes: the site is up, the probe just got blocked. */
+const BOT_BLOCK_CODES = new Set([401, 403, 429]);
+
+/**
+ * Combine a live HTTP probe with the curated catalog badge.
+ *
+ * - A successful probe always wins (the site is reachable right now).
+ * - A bot-challenge (401/403/429) keeps a curated "working" badge, because
+ *   visitors can still open the page even though automated checks cannot.
+ * - Hard failures (timeout, DNS, 404, 5xx) follow the live probe.
+ */
+export function resolveConverterStatus(
+  curated: ConverterStatus | undefined,
+  outcome: { status: ConverterStatus; statusCode?: number },
+): ConverterStatus {
+  if (outcome.status === 'working') return 'working';
+  if (
+    curated === 'working' &&
+    outcome.statusCode != null &&
+    BOT_BLOCK_CODES.has(outcome.statusCode)
+  ) {
+    return 'working';
+  }
+  return outcome.status;
 }
 
 const CHECK_TIMEOUT_MS = 5000;
@@ -159,7 +257,7 @@ async function runChecks(): Promise<ConverterCheckResult[]> {
       return {
         name: converter.name,
         url: converter.url,
-        status: outcome.status,
+        status: resolveConverterStatus(converter.status, outcome),
         checkedAt: Date.now(),
         statusCode: outcome.statusCode,
         latencyMs: outcome.latencyMs,
