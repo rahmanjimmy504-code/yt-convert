@@ -375,6 +375,23 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
     ],
   },
   {
+    id: "age-restricted",
+    q: "Why do I get an age-restricted or login-required error?",
+    a: "Some uploads are age-gated or marked as login-required by their uploaders or by the platform. Without a signed-in session, the platform refuses to serve the stream (LOGIN_REQUIRED). If the site owner has enabled the session cookies feature, you will see an 'Advanced' section on the download panel — expand it, paste your session cookies (from browser DevTools → Application → Cookies → .youtube.com), and retry. The cookies are forwarded for that single download only and are never stored on the server. Private uploads cannot be downloaded unless you own the account. If the cookies feature is not available, use a third-party converter from the list below the result card.",
+    keywords: [
+      "age restricted",
+      "age gate",
+      "login required",
+      "signed in account",
+      "private upload",
+      "session cookies",
+      "LOGIN_REQUIRED",
+      "confirm your age",
+      "age-restricted",
+      "bypass age",
+    ],
+  },
+  {
     id: "safe",
     q: "Are the converters safe?",
     a: "Converters are third-party sites; YT Convert checks they respond (Working badge) and allows user reports for unsafe behavior, but cannot guarantee safety. If a site shows scam, malware, or fake download buttons, don't use it — click the flag icon to report it, and try another converter. Prefer converters with 'BEST' and green Working badge and no flagged badge. Using an ad-blocker and checking the URL bar helps, but YT Convert is not responsible for third-party content.",

@@ -25,13 +25,13 @@ afterEach(() => {
 describe('Innertube client table', () => {
   it('only ships clients known to return direct URLs', () => {
     const names = INNERTUBE_CLIENTS.map(c => c.clientName);
-    expect(names).toEqual(['ANDROID', 'IOS', 'ANDROID_VR', 'VISIONOS']);
+    expect(names).toEqual(['ANDROID', 'IOS', 'ANDROID_VR', 'VISIONOS', 'TVHTML5_SIMPLY_EMBEDDED_PLAYER']);
   });
 
   it('tries ANDROID first and pairs each client with a matching id', () => {
     expect(INNERTUBE_CLIENTS[0].clientName).toBe('ANDROID');
     const ids = Object.fromEntries(INNERTUBE_CLIENTS.map(c => [c.clientName, c.clientId]));
-    expect(ids).toMatchObject({ ANDROID: '3', IOS: '5', ANDROID_VR: '28', VISIONOS: '101' });
+    expect(ids).toMatchObject({ ANDROID: '3', IOS: '5', ANDROID_VR: '28', VISIONOS: '101', TVHTML5_SIMPLY_EMBEDDED_PLAYER: '85' });
   });
 
   it('does not include the retired ANDROID_TESTSUITE client', () => {
@@ -332,7 +332,65 @@ describe('innertubeFormats', () => {
     expect(pickYouTubeFormat(result.formats, 'audio', 'best')).toBeNull();
   });
 
-  it('reports the playability status when every client refuses', async () => {
+  it('falls through to TVHTML5 embedded client when regular clients return LOGIN_REQUIRED (age-gate bypass)', async () => {
+    const calls: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init: RequestInit) => {
+        const body = JSON.parse(String(init.body));
+        const client = body.context.client.clientName;
+        calls.push(client);
+        // Regular clients refuse age-gated content.
+        if (client !== 'TVHTML5_SIMPLY_EMBEDDED_PLAYER') {
+          return jsonResponse({
+            playabilityStatus: { status: 'LOGIN_REQUIRED', reason: 'Sign in to confirm your age' },
+          });
+        }
+        // The TV embedded player bypasses the age gate — it must receive the
+        // thirdParty embedUrl in the context.
+        expect(body.context.thirdParty).toBeDefined();
+        expect(body.context.thirdParty.embedUrl).toContain('dQw4w9WgXcQ');
+        return jsonResponse({
+          playabilityStatus: { status: 'OK' },
+          streamingData: {
+            formats: [
+              {
+                itag: 18,
+                mimeType: 'video/mp4; codecs="avc1.42001E, mp4a.40.2"',
+                qualityLabel: '360p',
+                height: 360,
+                audioQuality: 'AUDIO_QUALITY_LOW',
+                bitrate: 500_000,
+                url: GV_VIDEO,
+              },
+            ],
+            adaptiveFormats: [
+              {
+                itag: 140,
+                mimeType: 'audio/mp4; codecs="mp4a.40.2"',
+                audioQuality: 'AUDIO_QUALITY_MEDIUM',
+                bitrate: 128_000,
+                url: GV_AUDIO,
+              },
+            ],
+          },
+        });
+      }),
+    );
+
+    const result = await innertubeFormats('dQw4w9WgXcQ');
+    // All 4 regular clients + the TV embedded client were tried.
+    expect(calls).toContain('ANDROID');
+    expect(calls).toContain('TVHTML5_SIMPLY_EMBEDDED_PLAYER');
+    // The embedded client's formats came through — no more LOGIN_REQUIRED.
+    expect(result.formats.length).toBeGreaterThan(0);
+    expect(result.status).toBeUndefined();
+    // Audio is available from the embedded client.
+    const audio = pickYouTubeFormat(result.formats, 'audio', 'best');
+    expect(audio?.itag).toBe(140);
+  });
+
+  it('reports the playability status when every client refuses (including TV embedded)', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async () =>

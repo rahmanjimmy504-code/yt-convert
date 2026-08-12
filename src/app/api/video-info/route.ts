@@ -8,7 +8,7 @@ import {
 } from '@/lib/platforms';
 import { verifyCaptchaToken } from '@/lib/captcha';
 import { issueConvertTicket } from '@/lib/convert-ticket';
-import { innertubeFormats } from '@/lib/extract';
+import { innertubeFormats, sanitizeYouTubeCookies } from '@/lib/extract';
 import { INVIDIOUS_INSTANCES, invidiousVideoUrl } from '@/lib/invidious';
 import { clientIp } from '@/lib/rate-limit';
 import { recordEvent } from '@/lib/stats';
@@ -193,7 +193,7 @@ async function resolveWithin<T>(promise: Promise<T>, ms: number): Promise<T | nu
   }
 }
 
-async function fetchYouTube(platform: PlatformKey, rawUrl: string): Promise<VideoInfo> {
+async function fetchYouTube(platform: PlatformKey, rawUrl: string, cookies?: string): Promise<VideoInfo> {
   const id = extractYouTubeId(rawUrl);
   const info: VideoInfo = { title: '', author: '', thumbnail: '', duration: '', views: '', published: '', platform };
 
@@ -217,7 +217,7 @@ async function fetchYouTube(platform: PlatformKey, rawUrl: string): Promise<Vide
   // convert time — and capped so a slow/blocked streaming API can never delay
   // metadata (the result card then simply shows no downgrade note).
   const plansP = id
-    ? resolveWithin(innertubeFormats(id), 8000).then(result =>
+    ? resolveWithin(innertubeFormats(id, { cookies }), 8000).then(result =>
         result && result.formats.length > 0 ? videoQualityPlans(result.formats) : undefined,
       )
     : Promise.resolve(undefined);
@@ -240,11 +240,11 @@ async function fetchYouTube(platform: PlatformKey, rawUrl: string): Promise<Vide
   return info;
 }
 
-async function fetchInfo(platform: PlatformKey, rawUrl: string): Promise<VideoInfo> {
+async function fetchInfo(platform: PlatformKey, rawUrl: string, cookies?: string): Promise<VideoInfo> {
   const info: VideoInfo = { title: '', author: '', thumbnail: '', duration: '', views: '', published: '', platform };
 
   if (platform === 'youtube' || platform === 'youtubemusic') {
-    return fetchYouTube(platform, rawUrl);
+    return fetchYouTube(platform, rawUrl, cookies);
   }
 
   // oEmbed-capable platforms (Spotify, Deezer, TikTok, SoundCloud, X, Instagram).
@@ -344,18 +344,27 @@ export async function GET(request: Request) {
     );
   }
 
+  // Optional: user-supplied YouTube session cookies for age-gate bypass.
+  // When cookies are present, skip the cache — the advisory quality plans
+  // differ for age-gated videos that only resolve with authentication.
+  const rawCookies = request.headers.get('x-youtube-cookies') || '';
+  const youTubeCookies = sanitizeYouTubeCookies(rawCookies) ?? undefined;
+  const hasCookies = Boolean(youTubeCookies);
+
   const cacheKey = `${platform}|${rawUrl}`;
-  let info = cacheGet(cacheKey);
+  let info = hasCookies ? null : cacheGet(cacheKey);
   if (info) {
     recordLookup(platform, true);
     return NextResponse.json(withConvertFields(info, rawUrl, ip), { headers: RESPONSE_HEADERS });
   }
 
   try {
-    info = await fetchInfo(platform, rawUrl);
-    // Cache the upstream metadata only; convert fields (ticket/reason) are
-    // attached per request because they depend on the requesting IP.
-    cacheSet(cacheKey, info);
+    info = await fetchInfo(platform, rawUrl, youTubeCookies);
+    // Do not cache results obtained with user cookies — they are session-specific
+    // and may include different quality plans for age-gated videos.
+    if (!hasCookies) {
+      cacheSet(cacheKey, info);
+    }
     recordLookup(platform, true);
     return NextResponse.json(withConvertFields(info, rawUrl, ip), { headers: RESPONSE_HEADERS });
   } catch (err) {

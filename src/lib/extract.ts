@@ -90,6 +90,14 @@ export interface InnertubeClient {
   userAgent: string;
   clientId: string;
   extra?: Record<string, unknown>;
+  /**
+   * When true, the request body includes `context.thirdParty.embedUrl` so
+   * YouTube treats this as an embedded player request. Embedded players on
+   * smart TVs / game consoles don't have login flows, so YouTube does not
+   * enforce age-gate / LOGIN_REQUIRED on them — this is the automatic
+   * bypass for age-restricted videos that would otherwise need cookies.
+   */
+  embed?: boolean;
 }
 
 /**
@@ -156,6 +164,24 @@ export const INNERTUBE_CLIENTS: InnertubeClient[] = [
       deviceModel: 'RealityDevice17,1',
       osName: 'visionOS',
       osVersion: '26.5.23O471',
+    },
+  },
+  {
+    // TV embedded player: YouTube does not enforce age-gate / LOGIN_REQUIRED
+    // on smart-TV embedded players because they have no login flow. This is
+    // the automatic bypass for age-restricted videos — tried last so it only
+    // fires when every direct client already refused. Versions and UA follow
+    // yt-dlp's TVHTML5_SIMPLY_EMBEDDED_PLAYER entry (verified 2026-08-12).
+    name: 'tv_embedded',
+    clientName: 'TVHTML5_SIMPLY_EMBEDDED_PLAYER',
+    clientVersion: '2.0',
+    userAgent:
+      'Mozilla/5.0 (ChromiumStylePlatform) Cobalt/24.lts.3.101228 (unlike Gecko) v8/10.8.168.26-starboard.25 gles Starboard/15, like Gecko)',
+    clientId: '85',
+    embed: true,
+    extra: {
+      platform: 'DESKTOP',
+      clientFormFactor: 'UNKNOWN_FORM_FACTOR',
     },
   },
 ];
@@ -235,36 +261,85 @@ function dedupeByItag(formats: PlayerFormat[]): PlayerFormat[] {
   return out;
 }
 
-export async function innertubeFormats(videoId: string): Promise<InnertubeResult> {
+/**
+ * Validate and sanitize a raw Cookie header value supplied by the end user.
+ * Returns the cleaned string, or null when nothing usable was provided.
+ *
+ * Rules: only printable ASCII (0x20–0x7E), no CR/LF (header injection), and
+ * a hard 4 KB cap. Cookies are forwarded verbatim to YouTube's Innertube API
+ * so the user's own signed-in session can bypass age-gate / login-required
+ * gates — but we never log, cache, or store them.
+ */
+export function sanitizeYouTubeCookies(raw: string): string | null {
+  if (!raw) return null;
+  // Strip CR/LF/tab to prevent header injection; keep everything else
+  // (cookie values can contain =, ;, %, etc.).
+  const cleaned = raw.replace(/[\r\n\t]/g, '').trim();
+  if (!cleaned || cleaned.length > 4096) return null;
+  // Reject anything with non-printable or non-ASCII characters.
+  if (!/^[\x20-\x7E]+$/.test(cleaned)) return null;
+  return cleaned;
+}
+
+export interface InnertubeOptions {
+  /** Optional raw Cookie header for signed-in sessions (age-gate bypass). */
+  cookies?: string;
+}
+
+export async function innertubeFormats(
+  videoId: string,
+  options?: InnertubeOptions,
+): Promise<InnertubeResult> {
   let lastStatus: string | undefined;
   let lastReason: string | undefined;
   const collected: PlayerFormat[] = [];
+  const cookieHeader = options?.cookies ? sanitizeYouTubeCookies(options.cookies) : null;
 
   for (const client of INNERTUBE_CLIENTS) {
     try {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'User-Agent': client.userAgent,
+        'X-YouTube-Client-Name': client.clientId,
+        'X-YouTube-Client-Version': client.clientVersion,
+      };
+      // Forward the user's own YouTube cookies so Innertube sees a signed-in
+      // session — this is what bypasses LOGIN_REQUIRED on age-gated videos.
+      // The cookies are never logged or cached (see route handlers).
+      if (cookieHeader) {
+        headers['Cookie'] = cookieHeader;
+        // When authenticated, Innertube also wants an Authorization header
+        // derived from the SAPISID cookie. We do NOT generate one (no
+        // PO-token emulation); YouTube accepts bare cookies without SAPISIDHASH
+        // for most age-gate bypasses on the player endpoint.
+      }
+      // Build the Innertube context. Embed clients (TVHTML5_SIMPLY_EMBEDDED_PLAYER)
+      // need `thirdParty.embedUrl` so YouTube treats the request as coming from
+      // an embedded player — this is what bypasses the age gate automatically.
+      const context: Record<string, unknown> = {
+        client: {
+          clientName: client.clientName,
+          clientVersion: client.clientVersion,
+          hl: 'en',
+          gl: 'US',
+          utcOffsetMinutes: 0,
+          userAgent: client.userAgent,
+          ...(client.extra || {}),
+        },
+      };
+      if (client.embed) {
+        context.thirdParty = {
+          embedUrl: `https://www.youtube.com/watch?v=${videoId}`,
+        };
+      }
       const response = await fetch('https://www.youtube.com/youtubei/v1/player?prettyPrint=false', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'User-Agent': client.userAgent,
-          'X-YouTube-Client-Name': client.clientId,
-          'X-YouTube-Client-Version': client.clientVersion,
-        },
+        headers,
         body: JSON.stringify({
           videoId,
           contentCheckOk: true,
           racyCheckOk: true,
-          context: {
-            client: {
-              clientName: client.clientName,
-              clientVersion: client.clientVersion,
-              hl: 'en',
-              gl: 'US',
-              utcOffsetMinutes: 0,
-              userAgent: client.userAgent,
-              ...(client.extra || {}),
-            },
-          },
+          context,
         }),
         signal: AbortSignal.timeout(PLAYER_TIMEOUT_MS),
       });
@@ -344,12 +419,22 @@ export async function invidiousFormats(videoId: string): Promise<PlayerFormat[]>
   return [];
 }
 
-async function extractYouTube(pageUrl: string, format: FormatKey, quality?: string): Promise<ExtractResult> {
+export interface ExtractOptions {
+  /** Optional YouTube session cookies for age-gate / login-required bypass. */
+  youTubeCookies?: string;
+}
+
+async function extractYouTube(
+  pageUrl: string,
+  format: FormatKey,
+  quality?: string,
+  options?: ExtractOptions,
+): Promise<ExtractResult> {
   const id = extractYouTubeId(pageUrl);
   if (!id) return fail('Invalid YouTube URL');
 
   // Primary: Innertube clients that return direct googlevideo URLs.
-  const innertube = await innertubeFormats(id);
+  const innertube = await innertubeFormats(id, { cookies: options?.youTubeCookies });
   let formats = innertube.formats;
   // Secondary only: public Invidious instances are frequently rate-limited or
   // have playback disabled, so they must never be the primary path.
@@ -657,11 +742,12 @@ export async function extractMedia(
   pageUrl: string,
   format: FormatKey,
   quality?: string,
+  options?: ExtractOptions,
 ): Promise<ExtractResult> {
   switch (platform) {
     case 'youtube':
     case 'youtubemusic':
-      return extractYouTube(pageUrl, format, quality);
+      return extractYouTube(pageUrl, format, quality, options);
     case 'soundcloud':
       return extractSoundCloud(pageUrl, format);
     case 'tiktok':
