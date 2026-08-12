@@ -110,9 +110,21 @@ export interface InnertubeClient {
    * When set together with `embed`, use this origin as the thirdParty
    * embedUrl instead of https://www.youtube.com/watch?v=... A non-YouTube
    * origin is what the WEB_EMBEDDED_PLAYER sends for third-party embeds and
-   * can succeed where a same-origin embedUrl is refused.
+   * can succeed where a same-origin embedUrl is refused. Since 2026-03
+   * YouTube refuses web-embedded requests whose embedUrl is a youtube.com
+   * origin ("This video is unavailable. Error code: 152"), so this MUST be a
+   * non-YouTube URL (yt-dlp uses https://www.reddit.com/). The same value is
+   * also sent as the Referer header on the player request.
    */
   thirdPartyEmbedUrl?: string;
+  /**
+   * True for clients whose player request must NOT carry
+   * serviceIntegrityDimensions.poToken. TV clients ignore the field and can
+   * refuse the request when it is present, so the externally-provided PO
+   * token is kept off their body (context.client.visitorData is still
+   * attached — it is harmless and YouTube expects it).
+   */
+  skipPoToken?: boolean;
 }
 
 /**
@@ -182,19 +194,28 @@ export const INNERTUBE_CLIENTS: InnertubeClient[] = [
     },
   },
   {
-    // Web embedded player. Unlike the TV client, this one is asked to act as
-    // an embed on a THIRD-PARTY origin (embedUrl is not youtube.com), which
-    // is the configuration YouTube's own iframe embed uses and which often
-    // still returns direct streams for label/age-gated content when the
-    // phone clients refuse. Carries a public INNERTUBE_API_KEY so the player
-    // endpoint accepts the request (this is the same key yt-dlp ships; it is
-    // not a secret). Tried before the TV client: it is closer to a real
-    // browser and tends to hand back a fuller format ladder.
+    // Web embedded player. This one acts as an embed on a THIRD-PARTY origin
+    // (embedUrl is not youtube.com), which is the configuration YouTube's own
+    // iframe embed uses and which often still returns direct streams for
+    // label/age-gated content when the phone clients refuse. It is YouTube's
+    // current mechanism for embeddable age-gated videos (yt-dlp appends this
+    // client whenever another client reports an age gate), so it doubles as
+    // the automatic age-gate bypass. Carries a public INNERTUBE_API_KEY so
+    // the player endpoint accepts the request (this is the same well-known
+    // key shipped in every YouTube web player; it is not a secret).
+    //
+    // Version/context follow yt-dlp's `web_embedded` entry and
+    // `_fix_embedded_ytcfg` (verified 2026-08-12). The 1.20240726.00.00
+    // version previously shipped here was refused with "This video is
+    // unavailable"; yt-dlp fixed the same symptom in 2026-03 by (a) bumping
+    // the version to the current 2.2026xxxx.xx.xx string and (b) sending a
+    // NON-YouTube embedUrl — youtube.com origins now get error 152. The
+    // embedUrl is also sent as the Referer header.
     name: 'web_embedded',
     clientName: 'WEB_EMBEDDED_PLAYER',
-    clientVersion: '1.20240726.00.00',
+    clientVersion: '2.20260708.00.00',
     userAgent:
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36',
     clientId: '56',
     embed: true,
     // The web embed client requires the public Innertube API key on the
@@ -203,30 +224,26 @@ export const INNERTUBE_CLIENTS: InnertubeClient[] = [
     // if YouTube rotates it before this list is updated.
     apiKey: process.env.YT_API_KEY || 'AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8',
     // A non-YouTube embed origin is what makes this a genuine third-party
-    // embed (the same origin YouTube's own iframe embed reports), which is
-    // why it can bypass gates the same-origin TV client occasionally hits.
-    thirdPartyEmbedUrl: 'https://www.youtube.com',
-    extra: {
-      clientName: 'WEB_EMBEDDED_PLAYER',
-    },
+    // embed. yt-dlp's `_fix_embedded_ytcfg` uses https://www.reddit.com/ and
+    // notes "Can be any valid non-YouTube URL"; a youtube.com origin is
+    // refused (error 152, see yt-dlp#16077/#16177).
+    thirdPartyEmbedUrl: 'https://www.reddit.com/',
   },
   {
-    // TV embedded player: YouTube does not enforce age-gate / LOGIN_REQUIRED
-    // on smart-TV embedded players because they have no login flow. This is
-    // the automatic bypass for age-restricted videos — tried last so it only
-    // fires when every direct client already refused. Versions and UA follow
-    // yt-dlp's TVHTML5_SIMPLY_EMBEDDED_PLAYER entry (verified 2026-08-12).
-    name: 'tv_embedded',
-    clientName: 'TVHTML5_SIMPLY_EMBEDDED_PLAYER',
-    clientVersion: '2.0',
+    // TV client (yt-dlp's `tv` entry, verified 2026-08-12). Replaces the old
+    // TVHTML5_SIMPLY_EMBEDDED_PLAYER entry, which yt-dlp removed in 2026-01
+    // ("YouTube is no longer supported in this application or device" — it
+    // now requires sign-in for every video) — the age-gate bypass role has
+    // moved to web_embedded above. Tried last so it only fires when every
+    // direct client already refused. The plain TVHTML5 client carries no
+    // thirdParty embed context and ignores serviceIntegrityDimensions.
+    name: 'tv',
+    clientName: 'TVHTML5',
+    clientVersion: '7.20260707.07.00',
     userAgent:
-      'Mozilla/5.0 (ChromiumStylePlatform) Cobalt/24.lts.3.101228 (unlike Gecko) v8/10.8.168.26-starboard.25 gles Starboard/15, like Gecko)',
-    clientId: '85',
-    embed: true,
-    extra: {
-      platform: 'DESKTOP',
-      clientFormFactor: 'UNKNOWN_FORM_FACTOR',
-    },
+      'Mozilla/5.0 (ChromiumStylePlatform) Cobalt/25.lts.30.1034943-gold (unlike Gecko), Unknown_TV_Unknown_0/Unknown (Unknown, Unknown)',
+    clientId: '7',
+    skipPoToken: true,
   },
 ];
 
@@ -339,6 +356,96 @@ export interface InnertubeOptions {
   poToken?: { visitorData: string; poToken: string };
 }
 
+export interface InnertubePlayerRequest {
+  endpoint: string;
+  headers: Record<string, string>;
+  body: Record<string, unknown>;
+}
+
+/**
+ * Build the exact Innertube player request for one client. Shared by
+ * innertubeFormats(), the live verify script, and the unit tests so the
+ * probe can never drift from the real code path.
+ *
+ * `cookies` must already be sanitized (see sanitizeYouTubeCookies).
+ */
+export function buildInnertubePlayerRequest(
+  client: InnertubeClient,
+  videoId: string,
+  options: InnertubeOptions = {},
+): InnertubePlayerRequest {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    'User-Agent': client.userAgent,
+    'X-YouTube-Client-Name': client.clientId,
+    'X-YouTube-Client-Version': client.clientVersion,
+  };
+  // Forward the user's own YouTube cookies so Innertube sees a signed-in
+  // session — this is what bypasses LOGIN_REQUIRED on age-gated videos.
+  // The cookies are never logged or cached (see route handlers).
+  if (options.cookies) {
+    headers['Cookie'] = options.cookies;
+    // When authenticated, Innertube also wants an Authorization header
+    // derived from the SAPISID cookie. We do NOT generate one (no
+    // PO-token emulation); YouTube accepts bare cookies without SAPISIDHASH
+    // for most age-gate bypasses on the player endpoint.
+  }
+  // Embedded clients are asked to behave like a third-party iframe embed
+  // (yt-dlp#16177): the request carries a Referer matching the embedUrl.
+  // A youtube.com Referer/embedUrl is refused since 2026-03.
+  if (client.embed && client.thirdPartyEmbedUrl) {
+    headers['Referer'] = client.thirdPartyEmbedUrl;
+  }
+
+  // Build the Innertube context. Embed clients (WEB_EMBEDDED_PLAYER) need
+  // `thirdParty.embedUrl` so YouTube treats the request as coming from an
+  // embedded player — this is what bypasses the age gate automatically.
+  const clientContext: Record<string, unknown> = {
+    clientName: client.clientName,
+    clientVersion: client.clientVersion,
+    hl: 'en',
+    gl: 'US',
+    utcOffsetMinutes: 0,
+    userAgent: client.userAgent,
+    ...(client.extra || {}),
+  };
+  // Attach externally-generated visitor data when available. The token
+  // itself goes under serviceIntegrityDimensions (below), but visitorData
+  // must live on the client context.
+  if (options.poToken?.visitorData) {
+    clientContext.visitorData = options.poToken.visitorData;
+  }
+  const context: Record<string, unknown> = { client: clientContext };
+  if (client.embed) {
+    context.thirdParty = {
+      embedUrl: client.thirdPartyEmbedUrl || `https://www.youtube.com/watch?v=${videoId}`,
+    };
+  }
+
+  // Assemble the request body. PO tokens (content-bound) go under
+  // serviceIntegrityDimensions.poToken. TV clients ignore the field and can
+  // refuse the request when it is present, so skipPoToken clients keep it
+  // out of their body.
+  const body: Record<string, unknown> = {
+    videoId,
+    contentCheckOk: true,
+    racyCheckOk: true,
+    context,
+  };
+  if (options.poToken?.poToken && !client.skipPoToken) {
+    body.serviceIntegrityDimensions = { poToken: options.poToken.poToken };
+  }
+
+  // The WEB_EMBEDDED_PLAYER client requires the public API key on the
+  // query string. Other clients reject or ignore it, so only append it
+  // when the client declares one.
+  const endpoint = client.apiKey
+    ? `https://www.youtube.com/youtubei/v1/player?prettyPrint=false&key=${encodeURIComponent(client.apiKey)}`
+    : 'https://www.youtube.com/youtubei/v1/player?prettyPrint=false';
+
+  return { endpoint, headers, body };
+}
+
 export async function innertubeFormats(
   videoId: string,
   options?: InnertubeOptions,
@@ -350,69 +457,10 @@ export async function innertubeFormats(
 
   for (const client of INNERTUBE_CLIENTS) {
     try {
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-        'User-Agent': client.userAgent,
-        'X-YouTube-Client-Name': client.clientId,
-        'X-YouTube-Client-Version': client.clientVersion,
-      };
-      // Forward the user's own YouTube cookies so Innertube sees a signed-in
-      // session — this is what bypasses LOGIN_REQUIRED on age-gated videos.
-      // The cookies are never logged or cached (see route handlers).
-      if (cookieHeader) {
-        headers['Cookie'] = cookieHeader;
-        // When authenticated, Innertube also wants an Authorization header
-        // derived from the SAPISID cookie. We do NOT generate one (no
-        // PO-token emulation); YouTube accepts bare cookies without SAPISIDHASH
-        // for most age-gate bypasses on the player endpoint.
-      }
-      // Build the Innertube context. Embed clients (WEB_EMBEDDED_PLAYER,
-      // TVHTML5_SIMPLY_EMBEDDED_PLAYER) need `thirdParty.embedUrl` so YouTube
-      // treats the request as coming from an embedded player — this is what
-      // bypasses the age gate automatically.
-      const clientContext: Record<string, unknown> = {
-        clientName: client.clientName,
-        clientVersion: client.clientVersion,
-        hl: 'en',
-        gl: 'US',
-        utcOffsetMinutes: 0,
-        userAgent: client.userAgent,
-        ...(client.extra || {}),
-      };
-      // Attach externally-generated visitor data when available. The token
-      // itself goes under serviceIntegrityDimensions (below), but visitorData
-      // must live on the client context.
-      if (options?.poToken?.visitorData) {
-        clientContext.visitorData = options.poToken.visitorData;
-      }
-      const context: Record<string, unknown> = { client: clientContext };
-      if (client.embed) {
-        context.thirdParty = {
-          embedUrl: client.thirdPartyEmbedUrl || `https://www.youtube.com/watch?v=${videoId}`,
-        };
-      }
-
-      // Assemble the request body. PO tokens (content-bound) go under
-      // serviceIntegrityDimensions.poToken. Attaching them only to clients
-      // that benefit (web-similar clients) avoids sending them to the TV
-      // embed, where they are ignored.
-      const body: Record<string, unknown> = {
-        videoId,
-        contentCheckOk: true,
-        racyCheckOk: true,
-        context,
-      };
-      if (options?.poToken?.poToken && client.clientName !== 'TVHTML5_SIMPLY_EMBEDDED_PLAYER') {
-        body.serviceIntegrityDimensions = { poToken: options.poToken.poToken };
-      }
-
-      // The WEB_EMBEDDED_PLAYER client requires the public API key on the
-      // query string. Other clients reject or ignore it, so only append it
-      // when the client declares one.
-      const endpoint = client.apiKey
-        ? `https://www.youtube.com/youtubei/v1/player?prettyPrint=false&key=${encodeURIComponent(client.apiKey)}`
-        : 'https://www.youtube.com/youtubei/v1/player?prettyPrint=false';
-
+      const { endpoint, headers, body } = buildInnertubePlayerRequest(client, videoId, {
+        ...(cookieHeader ? { cookies: cookieHeader } : {}),
+        poToken: options?.poToken,
+      });
       const response = await fetch(endpoint, {
         method: 'POST',
         headers,

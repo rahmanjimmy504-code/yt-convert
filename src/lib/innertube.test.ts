@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   INNERTUBE_CLIENTS,
+  buildInnertubePlayerRequest,
   collectPlayerFormats,
   hasDirectUrl,
   innertubeFormats,
@@ -31,7 +32,7 @@ describe('Innertube client table', () => {
       'ANDROID_VR',
       'VISIONOS',
       'WEB_EMBEDDED_PLAYER',
-      'TVHTML5_SIMPLY_EMBEDDED_PLAYER',
+      'TVHTML5',
     ]);
   });
 
@@ -44,7 +45,7 @@ describe('Innertube client table', () => {
       ANDROID_VR: '28',
       VISIONOS: '101',
       WEB_EMBEDDED_PLAYER: '56',
-      TVHTML5_SIMPLY_EMBEDDED_PLAYER: '85',
+      TVHTML5: '7',
     });
   });
 
@@ -54,6 +55,14 @@ describe('Innertube client table', () => {
     expect(INNERTUBE_CLIENTS.some(c => c.clientName === 'ANDROID_TESTSUITE')).toBe(false);
   });
 
+  it('does not include the retired TVHTML5_SIMPLY_EMBEDDED_PLAYER client', () => {
+    // yt-dlp removed it in 2026-01: YouTube now answers "YouTube is no longer
+    // supported in this application or device". It was replaced by the
+    // current TVHTML5 client (same role, current version).
+    expect(INNERTUBE_CLIENTS.some(c => c.clientName === 'TVHTML5_SIMPLY_EMBEDDED_PLAYER')).toBe(false);
+    expect(INNERTUBE_CLIENTS.some(c => c.clientId === '85')).toBe(false);
+  });
+
   it('ships the web embedded client with a public API key and embed context', () => {
     const web = INNERTUBE_CLIENTS.find(c => c.clientName === 'WEB_EMBEDDED_PLAYER');
     expect(web).toBeDefined();
@@ -61,6 +70,22 @@ describe('Innertube client table', () => {
     expect(web?.apiKey).toMatch(/^AIza[0-9A-Za-z_-]+$/);
     expect(web?.embed).toBe(true);
     expect(web?.clientId).toBe('56');
+  });
+
+  it('uses current web-embedded and TV client versions from yt-dlp', () => {
+    const web = INNERTUBE_CLIENTS.find(c => c.clientName === 'WEB_EMBEDDED_PLAYER')!;
+    const tv = INNERTUBE_CLIENTS.find(c => c.clientName === 'TVHTML5')!;
+    // The 1.20240726.00.00 web version previously shipped was refused with
+    // "This video is unavailable" — the current 2.2026xxxx string is what
+    // yt-dlp ships (verified 2026-08-12).
+    expect(web.clientVersion).toMatch(/^2\.2026\d{4}\.\d{2}\.\d{2}$/);
+    expect(parseInt(web.clientVersion.slice(2, 10), 10)).toBeGreaterThan(20260101);
+    // TVHTML5_SIMPLY_EMBEDDED_PLAYER 2.0 was retired; the current TV client
+    // is TVHTML5 7.2026xxxx (yt-dlp `tv` entry).
+    expect(tv.clientVersion).toMatch(/^7\.2026\d{4}\.\d{2}\.\d{2}$/);
+    // The version must appear in the User-Agent too, or YouTube 400s.
+    expect(tv.userAgent).toContain('Cobalt/25');
+    expect(web.userAgent).toMatch(/Chrome\/1[5-9][0-9]\./);
   });
 
   it('uses client versions new enough to be accepted', () => {
@@ -73,6 +98,48 @@ describe('Innertube client table', () => {
     // The version must also appear in the User-Agent, or YouTube 400s.
     expect(android.userAgent).toContain(android.clientVersion);
     expect(ios.userAgent).toContain(ios.clientVersion);
+  });
+});
+
+describe('buildInnertubePlayerRequest', () => {
+  const web = INNERTUBE_CLIENTS.find(c => c.clientName === 'WEB_EMBEDDED_PLAYER')!;
+  const tv = INNERTUBE_CLIENTS.find(c => c.clientName === 'TVHTML5')!;
+
+  it('sends a non-YouTube Referer for the web embedded client (yt-dlp#16177)', () => {
+    const req = buildInnertubePlayerRequest(web, 'dQw4w9WgXcQ');
+    expect(req.headers['Referer']).toBe('https://www.reddit.com/');
+    expect(req.headers['User-Agent']).toContain('Chrome/');
+    expect(req.headers['X-YouTube-Client-Name']).toBe('56');
+    expect(req.headers['X-YouTube-Client-Version']).toBe(web.clientVersion);
+    // The context must carry the same non-YouTube embedUrl — youtube.com
+    // origins are refused with error 152 since 2026-03.
+    const context = req.body.context as Record<string, any>;
+    expect(context.thirdParty).toEqual({ embedUrl: 'https://www.reddit.com/' });
+    expect(req.endpoint).toMatch(/[?&]key=AIza/);
+  });
+
+  it('sends no third-party embed context for the TV client', () => {
+    const req = buildInnertubePlayerRequest(tv, 'dQw4w9WgXcQ');
+    const context = req.body.context as Record<string, any>;
+    expect(context.thirdParty).toBeUndefined();
+    expect(req.headers['Referer']).toBeUndefined();
+    expect(req.headers['X-YouTube-Client-Name']).toBe('7');
+    expect(req.headers['X-YouTube-Client-Version']).toBe(tv.clientVersion);
+    // Plain TV client requests carry no API key.
+    expect(req.endpoint).not.toContain('key=');
+  });
+
+  it('attaches visitorData and poToken (except for skipPoToken clients)', () => {
+    const options = { poToken: { visitorData: 'VD', poToken: 'PT' } };
+    const webReq = buildInnertubePlayerRequest(web, 'dQw4w9WgXcQ', options);
+    const webContext = webReq.body.context as Record<string, any>;
+    expect(webContext.client.visitorData).toBe('VD');
+    expect((webReq.body.serviceIntegrityDimensions as any).poToken).toBe('PT');
+
+    const tvReq = buildInnertubePlayerRequest(tv, 'dQw4w9WgXcQ', options);
+    const tvContext = tvReq.body.context as Record<string, any>;
+    expect(tvContext.client.visitorData).toBe('VD');
+    expect(tvReq.body.serviceIntegrityDimensions).toBeUndefined();
   });
 });
 
@@ -355,24 +422,89 @@ describe('innertubeFormats', () => {
     expect(pickYouTubeFormat(result.formats, 'audio', 'best')).toBeNull();
   });
 
-  it('falls through to the embedded clients when regular clients return LOGIN_REQUIRED (age-gate bypass)', async () => {
-    const calls: string[] = [];
+  it('falls through to the web embedded client when regular clients return LOGIN_REQUIRED (age-gate bypass)', async () => {
+    const calls: Array<{ client: string; hasThirdParty: boolean }> = [];
     vi.stubGlobal(
       'fetch',
       vi.fn(async (_url: string, init: RequestInit) => {
         const body = JSON.parse(String(init.body));
         const client = body.context.client.clientName;
-        calls.push(client);
+        const hasThirdParty = Boolean(body.context.thirdParty);
+        calls.push({ client, hasThirdParty });
         // Non-embedded (phone/VR/visionOS) clients refuse age-gated content.
-        if (!body.context.thirdParty) {
+        if (!hasThirdParty) {
           return jsonResponse({
             playabilityStatus: { status: 'LOGIN_REQUIRED', reason: 'Sign in to confirm your age' },
           });
         }
-        // Embedded players bypass the age gate — they must receive the
-        // thirdParty embedUrl in the context. The TV client wins here.
-        expect(body.context.thirdParty.embedUrl).toContain('dQw4w9WgXcQ');
-        if (client !== 'TVHTML5_SIMPLY_EMBEDDED_PLAYER') {
+        // Only WEB_EMBEDDED_PLAYER carries the third-party embed context now
+        // (the TV client no longer does — yt-dlp moved the age-gate bypass
+        // entirely onto the web embedded player). Its embedUrl must be a
+        // NON-YouTube origin, or YouTube answers error 152.
+        if (client === 'WEB_EMBEDDED_PLAYER') {
+          expect(body.context.thirdParty.embedUrl).toBe('https://www.reddit.com/');
+          const headers = Object.fromEntries(new Headers(init.headers as HeadersInit).entries());
+          expect(headers['referer']).toBe('https://www.reddit.com/');
+          return jsonResponse({
+            playabilityStatus: { status: 'OK' },
+            streamingData: {
+              formats: [
+                {
+                  itag: 18,
+                  mimeType: 'video/mp4; codecs="avc1.42001E, mp4a.40.2"',
+                  qualityLabel: '360p',
+                  height: 360,
+                  audioQuality: 'AUDIO_QUALITY_LOW',
+                  bitrate: 500_000,
+                  url: GV_VIDEO,
+                },
+              ],
+              adaptiveFormats: [
+                {
+                  itag: 140,
+                  mimeType: 'audio/mp4; codecs="mp4a.40.2"',
+                  audioQuality: 'AUDIO_QUALITY_MEDIUM',
+                  bitrate: 128_000,
+                  url: GV_AUDIO,
+                },
+              ],
+            },
+          });
+        }
+        return jsonResponse({
+          playabilityStatus: { status: 'LOGIN_REQUIRED', reason: 'Sign in to confirm your age' },
+        });
+      }),
+    );
+
+    const result = await innertubeFormats('dQw4w9WgXcQ');
+    // A regular client and the web embedded client were attempted (the TV
+    // client is not reached because web_embedded already returned both audio
+    // and video — see the TV fallback test below).
+    expect(calls.map(c => c.client)).toContain('ANDROID');
+    expect(calls.map(c => c.client)).toContain('WEB_EMBEDDED_PLAYER');
+    const web = calls.find(c => c.client === 'WEB_EMBEDDED_PLAYER');
+    expect(web?.hasThirdParty).toBe(true);
+    // The web embedded client's formats came through — no more LOGIN_REQUIRED.
+    expect(result.formats.length).toBeGreaterThan(0);
+    expect(result.status).toBeUndefined();
+    // Audio is available from the embedded client.
+    const audio = pickYouTubeFormat(result.formats, 'audio', 'best');
+    expect(audio?.itag).toBe(140);
+  });
+
+  it('tries the plain TVHTML5 client last, with no third-party embed context', async () => {
+    const calls: Array<{ client: string; hasThirdParty: boolean }> = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init: RequestInit) => {
+        const body = JSON.parse(String(init.body));
+        const client = body.context.client.clientName;
+        const hasThirdParty = Boolean(body.context.thirdParty);
+        calls.push({ client, hasThirdParty });
+        // Everything before the TV client refuses (including web_embedded:
+        // this video is not embeddable, e.g. a non-playable-in-embed upload).
+        if (client !== 'TVHTML5') {
           return jsonResponse({
             playabilityStatus: { status: 'LOGIN_REQUIRED', reason: 'Sign in to confirm your age' },
           });
@@ -380,43 +512,23 @@ describe('innertubeFormats', () => {
         return jsonResponse({
           playabilityStatus: { status: 'OK' },
           streamingData: {
-            formats: [
-              {
-                itag: 18,
-                mimeType: 'video/mp4; codecs="avc1.42001E, mp4a.40.2"',
-                qualityLabel: '360p',
-                height: 360,
-                audioQuality: 'AUDIO_QUALITY_LOW',
-                bitrate: 500_000,
-                url: GV_VIDEO,
-              },
-            ],
-            adaptiveFormats: [
-              {
-                itag: 140,
-                mimeType: 'audio/mp4; codecs="mp4a.40.2"',
-                audioQuality: 'AUDIO_QUALITY_MEDIUM',
-                bitrate: 128_000,
-                url: GV_AUDIO,
-              },
-            ],
+            formats: [{ itag: 22, mimeType: 'video/mp4', url: GV_VIDEO }],
+            adaptiveFormats: [{ itag: 140, mimeType: 'audio/mp4', url: GV_AUDIO }],
           },
         });
       }),
     );
 
     const result = await innertubeFormats('dQw4w9WgXcQ');
-    // A regular client, the web embedded client, and the TV embedded client
-    // were all attempted.
-    expect(calls).toContain('ANDROID');
-    expect(calls).toContain('WEB_EMBEDDED_PLAYER');
-    expect(calls).toContain('TVHTML5_SIMPLY_EMBEDDED_PLAYER');
-    // The embedded client's formats came through — no more LOGIN_REQUIRED.
+    // The TV client is the LAST one tried and receives NO thirdParty context
+    // (the current TVHTML5 client is not an embed; only WEB_EMBEDDED_PLAYER
+    // carries one).
+    const tv = calls.find(c => c.client === 'TVHTML5');
+    expect(tv).toBeDefined();
+    expect(tv?.hasThirdParty).toBe(false);
+    expect(calls[calls.length - 1].client).toBe('TVHTML5');
     expect(result.formats.length).toBeGreaterThan(0);
-    expect(result.status).toBeUndefined();
-    // Audio is available from the embedded client.
-    const audio = pickYouTubeFormat(result.formats, 'audio', 'best');
-    expect(audio?.itag).toBe(140);
+    expect(result.formats[0].url).toBe(GV_VIDEO);
   });
 
   it('appends the public API key only for the WEB_EMBEDDED_PLAYER client', async () => {
@@ -466,7 +578,7 @@ describe('innertubeFormats', () => {
         });
         // Return usable streams only on the last (TV) client so every client
         // in the table is exercised.
-        if (body.context.client.clientName === 'TVHTML5_SIMPLY_EMBEDDED_PLAYER') {
+        if (body.context.client.clientName === 'TVHTML5') {
           return jsonResponse({
             playabilityStatus: { status: 'OK' },
             streamingData: {
@@ -488,9 +600,9 @@ describe('innertubeFormats', () => {
     expect(calls[0].client).toBe('ANDROID');
     expect(calls[0].hasVisitorData).toBe(true);
     expect(calls[0].hasPoToken).toBe(true);
-    // The PO token is NOT attached to the TV embedded client (it ignores it
-    // and including it risks a refusal), though visitor data is still set.
-    const tv = calls.find(c => c.client === 'TVHTML5_SIMPLY_EMBEDDED_PLAYER');
+    // The PO token is NOT attached to the TV client (it ignores it and
+    // including it risks a refusal), though visitor data is still set.
+    const tv = calls.find(c => c.client === 'TVHTML5');
     expect(tv).toBeDefined();
     expect(tv?.hasPoToken).toBe(false);
     expect(tv?.hasVisitorData).toBe(true);

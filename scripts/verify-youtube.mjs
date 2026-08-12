@@ -18,6 +18,19 @@
  * mp4 picker is EXPECTED to deliver 360p for best/1080/720/480 until the
  * mux plan (docs/hd-muxing-proposal.md) lands.
  *
+ * Diagnostics:
+ *   - The per-client probe always prints the HTTP status AND the
+ *     playabilityStatus separately, so a stale client that answers HTTP 200
+ *     with status=ERROR is easy to tell apart from a rate-limited request
+ *     (HTTP 429) or a dead endpoint.
+ *   - The Piped fallback logs EACH instance's outcome (base URL + HTTP status
+ *     or error) instead of only the last error, so "all instances were down"
+ *     is visible as such.
+ *   - A SHORT, BOUNDED retry (one extra attempt after ~2.5 s) runs only when
+ *     the failure looks transient: network errors, HTTP 5xx from Piped, or
+ *     Innertube's "Sign in to confirm you're not a bot" IP challenge.
+ *     Age-gate / private / removed are permanent and never retried.
+ *
  * Usage:
  *   npm run verify:youtube
  *   npm run verify:youtube https://www.youtube.com/watch?v=dQw4w9WgXcQ
@@ -43,6 +56,7 @@ if (PROXY) {
 
 import {
   INNERTUBE_CLIENTS,
+  buildInnertubePlayerRequest,
   collectPlayerFormats,
   innertubeFormats,
   invidiousFormats,
@@ -67,6 +81,43 @@ const check = (ok, label, detail = '') => {
   return ok;
 };
 
+const RETRY_WAIT_MS = 2500;
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+/**
+ * Run `fn`, and if the outcome looks transient (network errors, Piped 5xx,
+ * Innertube bot challenge) wait ~2.5 s and try exactly ONE more time.
+ * Permanent failures (age-gate / private / removed / stale-client ERROR) are
+ * reported as-is.
+ */
+async function retryOnce(label, fn, isTransient) {
+  const first = await fn();
+  if (!isTransient(first)) return first;
+  console.log(`  (${label} result looks transient — one retry after ${RETRY_WAIT_MS / 1000}s…)`);
+  await sleep(RETRY_WAIT_MS);
+  return fn();
+}
+
+/** Innertube: transient = every client failed at network/HTTP level, or the
+ * bot-check "Sign in to confirm you're not a bot" IP challenge. Age-gate /
+ * private / removed / stale-client ERROR statuses are permanent. */
+function isInnertubeTransient(result) {
+  if (result.formats.length > 0) return false;
+  if (!result.status) return true; // all clients failed before a playability verdict
+  if (result.status === 'LOGIN_REQUIRED' && /not a bot/i.test(result.reason || '')) return true;
+  return false;
+}
+
+/** Piped: transient ONLY when EVERY instance failed with a network error or
+ * an HTTP 5xx. Any 200-with-error (age gate / private / removed) or 4xx is
+ * a permanent statement about the video. */
+function isPipedTransient(result) {
+  if (result.formats.length > 0) return false;
+  const instances = result.instances || [];
+  if (instances.length === 0) return true;
+  return instances.every(instance => instance.transient === true);
+}
+
 console.log(`\n=== Live YouTube extraction check ===`);
 console.log(`Video: ${target}  (id ${videoId})`);
 console.log(`Clients: ${INNERTUBE_CLIENTS.map(c => `${c.clientName} ${c.clientVersion}`).join(', ')}\n`);
@@ -74,68 +125,49 @@ console.log(`Clients: ${INNERTUBE_CLIENTS.map(c => `${c.clientName} ${c.clientVe
 /* -- 1. Per-client raw probe, so a failure says exactly which client broke -- */
 console.log('--- per-client player probe ---');
 for (const client of INNERTUBE_CLIENTS) {
-  try {
-    const endpoint = client.apiKey
-      ? `https://www.youtube.com/youtubei/v1/player?prettyPrint=false&key=${encodeURIComponent(client.apiKey)}`
-      : 'https://www.youtube.com/youtubei/v1/player?prettyPrint=false';
-    const context = {
-      client: {
-        clientName: client.clientName,
-        clientVersion: client.clientVersion,
-        hl: 'en',
-        gl: 'US',
-        utcOffsetMinutes: 0,
-        userAgent: client.userAgent,
-        ...(client.extra || {}),
-      },
-    };
-    if (client.embed) {
-      context.thirdParty = {
-        embedUrl: client.thirdPartyEmbedUrl || `https://www.youtube.com/watch?v=${videoId}`,
-      };
-    }
-    const res = await fetch(endpoint, {
+  const { endpoint, headers, body } = buildInnertubePlayerRequest(client, videoId);
+  const doFetch = () =>
+    fetch(endpoint, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'User-Agent': client.userAgent,
-        'X-YouTube-Client-Name': client.clientId,
-        'X-YouTube-Client-Version': client.clientVersion,
-      },
-      body: JSON.stringify({
-        videoId,
-        contentCheckOk: true,
-        racyCheckOk: true,
-        context,
-      }),
+      headers,
+      body: JSON.stringify(body),
       signal: AbortSignal.timeout(20_000),
     });
 
-    if (!res.ok) {
-      console.log(`  ${client.clientName.padEnd(16)} HTTP ${res.status}`);
+  let res;
+  try {
+    res = await doFetch();
+  } catch (err) {
+    // A network-level failure is transient by nature — one bounded retry.
+    console.log(`  ${client.clientName.padEnd(16)} network error (${err.message}) — retrying once…`);
+    await sleep(RETRY_WAIT_MS);
+    try {
+      res = await doFetch();
+    } catch (err2) {
+      console.log(`  ${client.clientName.padEnd(16)} ERROR ${err2.message}`);
       continue;
     }
-    const data = await res.json();
-    const status = data?.playabilityStatus?.status ?? '(none)';
-    const raw = [
-      ...(data?.streamingData?.formats || []),
-      ...(data?.streamingData?.adaptiveFormats || []),
-    ];
-    const direct = collectPlayerFormats(data);
-    const cipher = raw.filter(f => !f.url && (f.signatureCipher || f.cipher)).length;
-    console.log(
-      `  ${client.clientName.padEnd(16)} status=${status.padEnd(18)} raw=${String(raw.length).padStart(3)} ` +
-        `direct=${String(direct.length).padStart(3)} cipherOnly=${String(cipher).padStart(3)}` +
-        (data?.playabilityStatus?.reason ? `  reason="${data.playabilityStatus.reason}"` : ''),
-    );
-  } catch (err) {
-    console.log(`  ${client.clientName.padEnd(16)} ERROR ${err.message}`);
   }
+
+  const data = await res.json().catch(() => null);
+  const status = data?.playabilityStatus?.status ?? '(none)';
+  const raw = [
+    ...(data?.streamingData?.formats || []),
+    ...(data?.streamingData?.adaptiveFormats || []),
+  ];
+  const direct = collectPlayerFormats(data ?? {});
+  const cipher = raw.filter(f => !f.url && (f.signatureCipher || f.cipher)).length;
+  console.log(
+    `  ${client.clientName.padEnd(16)} http=${String(res.status).padEnd(4)} status=${status.padEnd(18)} ` +
+      `raw=${String(raw.length).padStart(3)} direct=${String(direct.length).padStart(3)} ` +
+      `cipherOnly=${String(cipher).padStart(3)}` +
+      (data?.playabilityStatus?.reason ? `  reason="${data.playabilityStatus.reason}"` : ''),
+  );
 }
 
 /* -- 2. The real code path: Innertube -> Invidious -> Piped -- */
 console.log('\n--- innertubeFormats() ---');
-const result = await innertubeFormats(videoId);
+const result = await retryOnce('innertubeFormats', () => innertubeFormats(videoId), isInnertubeTransient);
 let formats = result.formats;
 let via = 'innertube';
 
@@ -152,14 +184,30 @@ if (!formats.length) {
 
 if (!formats.length) {
   console.log('  → falling back to Piped…');
-  const piped = await pipedFormats(videoId);
+  const piped = await retryOnce('pipedFormats', () => pipedFormats(videoId), isPipedTransient);
   formats = piped.formats;
   if (formats.length) via = 'piped';
+  // Log EVERY instance's outcome so "all instances were down" is visible
+  // instead of a single lastError.
+  for (const instance of piped.instances) {
+    const outcome = instance.ok
+      ? 'OK'
+      : instance.httpStatus
+        ? `HTTP ${instance.httpStatus}`
+        : 'network error';
+    console.log(
+      `    ${instance.base.padEnd(38)} → ${outcome}${instance.error ? ` (${instance.error})` : ''}` +
+        (instance.transient ? ' [transient]' : ''),
+    );
+  }
   check(formats.length > 0, 'pipedFormats() fallback returned formats', piped.error || `${formats.length} formats`);
 }
 
 if (!formats.length) {
   console.log('\n✗ No formats from any source (Innertube, Invidious, or Piped) — extraction is broken for this video.');
+  console.log('  If every Innertube client says "Sign in to confirm you\'re not a bot", the runner IP is');
+  console.log('  being BotGuard-challenged — the durable fix is deploying the po-token-server sidecar');
+  console.log('  (see po-token-server/README.md and the PO_TOKEN_SERVER_URL/PO_TOKEN_SERVER_AUTH env vars).');
   process.exit(1);
 }
 

@@ -19,19 +19,36 @@ import type { PlayerFormat } from './youtube-formats';
 
 /**
  * Public Piped API instances, tried in order until one answers with streams.
- * Sorted roughly by observed uptime / capacity; the official kavin.rocks
- * instance first because it fronts multiple regional edge proxies.
+ * The official kavin.rocks instance first because it fronts multiple
+ * regional edge proxies, followed by the instances that were verifiably
+ * alive when this list was last refreshed.
  *
- * The list mirrors TeamPiped's documented public instances
- * (https://docs.piped.video/docs/api-documentation/). Dead instances simply
- * cost one skipped request because callers try them in order and move on.
+ * Refresh notes (2026-08-12, probed from this environment + TeamPiped docs
+ * https://github.com/TeamPiped/documentation/blob/main/content/docs/public-instances/index.md):
+ *   - pipedapi.adminforge.de  — REMOVED: subdomain no longer serves Piped
+ *     (redirects to the adminforge.de blog).
+ *   - pipedapi.leptons.xyz    — REMOVED: Cloudflare 502 on every probe; the
+ *     TeamPiped uptime tracker also lists it down.
+ *   - pipedapi.drgns.space    — REMOVED: TLS handshake fails
+ *     (ERR_SSL_VERSION_OR_CIPHER_MISMATCH).
+ *   - pipedapi.ducks.party    — REMOVED: TLS certificate invalid
+ *     (ERR_CERT_AUTHORITY_INVALID).
+ *   - pipedapi.kavin.rocks    — kept: official instance, still listed in the
+ *     docs; could not be probed from this sandbox (Cloudflare blocks the
+ *     crawler), rely on the docs + the live verify workflow for it.
+ *   - api.piped.private.coffee — added: healthcheck returns OK and the
+ *     /streams endpoint answers with real NewPipeExtractor output.
+ *   - pipedapi.reallyaweso.me — added: still listed in the docs and the
+ *     server answers HTTP 200, though it returns empty bodies to crawlers
+ *     (its real health is unverified — the live workflow will show it).
+ *
+ * Dead instances simply cost one skipped request because callers try them in
+ * order and move on.
  */
 export const PIPED_INSTANCES = [
   'https://pipedapi.kavin.rocks',
-  'https://pipedapi.adminforge.de',
-  'https://pipedapi.leptons.xyz',
-  'https://pipedapi.drgns.space',
-  'https://pipedapi.ducks.party',
+  'https://api.piped.private.coffee',
+  'https://pipedapi.reallyaweso.me',
 ] as const;
 
 const PIPED_TIMEOUT_MS = 12_000;
@@ -137,11 +154,36 @@ function mapStream(item: PipedStreamItem, kind: 'audio' | 'video'): PlayerFormat
   };
 }
 
+/**
+ * What happened on ONE Piped instance during a lookup. Used both for
+ * diagnostics (the verify script prints every instance's outcome so "all
+ * instances were down" is visible instead of a single lastError) and
+ * for the verify script's transient-failure retry decision (5xx / network
+ * errors are retried once; age-gate / private / removed are not).
+ */
+export interface PipedInstanceResult {
+  /** API base URL of the instance that was tried. */
+  base: string;
+  /** True when this instance returned at least one usable stream. */
+  ok: boolean;
+  /** HTTP status when the instance answered (missing on network errors). */
+  httpStatus?: number;
+  /**
+   * Network-level error message when the request never completed, or the
+   * upstream reason string Piped returned for a refused video.
+   */
+  error?: string;
+  /** True when the failure is likely transient (network error or HTTP 5xx). */
+  transient?: boolean;
+}
+
 /** Outcome of a Piped lookup, carrying a reason when the video is blocked. */
 export interface PipedResult {
   formats: PlayerFormat[];
   /** Populated when every instance refused for an explainable reason. */
   error?: string;
+  /** Outcome of every instance tried, in order (for diagnostics/retry). */
+  instances: PipedInstanceResult[];
 }
 
 /**
@@ -154,6 +196,7 @@ export interface PipedResult {
  */
 export async function pipedFormats(videoId: string): Promise<PipedResult> {
   let lastError: string | undefined;
+  const instances: PipedInstanceResult[] = [];
 
   for (const base of PIPED_INSTANCES) {
     try {
@@ -165,16 +208,28 @@ export async function pipedFormats(videoId: string): Promise<PipedResult> {
         signal: AbortSignal.timeout(PIPED_TIMEOUT_MS),
       });
       if (!response.ok) {
-        lastError = `Piped instance returned HTTP ${response.status}`;
+        const outcome: PipedInstanceResult = {
+          base,
+          ok: false,
+          httpStatus: response.status,
+          error: `HTTP ${response.status}`,
+          // 5xx (including the classic Piped 502 Bad Gateway) is a server
+          // problem, not a statement about the video — safe to retry.
+          transient: response.status >= 500,
+        };
+        instances.push(outcome);
+        lastError = outcome.error;
         continue;
       }
       const data = (await response.json()) as PipedStreamsResponse;
 
       // Piped returns 200 with an `error` string for age-restricted / private /
       // region-locked / unavailable videos. Capture it but keep trying — a
-      // different instance may still have the stream.
+      // different instance may still have the stream. These reasons are
+      // PERMANENT (the video itself is blocked), so never marked transient.
       const errorMessage = asString(data.error) || asString(data.message);
       if (errorMessage && (!Array.isArray(data.videoStreams) || data.videoStreams.length === 0)) {
+        instances.push({ base, ok: false, httpStatus: response.status, error: errorMessage, transient: false });
         lastError = errorMessage;
         continue;
       }
@@ -184,11 +239,20 @@ export async function pipedFormats(videoId: string): Promise<PipedResult> {
       const formats = [...video, ...audio].filter(
         f => typeof f.url === 'string' && /^https:\/\//i.test(f.url),
       );
-      if (formats.length > 0) return { formats };
-    } catch {
+      if (formats.length > 0) {
+        instances.push({ base, ok: true, httpStatus: response.status });
+        return { formats, instances };
+      }
+      instances.push({ base, ok: false, httpStatus: response.status, error: 'no usable streams', transient: false });
+      lastError = 'no usable streams';
+    } catch (err) {
       // Network error / timeout / malformed JSON — try the next instance.
+      // Network failures are transient by nature (a retry may succeed).
+      const message = err instanceof Error ? err.message : String(err);
+      instances.push({ base, ok: false, error: message, transient: true });
+      lastError = message;
     }
   }
 
-  return { formats: [], error: lastError };
+  return { formats: [], error: lastError, instances };
 }
