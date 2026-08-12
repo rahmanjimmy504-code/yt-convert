@@ -260,6 +260,7 @@ Converters are defined as an array of `Converter` objects in `src/lib/converters
   platforms: PlatformKey[];  // Which platforms this converter supports
   formats: FormatKey[];       // 'mp3' | 'mp4' — which output formats it offers
   recommended?: boolean;      // Pins the card near the top when true
+  status: 'working' | 'unavailable' | 'unknown';  // Curated Working / Unavailable badge
 }
 ```
 
@@ -302,7 +303,7 @@ When a converter stops working:
 
 1. Check the badge and any user reports in `/status` (admin) to see whether the outage is confirmed.
 2. Visit the converter's landing page directly in a browser to confirm it still resolves. Note: a live landing page does **not** guarantee the download flow still works — test the full copy → paste → convert → download path.
-3. Update the `url` (and `desc` if needed) in the `ALL_CONVERTERS` array in `src/lib/converters.ts`, or remove the entry if it's gone for good. Users who flagged it are acknowledged via the dashboard.
+3. Update the `url` (and `desc` if needed) in the `ALL_CONVERTERS` array in `src/lib/converters.ts`, set `status` to `'working'` or `'unavailable'` to match a fresh landing-page check, or remove the entry if it's gone for good. Users who flagged it are acknowledged via the dashboard. The curated `status` is what the card badge shows when a live probe is blocked by Cloudflare (403) even though visitors can still open the site.
 
 ### Privacy-friendly analytics & error monitoring
 

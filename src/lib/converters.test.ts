@@ -3,6 +3,7 @@ import {
   ALL_CONVERTERS,
   checkConverterUrl,
   getConverterByName,
+  resolveConverterStatus,
   statusFromHttpStatus,
 } from './converters';
 
@@ -35,6 +36,7 @@ describe('catalog', () => {
       expect(converter.url).toMatch(/^https:\/\//);
       expect(converter.platforms.length).toBeGreaterThan(0);
       expect(converter.formats.length).toBeGreaterThan(0);
+      expect(['working', 'unavailable']).toContain(converter.status);
     }
   });
 
@@ -45,9 +47,37 @@ describe('catalog', () => {
       url: 'https://lucida.to/',
       platforms: expect.arrayContaining(['amazonmusic']),
       formats: ['mp3'],
+      status: 'working',
     });
+    expect(getConverterByName('FBDown')?.status).toBe('unavailable');
+    expect(getConverterByName('VDFR')?.status).toBe('unavailable');
+    expect(getConverterByName('SpotDown')?.status).toBe('working');
     expect(getConverterByName('Y2Mate')).toBeUndefined();
     expect(getConverterByName('Does Not Exist')).toBeUndefined();
+  });
+});
+
+describe('resolveConverterStatus', () => {
+  it('lets a successful live probe win', () => {
+    expect(resolveConverterStatus('unavailable', { status: 'working', statusCode: 200 })).toBe('working');
+    expect(resolveConverterStatus('working', { status: 'working', statusCode: 301 })).toBe('working');
+  });
+
+  it('keeps a curated working badge when the probe is bot-blocked', () => {
+    expect(resolveConverterStatus('working', { status: 'unavailable', statusCode: 403 })).toBe('working');
+    expect(resolveConverterStatus('working', { status: 'unavailable', statusCode: 401 })).toBe('working');
+    expect(resolveConverterStatus('working', { status: 'unavailable', statusCode: 429 })).toBe('working');
+  });
+
+  it('follows hard probe failures even if the catalog says working', () => {
+    expect(resolveConverterStatus('working', { status: 'unavailable', statusCode: 404 })).toBe('unavailable');
+    expect(resolveConverterStatus('working', { status: 'unavailable', statusCode: 503 })).toBe('unavailable');
+    expect(resolveConverterStatus('working', { status: 'unavailable' })).toBe('unavailable');
+  });
+
+  it('keeps a curated unavailable badge when the probe also fails', () => {
+    expect(resolveConverterStatus('unavailable', { status: 'unavailable', statusCode: 503 })).toBe('unavailable');
+    expect(resolveConverterStatus('unavailable', { status: 'unavailable' })).toBe('unavailable');
   });
 });
 

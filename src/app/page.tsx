@@ -543,9 +543,14 @@ export default function Home() {
 
   const convList = getConverters();
 
-  // Converter availability derived from the latest probe results.
+  // Converter availability: live probe when it has landed, otherwise the
+  // curated catalog badge so cards don't flash "Checking…" for known status.
+  const badgeFor = (c: Converter) => {
+    const live = converterStatus[c.name]?.status;
+    return live && live !== 'unknown' ? live : c.status;
+  };
   const statusMinutesAgo = statusCheckedAt ? Math.max(0, Math.round((Date.now() - statusCheckedAt) / 60000)) : null;
-  const unavailableCount = convList.filter(c => converterStatus[c.name]?.status === 'unavailable').length;
+  const unavailableCount = convList.filter(c => badgeFor(c) === 'unavailable').length;
   const statusSummary = statusCheckedAt
     ? `Checked ${statusMinutesAgo === 0 ? 'just now' : `${statusMinutesAgo} min ago`}`
     : null;
@@ -780,24 +785,25 @@ export default function Home() {
                         <span className="font-semibold text-sm">{svc.name}</span>
                         {svc.recommended && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400">BEST</span>}
                         {(() => {
-                          const status = converterStatus[svc.name];
-                          if (!status || status.status === 'unknown') {
+                          const live = converterStatus[svc.name];
+                          const badge = badgeFor(svc);
+                          if (!badge || badge === 'unknown') {
                             return (
                               <span className="flex items-center gap-1 text-[10px] font-medium text-gray-400">
                                 <span className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-pulse" /> Checking…
                               </span>
                             );
                           }
-                          if (status.status === 'working') {
+                          if (badge === 'working') {
                             return (
-                              <span title={status.checkedAt ? `Working — checked ${new Date(status.checkedAt).toLocaleTimeString()}${status.latencyMs != null ? ` (${status.latencyMs}ms)` : ''}` : 'Working'} className="flex items-center gap-1 text-[10px] font-medium text-green-700 dark:text-green-400">
+                              <span title={live?.checkedAt ? `Working — checked ${new Date(live.checkedAt).toLocaleTimeString()}${live.latencyMs != null ? ` (${live.latencyMs}ms)` : ''}` : 'Working'} className="flex items-center gap-1 text-[10px] font-medium text-green-700 dark:text-green-400">
                                 <CheckCircle2 className="w-3 h-3" /> Working
                               </span>
                             );
                           }
                           return (
                             <span
-                              title={status.error ? `Unavailable — ${status.error}${status.statusCode ? ` (HTTP ${status.statusCode})` : ''}` : 'Unavailable'}
+                              title={live?.error ? `Unavailable — ${live.error}${live.statusCode ? ` (HTTP ${live.statusCode})` : ''}` : 'Unavailable'}
                               className="flex items-center gap-1 text-[10px] font-medium text-red-600 dark:text-red-400"
                             >
                               <XCircle className="w-3 h-3" /> Unavailable
