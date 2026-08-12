@@ -19,7 +19,7 @@ export const metadata: Metadata = {
 const FAQS: { q: string; a: string }[] = [
   {
     q: 'What does YT Convert actually do?',
-    a: 'YT Convert detects the platform of a link you paste (YouTube, Spotify, TikTok and 9 more), shows you the title, thumbnail and other metadata, and then routes you to a third-party converter site that performs the actual download. When you click a converter, your link is sent automatically so you only have to pick quality / kbps and download.',
+    a: 'YT Convert detects the platform of a link you paste (YouTube, Spotify, TikTok and 9 more), shows you the title, thumbnail and other metadata, and then routes you to a third-party converter site that performs the actual download. Cards marked AUTO-SEND use a verified deep link or form. Cards marked COPY NEEDED cannot be auto-filled — copy the link and paste it on the converter page.',
   },
   {
     q: 'Does YT Convert download or convert files itself?',
@@ -43,7 +43,7 @@ const FAQS: { q: string; a: string }[] = [
   },
   {
     q: 'A converter did not work. What now?',
-    a: 'Converter sites occasionally change domains or go offline. Each converter card shows a live \u201cWorking\u201d / \u201cUnavailable\u201d badge (checked automatically every 15 minutes, with a manual \u201cCheck again\u201d button), so if one is down you can see it before clicking. Clicking a converter sends your link automatically \u2014 pick quality / kbps on the next page. If the box is empty, paste with Ctrl+V (the URL is also auto-copied) and try another converter if it still fails.',
+    a: 'Converter sites occasionally change domains or go offline. Each converter card shows a live \u201cWorking\u201d / \u201cUnavailable\u201d badge (checked automatically every 15 minutes, with a manual \u201cCheck again\u201d button), so if one is down you can see it before clicking. AUTO-SEND converters receive a verified handoff. COPY NEEDED converters open a same-origin copy step, then their landing page — paste the link there if the box is empty.',
   },
   {
     q: 'How do I report a broken or unsafe converter?',

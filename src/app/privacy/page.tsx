@@ -43,8 +43,9 @@ export default function PrivacyPage() {
 
       <Section heading="Third-party converters">
         <p>
-          When you choose a converter, we open its website in a new tab and copy your link to the clipboard so you can
-          paste it there. From that point, the converter&apos;s own privacy policy applies. We recommend reviewing it
+          When you choose a converter, we open a same-origin handoff page. AUTO-SEND converters receive a verified
+          form or deep link. COPY NEEDED converters show your URL so you can copy it and paste on the landing page.
+          From that point, the converter&apos;s own privacy policy applies. We recommend reviewing it
           before pasting anything, as we have no control over those services.
         </p>
       </Section>

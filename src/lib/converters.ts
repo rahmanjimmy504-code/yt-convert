@@ -10,19 +10,20 @@
  * STATUS_CACHE_TTL_MS so page views don't hammer third-party sites.
  */
 
-import type { FormatKey, PlatformKey } from './platforms';
+import { extractYouTubeId, type FormatKey, type PlatformKey } from './platforms';
 
 export type ConverterStatus = 'working' | 'unavailable' | 'unknown';
 
 /**
- * How to hand the user's media URL to a third-party converter so the site
- * can pre-fill (and usually auto-submit) it. Default is `?url=`.
+ * How to hand the user's media URL to a third-party converter.
+ * Default is `clipboard`: we cannot safely auto-fill most third-party sites.
+ * Only verified deep links / forms get a non-clipboard protocol.
  */
 export type ConverterHandoff =
-  | { kind: 'query'; param?: string }
-  | { kind: 'hash'; param?: string }
+  | { kind: 'clipboard' }
+  | { kind: 'query'; param: string; action?: string }
   | { kind: 'prefix'; prefix: string }
-  | { kind: 'tweet-path' }
+  | { kind: 'youtube-id-query'; action: string; param: string }
   | { kind: 'post'; action: string; field: string };
 
 export interface Converter {
@@ -40,7 +41,7 @@ export interface Converter {
    * (Cloudflare 403) so the badge matches what a visitor actually sees.
    */
   status: ConverterStatus;
-  /** How /go attaches the media URL. Omitted = `?url=` query handoff. */
+  /** How /go attaches the media URL. Omitted = clipboard (no guessed params). */
   handoff?: ConverterHandoff;
 }
 
@@ -63,20 +64,20 @@ export interface ConverterCheckResult {
 // Converter catalog lives at module scope: it never changes at runtime, so
 // there is no reason to rebuild the array on every render.
 export const ALL_CONVERTERS: Converter[] = [
-  { name: '9Convert', url: 'https://9convert.org/', desc: 'YouTube to MP3 and MP4. Fast and reliable.', color: 'from-rose-500 to-rose-600', platforms: ['youtube', 'youtubemusic'], formats: ['mp3', 'mp4'], recommended: true, status: 'working' },
+  { name: '9Convert', url: 'https://9convert.org/', desc: 'YouTube to MP3 and MP4. Fast and reliable.', color: 'from-rose-500 to-rose-600', platforms: ['youtube', 'youtubemusic'], formats: ['mp3', 'mp4'], recommended: true, status: 'working', handoff: { kind: 'youtube-id-query', action: 'https://embed.dlsrv.online/v2/full', param: 'videoId' } },
   { name: 'AudioConverter', url: 'https://audioconverter.ai/youtube-to-mp4-converter', desc: 'YouTube to MP4. HD and 4K.', color: 'from-sky-500 to-sky-600', platforms: ['youtube', 'youtubemusic'], formats: ['mp4'], status: 'working' },
   { name: 'Hicoo', url: 'https://hicoo.ai/mp4-converter/youtube-to-mp4', desc: 'YouTube to MP4. 360p to 4K.', color: 'from-emerald-500 to-emerald-600', platforms: ['youtube', 'youtubemusic'], formats: ['mp4'], status: 'working' },
   { name: 'KlickAud', url: 'https://klickaud.org/en15', desc: 'SoundCloud to MP3.', color: 'from-orange-400 to-orange-500', platforms: ['soundcloud'], formats: ['mp3'], recommended: true, status: 'working' },
-  { name: 'SSSTik', url: 'https://ssstik.io/', desc: 'X/Twitter video downloader.', color: 'from-sky-400 to-sky-500', platforms: ['twitter'], formats: ['mp4'], recommended: true, status: 'working' },
-  { name: 'Twitsave', url: 'https://twitsave.com/en', desc: 'Save X/Twitter videos in HD.', color: 'from-indigo-500 to-indigo-600', platforms: ['twitter'], formats: ['mp4'], status: 'working', handoff: { kind: 'tweet-path' } },
+  { name: 'Twitsave', url: 'https://twitsave.com/en', desc: 'Save X/Twitter videos in HD.', color: 'from-indigo-500 to-indigo-600', platforms: ['twitter'], formats: ['mp4'], status: 'working', handoff: { kind: 'query', param: 'url', action: 'https://twitsave.com/info' } },
   { name: 'SaveInsta', url: 'https://saveinsta.to/en1', desc: 'Instagram photos, videos, reels, stories, and highlights.', color: 'from-pink-400 to-pink-500', platforms: ['instagram'], formats: ['mp4'], recommended: true, status: 'working' },
   { name: 'FastDL', url: 'https://fastdl.app/en4', desc: 'Instagram videos, photos, reels, stories, and highlights.', color: 'from-purple-500 to-purple-600', platforms: ['instagram'], formats: ['mp4'], status: 'working', handoff: { kind: 'prefix', prefix: 'https://f-d.app/' } },
   { name: 'SpotDown', url: 'https://spotdown.org/', desc: 'Spotify tracks to MP3.', color: 'from-green-500 to-green-600', platforms: ['spotify'], formats: ['mp3'], recommended: true, status: 'working' },
   { name: 'Lucida', url: 'https://lucida.to/', desc: 'Amazon Music and Deezer audio downloads.', color: 'from-sky-500 to-sky-600', platforms: ['deezer', 'amazonmusic'], formats: ['mp3'], recommended: true, status: 'working', handoff: { kind: 'query', param: 'url' } },
   { name: 'AM Downloader', url: 'https://apple-music-downloader.com/', desc: 'Apple Music to MP3.', color: 'from-gray-600 to-gray-800', platforms: ['applemusic'], formats: ['mp3'], recommended: true, status: 'working' },
+  { name: 'SSSTik', url: 'https://ssstik.io/', desc: 'TikTok videos without watermark.', color: 'from-sky-400 to-sky-500', platforms: ['tiktok'], formats: ['mp4'], recommended: true, status: 'working' },
   { name: 'TTSave', url: 'https://ttsave.app/', desc: 'TikTok videos without watermark.', color: 'from-pink-500 to-pink-600', platforms: ['tiktok'], formats: ['mp4'], recommended: true, status: 'working' },
   { name: 'SnapTik', url: 'https://snaptik.app/en3', desc: 'TikTok to MP4, no watermark.', color: 'from-cyan-500 to-cyan-600', platforms: ['tiktok'], formats: ['mp4'], status: 'working' },
-  { name: 'FBDown', url: 'https://fdown.net/', desc: 'Facebook videos in HD.', color: 'from-blue-600 to-blue-700', platforms: ['facebook'], formats: ['mp4'], recommended: true, status: 'working', handoff: { kind: 'post', action: 'https://fdown.net/', field: 'URLz' } },
+  { name: 'FBDown', url: 'https://fdown.net/', desc: 'Facebook videos in HD.', color: 'from-blue-600 to-blue-700', platforms: ['facebook'], formats: ['mp4'], recommended: true, status: 'working', handoff: { kind: 'post', action: 'https://fdown.net/download.php', field: 'URLz' } },
   { name: 'VDFR', url: 'https://vdfr.app/snapchat-video-downloader', desc: 'Download Snapchat videos.', color: 'from-yellow-400 to-yellow-500', platforms: ['snapchat'], formats: ['mp4'], recommended: true, status: 'unavailable' },
   { name: 'ViewSnapStories', url: 'https://viewsnapstories.com/video-downloader', desc: 'Save Snapchat videos fast.', color: 'from-yellow-500 to-yellow-600', platforms: ['snapchat'], formats: ['mp4'], status: 'working' },
 ];
@@ -86,7 +87,12 @@ export function getConverterByName(name: string): Converter | undefined {
 }
 
 export function getConverterHandoff(converter: Converter): ConverterHandoff {
-  return converter.handoff ?? { kind: 'query', param: 'url' };
+  return converter.handoff ?? { kind: 'clipboard' };
+}
+
+/** True only when a verified deep-link / form protocol is configured. */
+export function hasAutomaticHandoff(converter: Converter): boolean {
+  return getConverterHandoff(converter).kind !== 'clipboard';
 }
 
 /** Media URLs we are willing to forward to a third-party converter. */
@@ -109,38 +115,24 @@ export function buildConverterLaunchUrl(converter: Converter, mediaUrl: string):
   switch (handoff.kind) {
     case 'prefix':
       return `${handoff.prefix}${mediaUrl}`;
-    case 'tweet-path': {
-      // Twitsave consumes the original /user/status/id path. Its landing page
-      // ignores ?url= entirely, so preserve only a real tweet path and use the
-      // normal query/hash fallback for unusual X links.
-      const source = new URL(mediaUrl);
-      const tweetPath = source.pathname.match(/^\/([^/]+)\/status\/(\d+)(?:\/|$)/i);
-      if (tweetPath) {
-        return `${new URL(converter.url).origin}/${tweetPath[1]}/status/${tweetPath[2]}`;
-      }
-      break;
+    case 'youtube-id-query': {
+      const videoId = extractYouTubeId(mediaUrl);
+      if (!videoId) return converter.url;
+      const target = new URL(handoff.action);
+      target.searchParams.set(handoff.param, videoId);
+      return target.toString();
     }
-    case 'hash': {
-      const base = converter.url.replace(/#.*$/, '');
-      return `${base}#${handoff.param || 'url'}=${encodeURIComponent(mediaUrl)}`;
+    case 'query': {
+      const target = new URL(handoff.action || converter.url);
+      target.searchParams.set(handoff.param, mediaUrl);
+      return target.toString();
     }
     case 'post':
       return handoff.action;
-    case 'query':
+    case 'clipboard':
     default:
-      break;
+      return converter.url;
   }
-
-  // Converter sites vary between reading the query string and the fragment.
-  // Include both: the encoded query is conventional, while the raw fragment
-  // is also available to client-side apps without ever being sent to a server.
-  const target = new URL(converter.url);
-  target.searchParams.set(
-    handoff.kind === 'query' ? handoff.param || 'url' : 'url',
-    mediaUrl,
-  );
-  target.hash = mediaUrl;
-  return target.toString();
 }
 
 /** Same-origin /go path that validates the converter then hands off. */

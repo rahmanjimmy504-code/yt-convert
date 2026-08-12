@@ -1,12 +1,13 @@
 'use client';
 
-import { Suspense, useEffect, useMemo, useRef, type ReactNode } from 'react';
+import { Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import {
   buildConverterLaunchUrl,
   getConverterByName,
   getConverterHandoff,
+  hasAutomaticHandoff,
   isSafeHandoffMediaUrl,
   isSafePostHandoff,
 } from '@/lib/converters';
@@ -33,6 +34,24 @@ function LoadingHandoff({ converterName }: { converterName?: string }) {
   );
 }
 
+function copyWithFallback(text: string, input: HTMLInputElement | null): boolean {
+  try {
+    if (navigator.clipboard?.writeText) {
+      void navigator.clipboard.writeText(text);
+    }
+  } catch {
+    // fall through to execCommand
+  }
+  if (!input) return false;
+  input.focus();
+  input.select();
+  try {
+    return document.execCommand('copy');
+  } catch {
+    return false;
+  }
+}
+
 function GoHandoff() {
   const searchParams = useSearchParams();
   const converterName = (searchParams.get('c') || '').trim();
@@ -43,6 +62,7 @@ function GoHandoff() {
     () => (converter ? getConverterHandoff(converter) : null),
     [converter],
   );
+  const automatic = Boolean(converter && hasAutomaticHandoff(converter));
   const unsafePost = Boolean(
     converter && handoff?.kind === 'post' && !isSafePostHandoff(converter, handoff.action),
   );
@@ -51,50 +71,37 @@ function GoHandoff() {
     [converter, mediaUrl, safeMediaUrl],
   );
   const formRef = useRef<HTMLFormElement>(null);
-  const activeRequestRef = useRef('');
+  const urlInputRef = useRef<HTMLInputElement>(null);
   const completedRef = useRef(false);
+  const [copyHint, setCopyHint] = useState('');
 
   useEffect(() => {
     if (!converter || !handoff || !safeMediaUrl || unsafePost || !destination) return;
-
-    const requestKey = `${converter.name}\n${mediaUrl}`;
-    if (activeRequestRef.current !== requestKey) {
-      activeRequestRef.current = requestKey;
-      completedRef.current = false;
+    if (!automatic) return;
+    if (completedRef.current) return;
+    completedRef.current = true;
+    if (handoff.kind === 'post') {
+      formRef.current?.submit();
+    } else {
+      window.location.replace(destination);
     }
+  }, [automatic, converter, destination, handoff, safeMediaUrl, unsafePost]);
 
-    let disposed = false;
-    const continueToConverter = () => {
-      if (disposed || completedRef.current) return;
-      completedRef.current = true;
-      if (handoff.kind === 'post') {
-        formRef.current?.submit();
-      } else {
-        window.location.replace(destination);
-      }
-    };
-
-    // Try the clipboard once more in the newly-opened tab. The opener already
-    // starts the same write during the click, but this protects users whose
-    // browser changes focus before that promise settles. Never let a clipboard
-    // permission prompt hold the converter handoff for more than a moment.
-    const fallbackTimer = window.setTimeout(continueToConverter, 500);
-    try {
-      const copy = navigator.clipboard?.writeText(mediaUrl);
-      if (copy) {
-        void copy.then(continueToConverter, continueToConverter);
-      } else {
-        continueToConverter();
-      }
-    } catch {
-      continueToConverter();
+  const continueAfterCopy = async () => {
+    if (!converter || !destination) return;
+    const copied = await copyWithFallback(mediaUrl, urlInputRef.current);
+    setCopyHint(
+      copied
+        ? 'Link copied. Opening the converter…'
+        : 'Could not copy automatically. Select the link above, copy it, then continue.',
+    );
+    if (copied) {
+      window.location.assign(converter.url);
+      return;
     }
-
-    return () => {
-      disposed = true;
-      window.clearTimeout(fallbackTimer);
-    };
-  }, [converter, destination, handoff, mediaUrl, safeMediaUrl, unsafePost]);
+    urlInputRef.current?.focus();
+    urlInputRef.current?.select();
+  };
 
   if (!converter || !safeMediaUrl) {
     return (
@@ -121,6 +128,36 @@ function GoHandoff() {
         <Link href="/" className="text-sm font-medium text-red-600">
           Back to YT Convert
         </Link>
+      </Shell>
+    );
+  }
+
+  if (!automatic) {
+    return (
+      <Shell>
+        <p className="text-[10px] font-bold tracking-wide text-amber-600">COPY NEEDED</p>
+        <h1 className="font-semibold text-sm">Copy your link, then open {converter.name}</h1>
+        <p className="text-xs text-gray-500">
+          This converter has no verified auto-fill. Copy the link, then paste it on the next page.
+        </p>
+        <input
+          ref={urlInputRef}
+          readOnly
+          value={mediaUrl}
+          onFocus={e => e.currentTarget.select()}
+          className="w-full h-10 px-3 rounded-xl border border-gray-300 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-xs font-mono"
+        />
+        <button
+          type="button"
+          onClick={continueAfterCopy}
+          className="w-full h-10 rounded-xl bg-gradient-to-r from-red-500 to-red-600 text-white text-sm font-semibold"
+        >
+          Copy link and continue
+        </button>
+        {copyHint && <p className="text-xs text-gray-500">{copyHint}</p>}
+        <a href={converter.url} className="text-xs text-red-600 font-medium">
+          Open {converter.name} without copying
+        </a>
       </Shell>
     );
   }
