@@ -90,6 +90,14 @@ export interface InnertubeClient {
   userAgent: string;
   clientId: string;
   extra?: Record<string, unknown>;
+  /**
+   * When true, the request body includes `context.thirdParty.embedUrl` so
+   * YouTube treats this as an embedded player request. Embedded players on
+   * smart TVs / game consoles don't have login flows, so YouTube does not
+   * enforce age-gate / LOGIN_REQUIRED on them — this is the automatic
+   * bypass for age-restricted videos that would otherwise need cookies.
+   */
+  embed?: boolean;
 }
 
 /**
@@ -156,6 +164,24 @@ export const INNERTUBE_CLIENTS: InnertubeClient[] = [
       deviceModel: 'RealityDevice17,1',
       osName: 'visionOS',
       osVersion: '26.5.23O471',
+    },
+  },
+  {
+    // TV embedded player: YouTube does not enforce age-gate / LOGIN_REQUIRED
+    // on smart-TV embedded players because they have no login flow. This is
+    // the automatic bypass for age-restricted videos — tried last so it only
+    // fires when every direct client already refused. Versions and UA follow
+    // yt-dlp's TVHTML5_SIMPLY_EMBEDDED_PLAYER entry (verified 2026-08-12).
+    name: 'tv_embedded',
+    clientName: 'TVHTML5_SIMPLY_EMBEDDED_PLAYER',
+    clientVersion: '2.0',
+    userAgent:
+      'Mozilla/5.0 (ChromiumStylePlatform) Cobalt/24.lts.3.101228 (unlike Gecko) v8/10.8.168.26-starboard.25 gles Starboard/15, like Gecko)',
+    clientId: '85',
+    embed: true,
+    extra: {
+      platform: 'DESKTOP',
+      clientFormFactor: 'UNKNOWN_FORM_FACTOR',
     },
   },
 ];
@@ -287,6 +313,25 @@ export async function innertubeFormats(
         // PO-token emulation); YouTube accepts bare cookies without SAPISIDHASH
         // for most age-gate bypasses on the player endpoint.
       }
+      // Build the Innertube context. Embed clients (TVHTML5_SIMPLY_EMBEDDED_PLAYER)
+      // need `thirdParty.embedUrl` so YouTube treats the request as coming from
+      // an embedded player — this is what bypasses the age gate automatically.
+      const context: Record<string, unknown> = {
+        client: {
+          clientName: client.clientName,
+          clientVersion: client.clientVersion,
+          hl: 'en',
+          gl: 'US',
+          utcOffsetMinutes: 0,
+          userAgent: client.userAgent,
+          ...(client.extra || {}),
+        },
+      };
+      if (client.embed) {
+        context.thirdParty = {
+          embedUrl: `https://www.youtube.com/watch?v=${videoId}`,
+        };
+      }
       const response = await fetch('https://www.youtube.com/youtubei/v1/player?prettyPrint=false', {
         method: 'POST',
         headers,
@@ -294,17 +339,7 @@ export async function innertubeFormats(
           videoId,
           contentCheckOk: true,
           racyCheckOk: true,
-          context: {
-            client: {
-              clientName: client.clientName,
-              clientVersion: client.clientVersion,
-              hl: 'en',
-              gl: 'US',
-              utcOffsetMinutes: 0,
-              userAgent: client.userAgent,
-              ...(client.extra || {}),
-            },
-          },
+          context,
         }),
         signal: AbortSignal.timeout(PLAYER_TIMEOUT_MS),
       });
