@@ -6,8 +6,17 @@
  *   1. innertubeFormats() returns formats with direct googlevideo.com URLs,
  *   2. pickYouTubeFormat() picks a progressive MP4 for mp4 and audio-only
  *      m4a for mp3, honouring the quality picker,
- *   3. the chosen URL passes isAllowedMediaUrl(),
- *   4. a real byte-range GET against that URL returns 200/206 with data.
+ *   3. planVideoDownload() honestly reports what each quality request needs
+ *      ('progressive' when a single file meets it, 'mux' when the height only
+ *      exists as separate video + audio tracks), and the picker delivers the
+ *      closest single-file stream — no silent downgrade claims,
+ *   4. the chosen URL passes isAllowedMediaUrl(),
+ *   5. a real byte-range GET against that URL returns 200/206 with data.
+ *
+ * Reality check (2026-08-12): YouTube publishes exactly ONE progressive MP4
+ * per video (itag 18, 360p); everything above 360p is adaptive-only, so the
+ * mp4 picker is EXPECTED to deliver 360p for best/1080/720/480 until the
+ * mux plan (docs/hd-muxing-proposal.md) lands.
  *
  * Usage:
  *   npm run verify:youtube
@@ -39,7 +48,7 @@ import {
   invidiousFormats,
   playabilityMessage,
 } from '../src/lib/extract.ts';
-import { extensionForMime, pickYouTubeFormat } from '../src/lib/youtube-formats.ts';
+import { extensionForMime, pickYouTubeFormat, planVideoDownload } from '../src/lib/youtube-formats.ts';
 import { isAllowedMediaUrl } from '../src/lib/media-hosts.ts';
 import { extractYouTubeId } from '../src/lib/platforms.ts';
 
@@ -137,27 +146,55 @@ if (!formats.length) {
 const allGoogle = formats.every(f => /(^|\.)googlevideo\.com/.test(new URL(f.url).hostname));
 check(allGoogle, 'every returned format URL is on googlevideo.com');
 
-/* -- 3. Picker + allowlist + real range request -- */
+/* -- 3. Picker + plan honesty + allowlist + real range request -- */
 const cases = [
   { kind: 'video', quality: 'best', expectExt: 'mp4' },
+  { kind: 'video', quality: '1080', expectExt: 'mp4' },
   { kind: 'video', quality: '720', expectExt: 'mp4' },
   { kind: 'video', quality: '360', expectExt: 'mp4' },
   { kind: 'audio', quality: 'best', expectExt: /m4a|mp3|webm/ },
   { kind: 'audio', quality: '128', expectExt: /m4a|mp3|webm/ },
 ];
 
-console.log('\n--- pickYouTubeFormat() + isAllowedMediaUrl() + live range GET ---');
+const labelOf = f =>
+  f.qualityLabel ||
+  (f.height ? `${f.height}p` : `${Math.round((f.bitrate || 0) / 1000)}kbps`);
+
+console.log('\n--- pickYouTubeFormat() + planVideoDownload() + isAllowedMediaUrl() + live range GET ---');
 for (const c of cases) {
   const picked = pickYouTubeFormat(formats, c.kind, c.quality);
   if (!check(Boolean(picked?.url), `pick ${c.kind}/${c.quality}`, picked ? '' : 'nothing picked')) continue;
 
   const mime = picked.mimeType || '';
   const ext = extensionForMime(mime, c.kind === 'video' ? 'mp4' : 'm4a');
-  const label = `itag=${picked.itag} ${picked.qualityLabel || Math.round((picked.bitrate || 0) / 1000) + 'kbps'} ${mime.split(';')[0]} .${ext}`;
+  const label = `itag=${picked.itag} ${labelOf(picked)} ${mime.split(';')[0]} .${ext}`;
 
   if (c.kind === 'video') {
     check(/video\/mp4/.test(mime), `  ${c.kind}/${c.quality} is a progressive MP4`, label);
     check(ext === 'mp4', `  ${c.kind}/${c.quality} extension is .mp4 (never mislabeled)`, `.${ext}`);
+
+    // Phase 1 honesty: the plan must match reality. A request that only
+    // exists as separate video + audio tracks is reported as 'mux' (not
+    // silently served), and the picker delivers the closest single-file
+    // stream, which is below the target in that case.
+    const plan = planVideoDownload(formats, c.quality);
+    if (check(Boolean(plan), `  ${c.kind}/${c.quality} has a download plan`, plan ? '' : 'nothing planable')) {
+      if (plan.kind === 'mux') {
+        const maxHeight = Math.max(0, ...formats.map(f => f.height || 0));
+        const target = /^\d+$/.test(c.quality) ? parseInt(c.quality, 10) : maxHeight;
+        check(
+          (picked.height || 0) < target,
+          `  ${c.kind}/${c.quality} honestly reports mux-needed — single-file delivers ${picked.height || '?'}p`,
+          `combining video-only ${labelOf(plan.video)} + audio (${Math.round((plan.audio?.bitrate || 0) / 1000)}kbps) would be needed`,
+        );
+      } else {
+        check(
+          plan.video.url === picked.url,
+          `  ${c.kind}/${c.quality} plan matches the pick`,
+          `plan=${labelOf(plan.video)}`,
+        );
+      }
+    }
   } else {
     check(/audio\//.test(mime), `  ${c.kind}/${c.quality} is audio-only`, label);
     check(
