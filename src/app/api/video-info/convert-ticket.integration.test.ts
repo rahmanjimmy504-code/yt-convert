@@ -127,11 +127,22 @@ describe('convert ticket flow (integration)', () => {
   it('issues a convert ticket for a convertible platform after CAPTCHA', async () => {
     const res = await lookup(uniqueUrl(), mintCaptchaToken());
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { canConvert?: boolean; convertTicket?: string; convertReason?: string };
+    const body = (await res.json()) as {
+      canConvert?: boolean;
+      convertTicket?: string;
+      convertReason?: string;
+      videoQualityPlans?: Array<{ quality: string; kind: string }>;
+    };
     expect(body.canConvert).toBe(true);
     expect(typeof body.convertTicket).toBe('string');
     expect((body.convertTicket || '').length).toBeGreaterThan(10);
     expect(body.convertReason).toBeUndefined();
+    // Phase 0: the result card gets a per-option quality plan so it can stop
+    // silently downgrading. The mocked ladder (720p progressive + AAC audio)
+    // is satisfied by the single progressive file for every option.
+    expect(Array.isArray(body.videoQualityPlans)).toBe(true);
+    expect(body.videoQualityPlans?.map(p => p.quality)).toEqual(['best', '1080', '720', '480', '360']);
+    expect(body.videoQualityPlans?.every(p => p.kind === 'progressive')).toBe(true);
   });
 
   it('rejects /api/convert without a ticket (403)', async () => {

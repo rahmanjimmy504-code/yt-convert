@@ -15,6 +15,7 @@ import {
   EyeOff,
   Film,
   Flag,
+  Info,
   Keyboard,
   Link as LinkIcon,
   Moon,
@@ -39,8 +40,8 @@ import {
 import { ALL_CONVERTERS, converterGoPath, hasAutomaticHandoff, type Converter, type ConverterCheckResult } from '@/lib/converters';
 import { getEmbed } from '@/lib/embed';
 import { OPEN_COOKIE_PREFERENCES_EVENT } from '@/lib/cookies';
-import { deriveDownloadPanelState } from '@/lib/download-panel';
-import { AUDIO_KBPS_OPTIONS, VIDEO_QUALITY_OPTIONS } from '@/lib/youtube-formats';
+import { deriveDownloadPanelState, qualityDowngradeNote } from '@/lib/download-panel';
+import { AUDIO_KBPS_OPTIONS, VIDEO_QUALITY_OPTIONS, type VideoQualityPlan } from '@/lib/youtube-formats';
 import Captcha from '@/components/captcha';
 
 type Phase = 'input' | 'loading' | 'ready' | 'error';
@@ -56,6 +57,11 @@ interface VideoInfo {
   canConvert?: boolean;
   convertReason?: string;
   convertTicket?: string;
+  /**
+   * YouTube only: what each video-quality option would require today. Lets
+   * the result card stop silently downgrading (e.g. 1080p delivered as 360p).
+   */
+  videoQualityPlans?: VideoQualityPlan[];
 }
 
 interface HistoryItem {
@@ -628,6 +634,12 @@ export default function Home() {
     Boolean(videoInfo?.convertTicket),
   );
 
+  // Phase 0 (no silent downgrades): if the selected video quality cannot be
+  // met by a single progressive file, the server told us so in
+  // `videoQualityPlans` — surface an honest notice on the result card.
+  const videoPlan = videoInfo?.videoQualityPlans?.find(p => p.quality === videoQuality) ?? null;
+  const videoPlanNote = videoPlan ? qualityDowngradeNote(videoPlan, videoQuality) : null;
+
   // Converter availability: live probe when it has landed, otherwise the
   // curated catalog badge so cards don't flash "Checking…" for known status.
   const badgeFor = (c: Converter) => {
@@ -854,6 +866,12 @@ export default function Home() {
                           </button>
                         ))}
                       </div>
+                      {videoPlanNote && (
+                        <p role="status" className="mt-2 flex items-start gap-1.5 text-[11px] text-amber-800 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/30 border border-amber-300/60 dark:border-amber-800/60 rounded-lg px-2.5 py-2">
+                          <Info className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
+                          <span>{videoPlanNote}</span>
+                        </p>
+                      )}
                     </div>
                   )}
 

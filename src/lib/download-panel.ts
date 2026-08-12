@@ -7,6 +7,7 @@ import {
   convertUnavailableReason,
   type PlatformKey,
 } from './platforms';
+import type { VideoQualityPlan } from './youtube-formats';
 
 export type DownloadPanelState =
   /** Platform is convertible and a fresh ticket is present: button is live. */
@@ -41,4 +42,39 @@ export function deriveDownloadPanelState(
     return { kind: 'unavailable', reason: convertUnavailableReason(platform as PlatformKey) };
   }
   return hasTicket ? { kind: 'ready' } : { kind: 'no-ticket' };
+}
+
+/**
+ * Honest Phase 0 notice for the first-party MP4 quality picker.
+ *
+ * Returns a message when the requested quality cannot be delivered as a
+ * single progressive file today (so the UI never silently downgrades), or
+ * null when the selection is met — or when nothing is known (no plan).
+ *
+ * `plan.height` is the height the current single-file download actually
+ * delivers, which may be below what the user asked for.
+ */
+export function qualityDowngradeNote(plan: VideoQualityPlan | undefined, quality: string): string | null {
+  if (!plan) return null;
+  const numeric = /^\d+$/.test(quality);
+  const label = numeric ? `${quality}p` : 'Best quality';
+  const delivered = plan.height || 0;
+
+  if (plan.kind === 'mux') {
+    // The requested height only exists as separate video + audio tracks, and
+    // combining them is not implemented yet (see docs/hd-muxing-proposal.md).
+    const got = delivered ? ` The closest single-file stream (${delivered}p) will be used for now.` : '';
+    return `${label} needs combining separate video + audio tracks — not available yet.${got}`;
+  }
+  if (plan.kind === 'none') {
+    return `${label} is not available for this video right now.`;
+  }
+  // A progressive plan that still misses the target: nothing better exists
+  // (no adaptive tracks to combine), so say what ships instead.
+  const requested = numeric ? parseInt(quality, 10) : delivered;
+  if (delivered < requested) {
+    if (delivered === 0) return `${label} is not available as a single file for this video right now.`;
+    return `${label} is not available as a single file for this video — the highest available stream is ${delivered}p.`;
+  }
+  return null;
 }

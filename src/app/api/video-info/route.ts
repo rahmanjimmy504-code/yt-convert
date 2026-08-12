@@ -8,9 +8,11 @@ import {
 } from '@/lib/platforms';
 import { verifyCaptchaToken } from '@/lib/captcha';
 import { issueConvertTicket } from '@/lib/convert-ticket';
+import { innertubeFormats } from '@/lib/extract';
 import { INVIDIOUS_INSTANCES, invidiousVideoUrl } from '@/lib/invidious';
 import { clientIp } from '@/lib/rate-limit';
 import { recordEvent } from '@/lib/stats';
+import { videoQualityPlans, type VideoQualityPlan } from '@/lib/youtube-formats';
 
 export const runtime = 'nodejs';
 
@@ -25,6 +27,15 @@ export interface VideoInfo {
   canConvert?: boolean;
   convertReason?: string;
   convertTicket?: string;
+  /**
+   * YouTube only: per video-quality option, what the first-party download
+   * would require today ('progressive' = a single file meets it, 'mux' = the
+   * height only exists as separate video + audio tracks that we cannot
+   * combine yet, 'none' = unavailable). `height` is what the current
+   * single-file download actually delivers. Undefined when the streaming API
+   * could not be reached in time — the result card then shows no note.
+   */
+  videoQualityPlans?: VideoQualityPlan[];
 }
 
 const UA = { 'User-Agent': 'Mozilla/5.0 (compatible; YTConvert/1.0)' };
@@ -163,6 +174,25 @@ async function fetchOEmbed(endpoint: string): Promise<Record<string, unknown>> {
   }
 }
 
+/**
+ * Resolve `promise` unless it takes longer than `ms`, in which case return
+ * `null` instead. Used for advisory work (e.g. format availability) that must
+ * never delay the primary metadata response.
+ */
+async function resolveWithin<T>(promise: Promise<T>, ms: number): Promise<T | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<null>(resolve => {
+        timer = setTimeout(() => resolve(null), ms);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 async function fetchYouTube(platform: PlatformKey, rawUrl: string): Promise<VideoInfo> {
   const id = extractYouTubeId(rawUrl);
   const info: VideoInfo = { title: '', author: '', thumbnail: '', duration: '', views: '', published: '', platform };
@@ -182,8 +212,18 @@ async function fetchYouTube(platform: PlatformKey, rawUrl: string): Promise<Vide
     }
     return null;
   })();
+  // Phase 0 (stop silently downgrading): find out what each video-quality
+  // option would require today. Advisory — the download re-runs extraction at
+  // convert time — and capped so a slow/blocked streaming API can never delay
+  // metadata (the result card then simply shows no downgrade note).
+  const plansP = id
+    ? resolveWithin(innertubeFormats(id), 8000).then(result =>
+        result && result.formats.length > 0 ? videoQualityPlans(result.formats) : undefined,
+      )
+    : Promise.resolve(undefined);
 
-  const [oembed, invidious] = await Promise.all([oembedP, invidiousP]);
+  const [oembed, invidious, plans] = await Promise.all([oembedP, invidiousP, plansP]);
+  if (plans) info.videoQualityPlans = plans;
 
   if (oembed.title) info.title = clean(oembed.title, 200);
   if (oembed.author_name) info.author = clean(oembed.author_name, 120);

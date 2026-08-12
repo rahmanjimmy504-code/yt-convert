@@ -39,6 +39,12 @@ function isProgressiveMp4(format: PlayerFormat): boolean {
   return /video\/mp4/i.test(mime) && hasAudio(format) && !/audio\/only/i.test(mime);
 }
 
+/** A video-only adaptive MP4: H.264 video with no audio track of its own. */
+function isVideoOnlyMp4(format: PlayerFormat): boolean {
+  const mime = mimeOf(format);
+  return /video\/mp4/i.test(mime) && !hasAudio(format);
+}
+
 function isAudioOnly(format: PlayerFormat): boolean {
   const mime = mimeOf(format);
   if (/video\//i.test(mime)) return false;
@@ -101,6 +107,23 @@ function pickClosestBitrate(list: PlayerFormat[], targetKbps: number): PlayerFor
   return above[0];
 }
 
+/**
+ * Best progressive MP4 for a quality selection, mirroring the picker rules:
+ * 'best' (or unrecognized) → highest; numeric → closest height at-or-below,
+ * else the lowest available (closest above).
+ */
+function pickProgressiveForQuality(progressive: PlayerFormat[], quality: string): PlayerFormat | null {
+  if (quality === 'best' || !/^\d+$/.test(quality)) {
+    progressive.sort((a, b) => {
+      const h = (b.height || 0) - (a.height || 0);
+      if (h) return h;
+      return (b.bitrate || 0) - (a.bitrate || 0);
+    });
+    return progressive[0] ?? null;
+  }
+  return pickClosestHeight(progressive, parseInt(quality, 10));
+}
+
 export function pickYouTubeFormat(
   formats: PlayerFormat[],
   kind: 'audio' | 'video',
@@ -108,17 +131,7 @@ export function pickYouTubeFormat(
 ): PlayerFormat | null {
   const usable = formats.filter(f => typeof f.url === 'string' && isGoogleVideoUrl(f.url));
   if (kind === 'video') {
-    const progressive = usable.filter(isProgressiveMp4);
-    if (progressive.length === 0) return null;
-    if (quality === 'best' || !/^\d+$/.test(quality)) {
-      progressive.sort((a, b) => {
-        const h = (b.height || 0) - (a.height || 0);
-        if (h) return h;
-        return (b.bitrate || 0) - (a.bitrate || 0);
-      });
-      return progressive[0];
-    }
-    return pickClosestHeight(progressive, parseInt(quality, 10));
+    return pickProgressiveForQuality(usable.filter(isProgressiveMp4), quality);
   }
 
   const audio = usable.filter(isAudioOnly);
@@ -130,6 +143,101 @@ export function pickYouTubeFormat(
     return pool[0];
   }
   return pickClosestBitrate(pool, parseInt(quality, 10));
+}
+
+/**
+ * What it would take to honour a video quality request with the formats on
+ * hand. Phase 1: pure selection logic only — nothing here spawns a binary or
+ * changes what pickYouTubeFormat() returns. The result card uses this to stop
+ * silently downgrading ("you asked for 1080p, here is 360p").
+ *
+ * - kind 'progressive': a single progressive MP4 already meets the target.
+ *   Zero cost; identical to today's download.
+ * - kind 'mux': the target only exists as separate video-only + audio-only
+ *   adaptive tracks. `video` is the best H.264 (avc1) video-only MP4 at or
+ *   below the target (avc1 preferred over vp9/av01 so a later stream-copy
+ *   remux stays valid in MP4) and `audio` is the best AAC audio-only track.
+ * - null: nothing usable was found at all.
+ *
+ * When a mux cannot be assembled (no video-only track or no audio track),
+ * the plan falls back to the progressive stream rather than planning a
+ * silent or impossible download.
+ */
+export interface MuxPlan {
+  kind: 'progressive' | 'mux';
+  video: PlayerFormat;
+  audio?: PlayerFormat;
+}
+
+/** Highest height available across the usable formats (0 when unknown). */
+function maxHeight(usable: PlayerFormat[]): number {
+  return usable.reduce((max, f) => Math.max(max, f.height || 0), 0);
+}
+
+export function planVideoDownload(formats: PlayerFormat[], quality: string): MuxPlan | null {
+  const usable = formats.filter(f => typeof f.url === 'string' && isGoogleVideoUrl(f.url));
+  if (usable.length === 0) return null;
+
+  const progressive = usable.filter(isProgressiveMp4);
+  const progressivePick = pickProgressiveForQuality(progressive, quality);
+
+  // The target the user asked for: the numeric height, or — for 'best' — the
+  // best height any usable format offers.
+  const numeric = /^\d+$/.test(quality);
+  const target = numeric ? parseInt(quality, 10) : maxHeight(usable);
+
+  // Zero-cost path: a single progressive MP4 already meets the target.
+  if (progressivePick && (progressivePick.height || 0) >= target) {
+    return { kind: 'progressive', video: progressivePick };
+  }
+
+  // Mux path: best video-only avc1 MP4 at or below the target, paired with
+  // the best AAC audio-only track.
+  const videoOnly = usable.filter(isVideoOnlyMp4);
+  const avc1 = videoOnly.filter(f => /avc1/i.test(mimeOf(f)));
+  const videoPool = avc1.length > 0 ? avc1 : videoOnly;
+  const videoPick = videoPool.length > 0 ? pickClosestHeight(videoPool, target) : null;
+
+  const audioOnly = usable.filter(isAudioOnly);
+  const m4a = audioOnly.filter(isM4a);
+  const audioPool = m4a.length > 0 ? m4a : audioOnly;
+  const audioPick =
+    audioPool.length > 0 ? [...audioPool].sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0))[0] : null;
+
+  if (videoPick && audioPick) {
+    return { kind: 'mux', video: videoPick, audio: audioPick };
+  }
+
+  // No way to pair audio with a video-only track: fall back to the
+  // progressive stream rather than planning a silent video.
+  return progressivePick ? { kind: 'progressive', video: progressivePick } : null;
+}
+
+/**
+ * Per-option summary of what each VIDEO_QUALITY_OPTIONS entry would require,
+ * shipped to the result card so it can stop silently downgrading.
+ *
+ * `height` is the height the *current single-file download* delivers (the
+ * progressive pick), which is what the user actually receives today.
+ */
+export interface VideoQualityPlan {
+  quality: VideoQuality;
+  kind: 'progressive' | 'mux' | 'none';
+  height?: number;
+}
+
+export function videoQualityPlans(formats: PlayerFormat[]): VideoQualityPlan[] {
+  return VIDEO_QUALITY_OPTIONS.map(quality => {
+    const plan = planVideoDownload(formats, quality);
+    if (!plan) return { quality, kind: 'none' };
+    if (plan.kind === 'progressive') {
+      return { quality, kind: 'progressive', height: plan.video.height || undefined };
+    }
+    // A mux is what would be needed; the single-file download delivers the
+    // closest progressive stream (and may not exist at all).
+    const delivered = pickYouTubeFormat(formats, 'video', quality);
+    return { quality, kind: 'mux', height: delivered?.height || undefined };
+  });
 }
 
 /** File extension that matches the real container. Never labels AAC as .mp3. */
