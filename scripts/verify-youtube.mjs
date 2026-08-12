@@ -49,7 +49,7 @@ import {
   playabilityMessage,
 } from '../src/lib/extract.ts';
 import { pipedFormats } from '../src/lib/piped.ts';
-import { extensionForMime, pickYouTubeFormat, planVideoDownload } from '../src/lib/youtube-formats.ts';
+import { extensionForMime, isUsableFormatUrl, pickYouTubeFormat, planVideoDownload } from '../src/lib/youtube-formats.ts';
 import { isAllowedMediaUrl } from '../src/lib/media-hosts.ts';
 import { extractYouTubeId } from '../src/lib/platforms.ts';
 
