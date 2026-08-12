@@ -82,40 +82,136 @@ function jsonStringField(source: string, key: string): string {
 /* YouTube / YT Music                                                         */
 /* -------------------------------------------------------------------------- */
 
-interface InnertubeClient {
-  clientName: 'ANDROID' | 'IOS';
+export interface InnertubeClient {
+  /** Label used in logs/tests. */
+  name: string;
+  clientName: string;
   clientVersion: string;
   userAgent: string;
   clientId: string;
   extra?: Record<string, unknown>;
 }
 
-const INNERTUBE_CLIENTS: InnertubeClient[] = [
+/**
+ * Innertube clients that still hand back *direct* `url` fields (no
+ * signatureCipher), so we never need to run YouTube's player JS to decipher a
+ * signature or the throttling `n` parameter.
+ *
+ * Versions are kept in step with yt-dlp's `INNERTUBE_CLIENTS` table, which is
+ * the most actively maintained public source of working client versions.
+ * ANDROID_TESTSUITE was deliberately NOT included: YouTube retired it and
+ * yt-dlp dropped it, so it is a guaranteed-dead request on every lookup.
+ *
+ * Ordering matters — the first client that reports playabilityStatus OK *and*
+ * exposes at least one direct URL wins.
+ */
+export const INNERTUBE_CLIENTS: InnertubeClient[] = [
   {
+    name: 'android',
     clientName: 'ANDROID',
-    clientVersion: '19.44.38',
-    userAgent: 'com.google.android.youtube/19.44.38 (Linux; U; Android 14) gzip',
+    clientVersion: '21.26.364',
+    userAgent: 'com.google.android.youtube/21.26.364 (Linux; U; Android 11) gzip',
     clientId: '3',
-    extra: { androidSdkVersion: 30 },
+    extra: { androidSdkVersion: 30, osName: 'Android', osVersion: '11' },
   },
   {
+    name: 'ios',
     clientName: 'IOS',
-    clientVersion: '19.45.4',
-    userAgent: 'com.google.ios.youtube/19.45.4 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X;)',
+    clientVersion: '21.26.4',
+    userAgent: 'com.google.ios.youtube/21.26.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)',
     clientId: '5',
-    extra: { deviceMake: 'Apple', deviceModel: 'iPhone16,2' },
+    extra: {
+      deviceMake: 'Apple',
+      deviceModel: 'iPhone16,2',
+      osName: 'iPhone',
+      osVersion: '18.3.2.22D82',
+    },
+  },
+  {
+    // No JS player required and frequently still serves direct URLs when the
+    // phone clients are throttled. "Made for kids" videos are unavailable here.
+    name: 'android_vr',
+    clientName: 'ANDROID_VR',
+    clientVersion: '1.65.10',
+    userAgent:
+      'com.google.android.apps.youtube.vr.oculus/1.65.10 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip',
+    clientId: '28',
+    extra: {
+      deviceMake: 'Oculus',
+      deviceModel: 'Quest 3',
+      androidSdkVersion: 32,
+      osName: 'Android',
+      osVersion: '12L',
+    },
+  },
+  {
+    name: 'visionos',
+    clientName: 'VISIONOS',
+    clientVersion: '1.02',
+    userAgent:
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 15_7_3) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15',
+    clientId: '101',
+    extra: {
+      deviceMake: 'Apple',
+      deviceModel: 'RealityDevice17,1',
+      osName: 'visionOS',
+      osVersion: '26.5.23O471',
+    },
   },
 ];
 
-function collectPlayerFormats(data: Record<string, unknown>): PlayerFormat[] {
+/** A format is only usable if it carries a real, non-empty string URL. */
+export function hasDirectUrl(format: PlayerFormat): boolean {
+  return typeof format.url === 'string' && format.url.trim().length > 0;
+}
+
+/**
+ * Flatten streamingData and keep only direct-URL formats.
+ *
+ * `signatureCipher` / `cipher` entries are dropped on purpose: decoding them
+ * requires executing YouTube's player JS, which we do not do. Keeping them
+ * would let a cipher-only format win the pick and produce a dead download.
+ */
+export function collectPlayerFormats(data: Record<string, unknown>): PlayerFormat[] {
   const streaming = (data.streamingData || {}) as {
     formats?: PlayerFormat[];
     adaptiveFormats?: PlayerFormat[];
   };
-  return [...(streaming.formats || []), ...(streaming.adaptiveFormats || [])];
+  const all = [...(streaming.formats || []), ...(streaming.adaptiveFormats || [])];
+  return all.filter(hasDirectUrl);
 }
 
-async function innertubeFormats(videoId: string): Promise<PlayerFormat[]> {
+/** Playability states we can explain to the user instead of a generic failure. */
+const PLAYABILITY_MESSAGES: Record<string, string> = {
+  LOGIN_REQUIRED: 'This video is age-restricted or private, so YouTube requires a signed-in account.',
+  AGE_VERIFICATION_REQUIRED: 'This video is age-restricted, so YouTube requires a verified account.',
+  UNPLAYABLE: 'YouTube marked this video as unplayable (it may be private, removed, or region-locked).',
+  ERROR: 'YouTube could not load this video (it may have been removed).',
+  CONTENT_CHECK_REQUIRED: 'This video is flagged as sensitive and needs a confirmation YouTube only accepts from a signed-in account.',
+  LIVE_STREAM_OFFLINE: 'This live stream is offline, so there is no file to download.',
+};
+
+export interface InnertubeResult {
+  formats: PlayerFormat[];
+  /** Populated when every client failed for an explainable reason. */
+  status?: string;
+  reason?: string;
+}
+
+/** Human-readable message for a non-OK playabilityStatus, or '' if unknown. */
+export function playabilityMessage(status?: string, reason?: string): string {
+  if (!status || status === 'OK') return '';
+  const base = PLAYABILITY_MESSAGES[status];
+  if (base) return base;
+  return reason
+    ? `YouTube refused playback: ${reason}`
+    : `YouTube refused playback (${status}).`;
+}
+
+export async function innertubeFormats(videoId: string): Promise<InnertubeResult> {
+  let lastStatus: string | undefined;
+  let lastReason: string | undefined;
+
   for (const client of INNERTUBE_CLIENTS) {
     try {
       const response = await fetch('https://www.youtube.com/youtubei/v1/player?prettyPrint=false', {
@@ -146,15 +242,22 @@ async function innertubeFormats(videoId: string): Promise<PlayerFormat[]> {
       });
       if (!response.ok) continue;
       const data = (await response.json()) as Record<string, unknown>;
-      const playability = (data.playabilityStatus || {}) as { status?: string };
-      if (playability.status && playability.status !== 'OK') continue;
+      const playability = (data.playabilityStatus || {}) as { status?: string; reason?: string };
+      if (playability.status && playability.status !== 'OK') {
+        lastStatus = playability.status;
+        lastReason = playability.reason;
+        continue;
+      }
+      // Only accept a client whose response actually contains a playable,
+      // direct URL. A client can answer OK and still return nothing but
+      // signatureCipher entries or a SABR-only manifest.
       const formats = collectPlayerFormats(data);
-      if (formats.some(f => f.url)) return formats;
+      if (formats.length > 0) return { formats };
     } catch {
       // try the next client
     }
   }
-  return [];
+  return { formats: [], status: lastStatus, reason: lastReason };
 }
 
 function fromInvidious(data: Record<string, unknown>): PlayerFormat[] {
@@ -187,7 +290,7 @@ function fromInvidious(data: Record<string, unknown>): PlayerFormat[] {
   return out;
 }
 
-async function invidiousFormats(videoId: string): Promise<PlayerFormat[]> {
+export async function invidiousFormats(videoId: string): Promise<PlayerFormat[]> {
   for (const base of INVIDIOUS_INSTANCES) {
     try {
       const response = await fetch(invidiousVideoUrl(base, videoId), {
@@ -196,8 +299,8 @@ async function invidiousFormats(videoId: string): Promise<PlayerFormat[]> {
       });
       if (!response.ok) continue;
       const data = (await response.json()) as Record<string, unknown>;
-      const formats = fromInvidious(data);
-      if (formats.some(f => f.url)) return formats;
+      const formats = fromInvidious(data).filter(hasDirectUrl);
+      if (formats.length > 0) return formats;
     } catch {
       // next instance
     }
@@ -209,10 +312,22 @@ async function extractYouTube(pageUrl: string, format: FormatKey, quality?: stri
   const id = extractYouTubeId(pageUrl);
   if (!id) return fail('Invalid YouTube URL');
 
-  let formats = await innertubeFormats(id);
+  // Primary: Innertube clients that return direct googlevideo URLs.
+  const innertube = await innertubeFormats(id);
+  let formats = innertube.formats;
+  // Secondary only: public Invidious instances are frequently rate-limited or
+  // have playback disabled, so they must never be the primary path.
   if (!formats.length) formats = await invidiousFormats(id);
+
   if (!formats.length) {
-    return fail('YouTube did not return a playable stream. Try a converter below.');
+    // Prefer an honest, specific reason over the generic message when YouTube
+    // told us why (age-gate, private, region-lock, removed...).
+    const explained = playabilityMessage(innertube.status, innertube.reason);
+    return fail(
+      explained
+        ? `${explained} Try a converter below.`
+        : 'YouTube did not return a playable stream. Try a converter below.',
+    );
   }
 
   const kind = format === 'mp4' ? 'video' : 'audio';
