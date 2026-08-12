@@ -419,13 +419,19 @@ export default function Home() {
       });
   }, [videoInfo, url, favorite, format]);
 
-  const openConverter = async (c: Converter) => {
+  const openConverter = (c: Converter) => {
     const u = url.trim();
-    // Clipboard is a fallback if the converter does not auto-fill from the
-    // handoff URL. /go attaches the media link and (where possible) submits it.
-    const copied = await copyText(u);
-    setLaunched({ name: c.name, copied });
+    // Open while this click still has transient user activation. Awaiting the
+    // clipboard first made browsers treat this as an unsolicited popup.
     window.open(u ? converterGoPath(c.name, u) : c.url, '_blank', 'noopener');
+
+    // Clipboard remains a fallback, but it must not delay the real handoff.
+    // Calling copyText now still starts writeText during the click gesture.
+    setLaunched({ name: c.name, copied: false });
+    if (u) {
+      void copyText(u).then(copied => setLaunched({ name: c.name, copied }));
+    }
+
     // Anonymous analytics: which converter was picked for which platform.
     sendEvent({ type: 'converter_click', converter: c.name, platform: videoInfo?.platform || detectPlatform(u) || '' });
   };
