@@ -1,0 +1,56 @@
+name: Verify YouTube extraction (live)
+
+# Runs the real, un-mocked extraction check against live YouTube.
+#
+# This exists because sandboxed/dev environments frequently sit behind an
+# egress allowlist that blocks youtube.com and googlevideo.com, which makes
+# local verification impossible. GitHub-hosted runners have open egress, so
+# this is the reliable place to prove that extraction still works.
+#
+# Trigger it from the Actions tab ("Run workflow"), optionally with a
+# different video URL. It also runs on a schedule so that a YouTube-side
+# change that breaks the Innertube clients is caught before users report it.
+
+on:
+  # Runs automatically on pull requests that touch the extraction code, so the
+  # live result shows up in the PR checks without anyone needing shell access.
+  # (A workflow_dispatch button only appears once the file is on the default
+  # branch, which is no help while the change is still in review.)
+  pull_request:
+    paths:
+      - 'src/lib/extract.ts'
+      - 'src/lib/invidious.ts'
+      - 'src/lib/youtube-formats.ts'
+      - 'src/lib/media-hosts.ts'
+      - 'scripts/verify-youtube.mjs'
+      - '.github/workflows/verify-youtube.yml'
+  workflow_dispatch:
+    inputs:
+      video_url:
+        description: 'YouTube URL to verify'
+        required: false
+        default: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
+  schedule:
+    # Weekly, Mondays 06:00 UTC. YouTube rotates client requirements often.
+    - cron: '0 6 * * 1'
+
+jobs:
+  verify:
+    name: Live extraction check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify against live YouTube
+        run: npm run verify:youtube "${{ github.event.inputs.video_url || 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' }}"

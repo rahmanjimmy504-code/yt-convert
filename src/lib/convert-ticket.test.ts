@@ -1,5 +1,10 @@
-import { describe, expect, it } from 'vitest';
-import { CONVERT_TICKET_TTL_MS, issueConvertTicket, verifyConvertTicket } from './convert-ticket';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  CONVERT_TICKET_TTL_MS,
+  isConvertTicketSecretMissing,
+  issueConvertTicket,
+  verifyConvertTicket,
+} from './convert-ticket';
 
 const URL_A = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
 const URL_B = 'https://www.youtube.com/watch?v=jNQXAC9IVRw';
@@ -71,5 +76,56 @@ describe('convert tickets', () => {
     expect(verifyConvertTicket('not-a-ticket', URL_A, IP_A, NOW)).toEqual({ ok: false, reason: 'tampered' });
     expect(verifyConvertTicket('abc.', URL_A, IP_A, NOW)).toEqual({ ok: false, reason: 'tampered' });
     expect(verifyConvertTicket('.sig', URL_A, IP_A, NOW)).toEqual({ ok: false, reason: 'tampered' });
+  });
+});
+
+describe('convert ticket secret configuration', () => {
+  const saved = {
+    convert: process.env.CONVERT_TICKET_SECRET,
+    captcha: process.env.CAPTCHA_SECRET,
+  };
+
+  afterEach(() => {
+    if (saved.convert === undefined) delete process.env.CONVERT_TICKET_SECRET;
+    else process.env.CONVERT_TICKET_SECRET = saved.convert;
+    if (saved.captcha === undefined) delete process.env.CAPTCHA_SECRET;
+    else process.env.CAPTCHA_SECRET = saved.captcha;
+    vi.restoreAllMocks();
+  });
+
+  it('reports a configured secret as present', () => {
+    // vitest.config.ts sets both secrets for the suite.
+    expect(isConvertTicketSecretMissing()).toBe(false);
+  });
+
+  it('detects when neither secret is set', () => {
+    delete process.env.CONVERT_TICKET_SECRET;
+    delete process.env.CAPTCHA_SECRET;
+    expect(isConvertTicketSecretMissing()).toBe(true);
+  });
+
+  it('falls back to CAPTCHA_SECRET when CONVERT_TICKET_SECRET is absent', () => {
+    delete process.env.CONVERT_TICKET_SECRET;
+    process.env.CAPTCHA_SECRET = 'fallback-secret';
+    expect(isConvertTicketSecretMissing()).toBe(false);
+    // Tickets still round-trip using the fallback secret.
+    const ticket = issueConvertTicket(URL_A, IP_A, NOW);
+    expect(verifyConvertTicket(ticket, URL_A, IP_A, NOW + 1000)).toMatchObject({ ok: true });
+  });
+
+  it('warns when signing without a configured secret', () => {
+    delete process.env.CONVERT_TICKET_SECRET;
+    delete process.env.CAPTCHA_SECRET;
+    const g = globalThis as typeof globalThis & { __ytConvertTicketSecretWarned?: boolean };
+    g.__ytConvertTicketSecretWarned = false;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    issueConvertTicket(URL_A, IP_A, NOW);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0][0])).toMatch(/CONVERT_TICKET_SECRET/);
+
+    // Only warns once per process, not on every download.
+    issueConvertTicket(URL_B, IP_B, NOW);
+    expect(warn).toHaveBeenCalledTimes(1);
   });
 });

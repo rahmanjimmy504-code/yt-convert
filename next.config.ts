@@ -22,6 +22,21 @@ function resolvePublicCaptchaKeys(): Record<string, string> {
   return resolved;
 }
 
+// Build-time guard: production needs a stable ticket signing secret shared by
+// every serverless instance, otherwise /api/convert rejects tickets issued by
+// /api/video-info with "Download ticket is invalid".
+if (
+  process.env.NODE_ENV === "production" &&
+  !process.env.CONVERT_TICKET_SECRET &&
+  !process.env.CAPTCHA_SECRET
+) {
+  console.warn(
+    "\n[build] WARNING: neither CONVERT_TICKET_SECRET nor CAPTCHA_SECRET is set.\n" +
+      "        Download tickets are signed with a per-instance random secret and\n" +
+      "        will fail across serverless instances. Set CONVERT_TICKET_SECRET.\n",
+  );
+}
+
 const nextConfig: NextConfig = {
   // Keep builds honest: type errors and lint failures should surface at build time.
   reactStrictMode: true,
