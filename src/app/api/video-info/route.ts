@@ -37,6 +37,9 @@ function recordLookup(platform: PlatformKey | 'unknown', ok: boolean, error?: st
 const FETCH_TIMEOUT_MS = 6000;
 
 // Small in-memory cache to avoid hammering upstream oEmbed/Invidious APIs.
+// Only the upstream metadata is cached (without convert fields): tickets are
+// IP-bound and short-lived, and the DRM reason/ticket must be freshly attached
+// per request instead of being served from a shared cache entry.
 const CACHE_TTL_MS = 5 * 60 * 1000;
 const MAX_CACHE_ENTRIES = 100;
 const cache = new Map<string, { at: number; body: VideoInfo }>();
@@ -302,17 +305,19 @@ export async function GET(request: Request) {
   }
 
   const cacheKey = `${platform}|${rawUrl}`;
-  const cached = cacheGet(cacheKey);
-  if (cached) {
+  let info = cacheGet(cacheKey);
+  if (info) {
     recordLookup(platform, true);
-    return NextResponse.json(cached, { headers: RESPONSE_HEADERS });
+    return NextResponse.json(withConvertFields(info, rawUrl, ip), { headers: RESPONSE_HEADERS });
   }
 
   try {
-    const info = await fetchInfo(platform, rawUrl);
+    info = await fetchInfo(platform, rawUrl);
+    // Cache the upstream metadata only; convert fields (ticket/reason) are
+    // attached per request because they depend on the requesting IP.
     cacheSet(cacheKey, info);
     recordLookup(platform, true);
-    return NextResponse.json(info, { headers: RESPONSE_HEADERS });
+    return NextResponse.json(withConvertFields(info, rawUrl, ip), { headers: RESPONSE_HEADERS });
   } catch (err) {
     console.error('[video-info] failed for', platform, err);
     recordLookup(platform, false, 'fetch failed');

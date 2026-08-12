@@ -39,6 +39,8 @@ import {
 import { ALL_CONVERTERS, converterGoPath, hasAutomaticHandoff, type Converter, type ConverterCheckResult } from '@/lib/converters';
 import { getEmbed } from '@/lib/embed';
 import { OPEN_COOKIE_PREFERENCES_EVENT } from '@/lib/cookies';
+import { deriveDownloadPanelState } from '@/lib/download-panel';
+import { AUDIO_KBPS_OPTIONS, VIDEO_QUALITY_OPTIONS } from '@/lib/youtube-formats';
 import Captcha from '@/components/captcha';
 
 type Phase = 'input' | 'loading' | 'ready' | 'error';
@@ -120,6 +122,8 @@ export default function Home() {
   const [mounted, setMounted] = useState(false);
   const [url, setUrl] = useState('');
   const [format, setFormat] = useState<FormatKey>('mp4');
+  const [audioQuality, setAudioQuality] = useState<string>('best');
+  const [videoQuality, setVideoQuality] = useState<string>('best');
   const [phase, setPhase] = useState<Phase>('input');
   const [error, setError] = useState('');
   const [videoInfo, setVideoInfo] = useState<VideoInfo | null>(null);
@@ -149,6 +153,10 @@ export default function Home() {
   const [convertError, setConvertError] = useState('');
   const [converting, setConverting] = useState(false);
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Scroll target after a lookup: the whole ready result (which contains both
+  // the first-party "Download here" panel AND the converter list), so the
+  // first-party control is never jumped past.
+  const resultRef = useRef<HTMLDivElement>(null);
   const convertersRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const autoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -173,6 +181,10 @@ export default function Home() {
     if (f === 'mp3' || f === 'mp4') setFormat(f);
     else if (f === 'audio') setFormat('mp3'); // migrate legacy value
     else if (f === 'video') setFormat('mp4'); // migrate legacy value
+    const aq = sGet('yt-convert-audio-quality');
+    if ((AUDIO_KBPS_OPTIONS as readonly string[]).includes(aq)) setAudioQuality(aq);
+    const vq = sGet('yt-convert-video-quality');
+    if ((VIDEO_QUALITY_OPTIONS as readonly string[]).includes(vq)) setVideoQuality(vq);
     return () => {
       if (scrollTimer.current) clearTimeout(scrollTimer.current);
       if (copyTimer.current) clearTimeout(copyTimer.current);
@@ -246,9 +258,11 @@ export default function Home() {
 
   const dp = url.trim() ? detectPlatform(url.trim()) : null;
 
-  const scrollToConverters = useCallback(() => {
+  const scrollToResult = useCallback(() => {
     if (scrollTimer.current) clearTimeout(scrollTimer.current);
-    scrollTimer.current = setTimeout(() => convertersRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
+    // Scroll to the top of the ready result card so "Download here" (the
+    // first-party control) is visible before the third-party converter list.
+    scrollTimer.current = setTimeout(() => resultRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
   }, []);
 
   // Availability probe: fetch once on mount and whenever "Check again" is
@@ -369,16 +383,19 @@ export default function Home() {
         return h;
       });
       setPhase('ready');
-      scrollToConverters();
+      scrollToResult();
     } catch (err) {
       if (stale() || (err instanceof Error && err.name === 'AbortError')) return;
-      // Network/5xx failure: degrade gracefully so the converter list is
-      // still reachable even though no metadata could be fetched.
-      setVideoInfo({ title: 'Could not load info', author: '', thumbnail: '', duration: '', views: '', published: '', platform: plat, canConvert: false });
+      // Network/5xx failure: degrade gracefully so the result card (and its
+      // converter list) is still reachable even though no metadata could be
+      // fetched. We do not know the platform's convert capability here, so the
+      // first-party panel renders in its honest "no ticket" disabled state
+      // rather than vanishing.
+      setVideoInfo({ title: 'Could not load info', author: '', thumbnail: '', duration: '', views: '', published: '', platform: plat, canConvert: false, convertReason: '', convertTicket: '' });
       setPhase('ready');
-      scrollToConverters();
+      scrollToResult();
     }
-  }, [url, captchaToken, scrollToConverters]);
+  }, [url, captchaToken, scrollToResult]);
 
   const handlePaste = useCallback(async () => {
     try {
@@ -401,6 +418,16 @@ export default function Home() {
   const handleFormatChange = useCallback((f: FormatKey) => {
     setFormat(f);
     sSet('yt-convert-format', f);
+  }, []);
+
+  const handleAudioQualityChange = useCallback((q: string) => {
+    setAudioQuality(q);
+    sSet('yt-convert-audio-quality', q);
+  }, []);
+
+  const handleVideoQualityChange = useCallback((q: string) => {
+    setVideoQuality(q);
+    sSet('yt-convert-video-quality', q);
   }, []);
 
   const videoId = videoInfo ? extractYouTubeId(url.trim()) : null;
@@ -447,7 +474,8 @@ export default function Home() {
   const downloadHere = async () => {
     if (!videoInfo?.convertTicket || converting) return;
     const u = url.trim();
-    const href = `/api/convert?url=${encodeURIComponent(u)}&format=${format}&ticket=${encodeURIComponent(videoInfo.convertTicket)}&title=${encodeURIComponent(videoInfo.title || '')}`;
+    const quality = format === 'mp3' ? audioQuality : videoQuality;
+    const href = `/api/convert?url=${encodeURIComponent(u)}&format=${format}&quality=${encodeURIComponent(quality)}&ticket=${encodeURIComponent(videoInfo.convertTicket)}&title=${encodeURIComponent(videoInfo.title || '')}`;
     setConverting(true);
     setConvertError('');
     try {
@@ -592,6 +620,14 @@ export default function Home() {
 
   const convList = getConverters();
 
+  // First-party "Download here" panel state. Driven by the platform's static
+  // capability (so it never hides for YouTube just because a 5xx dropped the
+  // ticket) plus whether a fresh HMAC ticket actually came back.
+  const downloadPanel = deriveDownloadPanelState(
+    videoInfo?.platform,
+    Boolean(videoInfo?.convertTicket),
+  );
+
   // Converter availability: live probe when it has landed, otherwise the
   // curated catalog badge so cards don't flash "Checking…" for known status.
   const badgeFor = (c: Converter) => {
@@ -695,8 +731,8 @@ export default function Home() {
         )}
 
         {phase === 'ready' && videoInfo && (
-          <div>
-            <div className="bg-white dark:bg-gray-900 rounded-2xl border-2 border-red-200 dark:border-red-900 overflow-hidden p-5 space-y-4 mb-5">
+          <div ref={resultRef} className="space-y-5">
+            <div className="bg-white dark:bg-gray-900 rounded-2xl border-2 border-red-200 dark:border-red-900 overflow-hidden p-5 space-y-4">
               {videoInfo.thumbnail && (
                 <div
                   className="relative rounded-xl overflow-hidden bg-black group cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
@@ -751,35 +787,115 @@ export default function Home() {
                 </div>
                 {videoInfo.platform && <span className={'text-xs font-medium px-2.5 py-1 rounded-full flex-shrink-0 ' + platformColor(videoInfo.platform)}>{platformLabel(videoInfo.platform)}</span>}
               </div>
-            </div>
 
-            {videoInfo.canConvert && videoInfo.convertTicket ? (
-              <div className="bg-white dark:bg-gray-900 rounded-2xl border-2 border-red-200 dark:border-red-900 p-5 space-y-3 mb-5">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <h2 className="font-semibold text-base">Download here</h2>
-                    <p className="text-[11px] text-gray-500 mt-0.5">
-                      First-party stream — we proxy the public file and do not store it.
-                      {format === 'mp3' ? ' Audio is sent as its real container (often M4A/AAC, not MP3).' : ' Video is progressive MP4 when the platform provides one.'}
-                    </p>
+              {/* First-party "Download here" — lives on the result card, above
+                  the third-party converter list, so it can't be jumped past. */}
+              {downloadPanel.kind !== 'unavailable' && (
+                <div className="rounded-xl border-2 border-red-200 dark:border-red-900 bg-red-50/50 dark:bg-red-950/20 p-4 space-y-3">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h2 className="font-semibold text-sm flex items-center gap-2">
+                      <Download className="w-4 h-4 text-red-600 dark:text-red-400" />
+                      Download here
+                    </h2>
+                    <span className="text-[9px] font-bold tracking-wide px-1.5 py-0.5 rounded-full bg-red-600 text-white">FIRST PARTY</span>
                   </div>
+                  <p className="text-[11px] text-gray-500 dark:text-gray-400">
+                    We proxy the public file and do not store it.
+                    {format === 'mp3' ? ' Audio keeps its real container (often M4A/AAC, not MP3).' : ' Video is progressive MP4 when the platform provides one.'}
+                  </p>
+
+                  {/* Audio / Video toggle stays on the result card. */}
+                  <div className="grid grid-cols-2 h-10 rounded-lg bg-gray-100 dark:bg-gray-800 p-1">
+                    <button onClick={() => handleFormatChange('mp3')} className={'rounded-md text-xs font-medium transition-all flex items-center justify-center gap-1.5 ' + (format === 'mp3' ? 'bg-white dark:bg-gray-700 shadow-sm' : 'text-gray-500')}>
+                      <Music className="w-3.5 h-3.5" /> Audio
+                    </button>
+                    <button onClick={() => handleFormatChange('mp4')} className={'rounded-md text-xs font-medium transition-all flex items-center justify-center gap-1.5 ' + (format === 'mp4' ? 'bg-white dark:bg-gray-700 shadow-sm' : 'text-gray-500')}>
+                      <Film className="w-3.5 h-3.5" /> Video
+                    </button>
+                  </div>
+
+                  {/* Bitrate (MP3) or resolution (MP4) picker. Only YouTube has
+                      multiple first-party streams; other platforms serve a
+                      single file, so we pick the closest available stream. */}
+                  {format === 'mp3' ? (
+                    <div>
+                      <label className="block text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-1.5">Bitrate</label>
+                      <div className="flex flex-wrap gap-1.5">
+                        {AUDIO_KBPS_OPTIONS.map(q => (
+                          <button
+                            key={q}
+                            type="button"
+                            onClick={() => handleAudioQualityChange(q)}
+                            aria-pressed={audioQuality === q}
+                            className={'px-2.5 py-1 rounded-md text-[11px] font-medium border transition-colors ' + (audioQuality === q
+                              ? 'bg-red-600 text-white border-red-600'
+                              : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-700 hover:border-red-300 dark:hover:border-red-800')}
+                          >
+                            {q === 'best' ? 'Best' : `${q} kbps`}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <div>
+                      <label className="block text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-1.5">Quality</label>
+                      <div className="flex flex-wrap gap-1.5">
+                        {VIDEO_QUALITY_OPTIONS.map(q => (
+                          <button
+                            key={q}
+                            type="button"
+                            onClick={() => handleVideoQualityChange(q)}
+                            aria-pressed={videoQuality === q}
+                            className={'px-2.5 py-1 rounded-md text-[11px] font-medium border transition-colors ' + (videoQuality === q
+                              ? 'bg-red-600 text-white border-red-600'
+                              : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-700 hover:border-red-300 dark:hover:border-red-800')}
+                          >
+                            {q === 'best' ? 'Best' : `${q}p`}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {downloadPanel.kind === 'ready' ? (
+                    <button
+                      type="button"
+                      onClick={downloadHere}
+                      disabled={converting}
+                      className="w-full h-11 rounded-xl bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white text-sm font-semibold shadow-lg shadow-red-500/20 disabled:opacity-40 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2"
+                    >
+                      <Download className="w-4 h-4" />
+                      {converting ? 'Starting download…' : format === 'mp3' ? 'Download audio' : 'Download video'}
+                    </button>
+                  ) : (
+                    // Convertible platform but no ticket (transient 5xx /
+                    // "Could not load info"): stay visible, honestly disabled.
+                    <button
+                      type="button"
+                      disabled
+                      aria-disabled
+                      title="A download ticket is issued after a successful lookup"
+                      className="w-full h-11 rounded-xl bg-gray-200 dark:bg-gray-800 text-gray-500 dark:text-gray-400 text-sm font-semibold cursor-not-allowed flex items-center justify-center gap-2"
+                    >
+                      <Download className="w-4 h-4" />
+                      Look the link up again
+                    </button>
+                  )}
+                  {convertError && (
+                    <p role="alert" className="text-xs text-red-600 dark:text-red-400">{convertError} Third-party converters remain as fallback.</p>
+                  )}
                 </div>
-                <button
-                  type="button"
-                  onClick={downloadHere}
-                  disabled={converting}
-                  className="w-full h-11 rounded-xl bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white text-sm font-semibold shadow-lg shadow-red-500/20 disabled:opacity-40 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2"
-                >
-                  <Download className="w-4 h-4" />
-                  {converting ? 'Starting download…' : format === 'mp3' ? 'Download audio' : 'Download video'}
-                </button>
-                {convertError && (
-                  <p role="alert" className="text-xs text-red-600 dark:text-red-400">{convertError} Third-party converters remain as fallback.</p>
-                )}
-              </div>
-            ) : videoInfo.convertReason ? (
-              <p className="text-xs text-gray-500 mb-4 px-1">{videoInfo.convertReason} Use a converter below if you have a licensed option.</p>
-            ) : null}
+              )}
+
+              {/* If canConvert is false, show the one-line DRM / no-public-file
+                  reason right here, then fall through to the converter list. */}
+              {downloadPanel.kind === 'unavailable' && (
+                <p className="text-xs text-gray-500 dark:text-gray-400 flex items-start gap-1.5">
+                  <CircleX className="w-3.5 h-3.5 mt-0.5 flex-shrink-0 text-gray-400" />
+                  <span>{downloadPanel.reason} Use a converter below if you have a licensed option.</span>
+                </p>
+              )}
+            </div>
 
             <div ref={convertersRef} className="bg-white dark:bg-gray-900 rounded-2xl border-2 border-gray-200 dark:border-gray-800 p-5 space-y-4">
               <div className="flex items-center justify-between">

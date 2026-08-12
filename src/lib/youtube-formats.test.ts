@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  AUDIO_KBPS_OPTIONS,
+  VIDEO_QUALITY_OPTIONS,
   extensionForMime,
   isGoogleVideoUrl,
+  isValidQuality,
   pickYouTubeFormat,
   sanitizeDownloadFilename,
   type PlayerFormat,
@@ -123,12 +126,76 @@ describe('pickYouTubeFormat', () => {
   });
 });
 
+const tieredVideo: PlayerFormat[] = [
+  { url: GV, mimeType: 'video/mp4; codecs="avc1.42001E, mp4a.40.2"', qualityLabel: '360p', audioQuality: 'AUDIO_QUALITY_LOW', height: 360, bitrate: 500_000, itag: 18 },
+  { url: GV2, mimeType: 'video/mp4; codecs="avc1.4D401E, mp4a.40.2"', qualityLabel: '480p', audioQuality: 'AUDIO_QUALITY_MEDIUM', height: 480, bitrate: 1_000_000, itag: 35 },
+  { url: 'https://rr6---sn-ddd.googlevideo.com/videoplayback?id=720', mimeType: 'video/mp4; codecs="avc1.64001F, mp4a.40.2"', qualityLabel: '720p', audioQuality: 'AUDIO_QUALITY_MEDIUM', height: 720, bitrate: 2_500_000, itag: 22 },
+  { url: 'https://rr7---sn-eee.googlevideo.com/videoplayback?id=1080', mimeType: 'video/mp4; codecs="avc1.640028, mp4a.40.2"', qualityLabel: '1080p', audioQuality: 'AUDIO_QUALITY_HIGH', height: 1080, bitrate: 5_000_000, itag: 999 },
+];
+
+const tieredAudio: PlayerFormat[] = [
+  { url: 'https://a1.googlevideo.com/a?id=64', mimeType: 'audio/mp4; codecs="mp4a.40.2"', audioQuality: 'AUDIO_QUALITY_LOW', bitrate: 64_000, itag: 1 },
+  { url: 'https://a2.googlevideo.com/a?id=128', mimeType: 'audio/mp4; codecs="mp4a.40.2"', audioQuality: 'AUDIO_QUALITY_MEDIUM', bitrate: 128_000, itag: 2 },
+  { url: 'https://a3.googlevideo.com/a?id=256', mimeType: 'audio/mp4; codecs="mp4a.40.2"', audioQuality: 'AUDIO_QUALITY_HIGH', bitrate: 256_000, itag: 3 },
+];
+
+describe('quality selection', () => {
+  it('picks the highest progressive video when quality is best or unrecognized', () => {
+    expect(pickYouTubeFormat(tieredVideo, 'video', 'best')?.height).toBe(1080);
+    expect(pickYouTubeFormat(tieredVideo, 'video', '')?.height).toBe(1080);
+    expect(pickYouTubeFormat(tieredVideo, 'video')?.height).toBe(1080);
+  });
+
+  it('picks the closest video height at or below the target', () => {
+    expect(pickYouTubeFormat(tieredVideo, 'video', '720')?.height).toBe(720);
+    expect(pickYouTubeFormat(tieredVideo, 'video', '480')?.height).toBe(480);
+    // 1080 requested but no progressive 1080-with-audio: fall back to 720.
+    expect(pickYouTubeFormat(tieredVideo, 'video', '360')?.height).toBe(360);
+  });
+
+  it('falls back to the lowest available resolution when the target is below all', () => {
+    expect(pickYouTubeFormat(tieredVideo, 'video', '240')?.height).toBe(360);
+  });
+
+  it('picks the highest audio bitrate when quality is best', () => {
+    expect(pickYouTubeFormat(tieredAudio, 'audio', 'best')?.bitrate).toBe(256_000);
+  });
+
+  it('picks the closest audio bitrate at or below the target kbps', () => {
+    expect(pickYouTubeFormat(tieredAudio, 'audio', '128')?.bitrate).toBe(128_000);
+    expect(pickYouTubeFormat(tieredAudio, 'audio', '192')?.bitrate).toBe(128_000);
+    expect(pickYouTubeFormat(tieredAudio, 'audio', '320')?.bitrate).toBe(256_000);
+  });
+
+  it('falls back to the lowest available bitrate when the target is below all', () => {
+    expect(pickYouTubeFormat(tieredAudio, 'audio', '32')?.bitrate).toBe(64_000);
+  });
+
+  it('validates the quality option against the format', () => {
+    expect(isValidQuality('mp3', 'best')).toBe(true);
+    expect(isValidQuality('mp3', '320')).toBe(true);
+    expect(isValidQuality('mp3', '1080')).toBe(false);
+    expect(isValidQuality('mp4', '720')).toBe(true);
+    expect(isValidQuality('mp4', '320')).toBe(false);
+    expect(isValidQuality('mp4', 'highest')).toBe(false);
+    expect([...AUDIO_KBPS_OPTIONS]).toContain('320');
+    expect([...VIDEO_QUALITY_OPTIONS]).toContain('1080');
+  });
+});
+
 describe('extensionForMime / sanitizeDownloadFilename', () => {
   it('never labels AAC as mp3', () => {
     expect(extensionForMime('audio/mp4; codecs="mp4a.40.2"', 'm4a')).toBe('m4a');
     expect(extensionForMime('audio/aac', 'm4a')).toBe('m4a');
     expect(extensionForMime('audio/mpeg', 'm4a')).toBe('mp3');
     expect(extensionForMime('video/mp4', 'mp4')).toBe('mp4');
+  });
+
+  it('keeps a progressive video/mp4 (with an mp4a audio codec) as .mp4', () => {
+    // Regression: a video/mp4 whose codec string contains "mp4a.40.2" was
+    // wrongly matched by the bare-mp4a audio rule and labelled .m4a.
+    expect(extensionForMime('video/mp4; codecs="avc1.64001F, mp4a.40.2"', 'm4a')).toBe('mp4');
+    expect(extensionForMime('video/mp4; codecs="avc1.42001E"', 'm4a')).toBe('mp4');
   });
 
   it('builds a safe download filename', () => {
