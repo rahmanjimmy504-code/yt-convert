@@ -208,9 +208,37 @@ export function playabilityMessage(status?: string, reason?: string): string {
     : `YouTube refused playback (${status}).`;
 }
 
+/**
+ * True when a set of formats can satisfy both an audio-only and a video
+ * download. Verified live 2026-08-12: ANDROID answers OK but returns a single
+ * direct URL (itag 18, progressive 360p) with everything else SABR-only, so
+ * stopping at the first client with *any* direct URL capped video at 360p and
+ * made mp3 downloads impossible. We therefore keep querying until we hold
+ * both kinds, and merge what the clients give us.
+ */
+function hasAudioAndVideo(formats: PlayerFormat[]): boolean {
+  const audio = formats.some(f => /audio\//i.test(f.mimeType || ''));
+  const video = formats.some(f => /video\//i.test(f.mimeType || ''));
+  return audio && video;
+}
+
+/** De-duplicate merged formats by itag, keeping the first (best client) entry. */
+function dedupeByItag(formats: PlayerFormat[]): PlayerFormat[] {
+  const seen = new Set<number | string>();
+  const out: PlayerFormat[] = [];
+  for (const f of formats) {
+    const key = f.itag ?? f.url ?? '';
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(f);
+  }
+  return out;
+}
+
 export async function innertubeFormats(videoId: string): Promise<InnertubeResult> {
   let lastStatus: string | undefined;
   let lastReason: string | undefined;
+  const collected: PlayerFormat[] = [];
 
   for (const client of INNERTUBE_CLIENTS) {
     try {
@@ -252,11 +280,19 @@ export async function innertubeFormats(videoId: string): Promise<InnertubeResult
       // direct URL. A client can answer OK and still return nothing but
       // signatureCipher entries or a SABR-only manifest.
       const formats = collectPlayerFormats(data);
-      if (formats.length > 0) return { formats };
+      if (formats.length === 0) continue;
+
+      collected.push(...formats);
+      // Return as soon as we can serve both mp3 and mp4; otherwise keep going
+      // so a client offering only one progressive stream cannot cap quality
+      // or break audio-only downloads.
+      if (hasAudioAndVideo(collected)) return { formats: dedupeByItag(collected) };
     } catch {
       // try the next client
     }
   }
+
+  if (collected.length > 0) return { formats: dedupeByItag(collected) };
   return { formats: [], status: lastStatus, reason: lastReason };
 }
 

@@ -193,9 +193,143 @@ describe('innertubeFormats', () => {
     );
 
     const result = await innertubeFormats('dQw4w9WgXcQ');
-    expect(call).toBe(2);
+    // The cipher-only first client contributes nothing, so the second client's
+    // direct format is what comes back. (All clients are polled here because
+    // none of these stubs offer an audio-only stream.)
+    expect(call).toBeGreaterThanOrEqual(2);
     expect(result.formats).toHaveLength(1);
     expect(result.formats[0].url).toBe(GV_VIDEO);
+  });
+
+  it('keeps querying when a client returns video but no audio (live-observed)', async () => {
+    // Reproduces the real 2026-08-12 response: ANDROID answers OK with a
+    // single direct progressive 360p format (itag 18, everything else
+    // SABR-only), while ANDROID_VR returns the full adaptive ladder.
+    // Stopping at ANDROID capped video at 360p and broke mp3 entirely.
+    const calls: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init: RequestInit) => {
+        const body = JSON.parse(String(init.body));
+        const client = body.context.client.clientName;
+        calls.push(client);
+        if (client === 'ANDROID') {
+          return jsonResponse({
+            playabilityStatus: { status: 'OK' },
+            streamingData: {
+              formats: [
+                {
+                  itag: 18,
+                  mimeType: 'video/mp4; codecs="avc1.42001E, mp4a.40.2"',
+                  qualityLabel: '360p',
+                  height: 360,
+                  audioQuality: 'AUDIO_QUALITY_LOW',
+                  bitrate: 500_000,
+                  url: GV_VIDEO + '360',
+                },
+              ],
+            },
+          });
+        }
+        if (client === 'IOS') {
+          // OK but zero direct URLs (all SABR).
+          return jsonResponse({ playabilityStatus: { status: 'OK' }, streamingData: {} });
+        }
+        return jsonResponse({
+          playabilityStatus: { status: 'OK' },
+          streamingData: {
+            formats: [
+              {
+                itag: 22,
+                mimeType: 'video/mp4; codecs="avc1.64001F, mp4a.40.2"',
+                qualityLabel: '720p',
+                height: 720,
+                audioQuality: 'AUDIO_QUALITY_MEDIUM',
+                bitrate: 2_500_000,
+                url: GV_VIDEO + '720',
+              },
+            ],
+            adaptiveFormats: [
+              {
+                itag: 140,
+                mimeType: 'audio/mp4; codecs="mp4a.40.2"',
+                audioQuality: 'AUDIO_QUALITY_MEDIUM',
+                bitrate: 128_000,
+                url: GV_AUDIO,
+              },
+            ],
+          },
+        });
+      }),
+    );
+
+    const result = await innertubeFormats('dQw4w9WgXcQ');
+
+    // It must not stop at ANDROID's lone progressive format.
+    expect(calls).toContain('ANDROID_VR');
+    // Audio is now available, so mp3 downloads work.
+    const audio = pickYouTubeFormat(result.formats, 'audio', 'best');
+    expect(audio?.itag).toBe(140);
+    // And video is no longer capped at ANDROID's 360p.
+    const video = pickYouTubeFormat(result.formats, 'video', 'best');
+    expect(video?.height).toBe(720);
+  });
+
+  it('merges formats across clients without duplicating itags', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init: RequestInit) => {
+        const client = JSON.parse(String(init.body)).context.client.clientName;
+        if (client === 'ANDROID') {
+          return jsonResponse({
+            playabilityStatus: { status: 'OK' },
+            streamingData: {
+              formats: [{ itag: 18, mimeType: 'video/mp4', url: GV_VIDEO }],
+            },
+          });
+        }
+        return jsonResponse({
+          playabilityStatus: { status: 'OK' },
+          streamingData: {
+            // itag 18 repeats here and must not be duplicated.
+            formats: [{ itag: 18, mimeType: 'video/mp4', url: GV_VIDEO }],
+            adaptiveFormats: [{ itag: 140, mimeType: 'audio/mp4', url: GV_AUDIO }],
+          },
+        });
+      }),
+    );
+
+    const result = await innertubeFormats('dQw4w9WgXcQ');
+    const itags = result.formats.map(f => f.itag);
+    expect(itags).toEqual([18, 140]);
+  });
+
+  it('still returns video-only formats when no client offers audio', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        jsonResponse({
+          playabilityStatus: { status: 'OK' },
+          streamingData: {
+            formats: [
+              {
+                itag: 18,
+                mimeType: 'video/mp4; codecs="avc1.42001E, mp4a.40.2"',
+                qualityLabel: '360p',
+                height: 360,
+                audioQuality: 'AUDIO_QUALITY_LOW',
+                url: GV_VIDEO,
+              },
+            ],
+          },
+        }),
+      ),
+    );
+    const result = await innertubeFormats('dQw4w9WgXcQ');
+    // Degrades gracefully: mp4 still works even though mp3 has no source.
+    expect(result.formats.length).toBeGreaterThan(0);
+    expect(pickYouTubeFormat(result.formats, 'video', 'best')?.itag).toBe(18);
+    expect(pickYouTubeFormat(result.formats, 'audio', 'best')).toBeNull();
   });
 
   it('reports the playability status when every client refuses', async () => {
