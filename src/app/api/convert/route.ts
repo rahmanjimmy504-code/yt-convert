@@ -6,6 +6,7 @@ import { fetchAllowedMedia, MediaHostError } from '@/lib/media-hosts';
 import { isValidQuality, sanitizeDownloadFilename } from '@/lib/youtube-formats';
 import { clientIp, rateLimit } from '@/lib/rate-limit';
 import { recordEvent } from '@/lib/stats';
+import { logError } from '@/lib/logging';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -121,7 +122,7 @@ export async function GET(request: Request) {
       recordEvent({ type: 'lookup', platform, ok: false, error: 'convert ssrf' });
       return json(err.message, 502);
     }
-    console.error('[convert] failed for', platform, err);
+    logError('convert failed', err, `platform=${platform}`);
     recordEvent({ type: 'lookup', platform, ok: false, error: 'convert failed' });
     return json('Could not convert this link. Try a converter below.', 502);
   }

@@ -1,4 +1,5 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { logWarn } from './logging';
 
 /**
  * Short-lived HMAC tickets that authorize GET /api/convert after a successful
@@ -27,7 +28,7 @@ function ticketSecret(): string {
     // "Download ticket is invalid" intermittently. Warn once per process.
     if (!globalForTicket.__ytConvertTicketSecretWarned) {
       globalForTicket.__ytConvertTicketSecretWarned = true;
-      console.warn(
+      logWarn(
         '[convert-ticket] CONVERT_TICKET_SECRET (or CAPTCHA_SECRET) is not set. ' +
           'Falling back to a per-instance random secret: download tickets will fail ' +
           'across serverless instances. Set CONVERT_TICKET_SECRET in production.',

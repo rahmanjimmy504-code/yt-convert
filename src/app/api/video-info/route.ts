@@ -13,6 +13,7 @@ import { INVIDIOUS_INSTANCES, invidiousVideoUrl } from '@/lib/invidious';
 import { clientIp } from '@/lib/rate-limit';
 import { recordEvent } from '@/lib/stats';
 import { videoQualityPlans, type VideoQualityPlan } from '@/lib/youtube-formats';
+import { logError } from '@/lib/logging';
 
 export const runtime = 'nodejs';
 
@@ -368,7 +369,7 @@ export async function GET(request: Request) {
     recordLookup(platform, true);
     return NextResponse.json(withConvertFields(info, rawUrl, ip), { headers: RESPONSE_HEADERS });
   } catch (err) {
-    console.error('[video-info] failed for', platform, err);
+    logError('video-info failed', err, `platform=${platform}`);
     recordLookup(platform, false, 'fetch failed');
     return NextResponse.json({ error: 'Failed to fetch video info. Please try again.' }, { status: 500 });
   }

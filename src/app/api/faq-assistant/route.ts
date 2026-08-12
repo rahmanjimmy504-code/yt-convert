@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { rateLimit, clientIp } from "@/lib/rate-limit";
 import { answerLocally, KNOWLEDGE } from "@/lib/faq-knowledge";
+import { logWarn } from "@/lib/logging";
 
 export const runtime = "nodejs";
 
@@ -111,7 +112,7 @@ async function callGroq(question: string, systemPrompt: string): Promise<string 
 
     if (!resp.ok) {
       const txt = await resp.text().catch(() => "");
-      console.warn("Groq API error", resp.status, txt.slice(0, 300));
+      logWarn("Groq API error", resp.status, txt.slice(0, 300));
       return null;
     }
 
@@ -122,7 +123,7 @@ async function callGroq(question: string, systemPrompt: string): Promise<string 
     if (content && content.length > 10) return content;
     return null;
   } catch (e) {
-    console.warn("Groq call failed", e);
+    logWarn("Groq call failed", e);
     return null;
   } finally {
     clearTimeout(timeout);
@@ -159,7 +160,7 @@ async function callOpenAI(question: string, systemPrompt: string): Promise<strin
 
     if (!resp.ok) {
       const txt = await resp.text().catch(() => "");
-      console.warn("OpenAI API error", resp.status, txt.slice(0, 300));
+      logWarn("OpenAI API error", resp.status, txt.slice(0, 300));
       return null;
     }
 
@@ -170,7 +171,7 @@ async function callOpenAI(question: string, systemPrompt: string): Promise<strin
     if (content && content.length > 10) return content;
     return null;
   } catch (e) {
-    console.warn("OpenAI call failed", e);
+    logWarn("OpenAI call failed", e);
     return null;
   } finally {
     clearTimeout(timeout);
@@ -203,14 +204,14 @@ async function callAnthropic(question: string, systemPrompt: string): Promise<st
     clearTimeout(timeout);
     if (!resp.ok) {
       const txt = await resp.text().catch(() => "");
-      console.warn("Anthropic API error", resp.status, txt.slice(0, 300));
+      logWarn("Anthropic API error", resp.status, txt.slice(0, 300));
       return null;
     }
     const data = (await resp.json()) as { content?: Array<{ text?: string }> };
     const text = data.content?.[0]?.text?.trim();
     return text && text.length > 10 ? text : null;
   } catch (e) {
-    console.warn("Anthropic call failed", e);
+    logWarn("Anthropic call failed", e);
     return null;
   } finally {
     clearTimeout(timeout);
