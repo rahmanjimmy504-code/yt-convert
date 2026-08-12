@@ -168,6 +168,21 @@ if (!formats.length) {
 const allAllowed = formats.every(f => isAllowedMediaUrl(f.url));
 check(allAllowed, `every returned format URL is an allowlisted media host (source: ${via})`);
 
+// Does this source actually offer a muxed/progressive video+audio file?
+// Innertube always does (itag 18, 360p). Piped typically returns SEPARATE
+// video-only and audio-only tracks — there is no single-file MP4 to download,
+// so the video cases are "mux needed" (the app surfaces this honestly and
+// points users at a converter for mp4, while mp3 still works directly).
+const hasProgressiveMp4 = formats.some(
+  f => /video\/mp4/i.test(f.mimeType || '') && (f.audioQuality || /audio\//i.test(f.mimeType || '')),
+);
+if (!hasProgressiveMp4) {
+  console.log(
+    `  (source ${via} offers only separate video+audio tracks — no single-file progressive MP4; ` +
+      `mp4 will be reported as mux-needed, audio cases still verified)`,
+  );
+}
+
 /* -- 3. Picker + plan honesty + allowlist + real range request -- */
 const cases = [
   { kind: 'video', quality: 'best', expectExt: 'mp4' },
@@ -185,6 +200,38 @@ const labelOf = f =>
 console.log('\n--- pickYouTubeFormat() + planVideoDownload() + isAllowedMediaUrl() + live range GET ---');
 for (const c of cases) {
   const picked = pickYouTubeFormat(formats, c.kind, c.quality);
+
+  // Video case with no progressive file (Piped/adaptive-only): there is no
+  // single-file mp4 to download, so the honest expectation is a 'mux' plan
+  // combining video-only + audio. We verify the plan exists and that the
+  // best video-only track + best audio track are real, allowlisted, and
+  // reachable, rather than failing because pickYouTubeFormat returned null.
+  if (c.kind === 'video' && !hasProgressiveMp4) {
+    const plan = planVideoDownload(formats, c.quality);
+    if (!check(Boolean(plan), `plan ${c.kind}/${c.quality} (adaptive-only source)`, 'no planable tracks')) continue;
+    check(plan.kind === 'mux', `  ${c.kind}/${c.quality} reports mux-needed (separate tracks)`, `kind=${plan.kind}`);
+    check(Boolean(plan.video?.url), `  ${c.kind}/${c.quality} has a video-only track`, plan.video ? labelOf(plan.video) : '');
+    check(Boolean(plan.audio?.url), `  ${c.kind}/${c.quality} has an audio track`, plan.audio ? `${Math.round((plan.audio.bitrate || 0) / 1000)}kbps` : '');
+    check(isUsableFormatUrl(plan.video.url), `  ${c.kind}/${c.quality} video URL passes allowlist`);
+
+    // Range-GET the video-only track to prove the CDN serves bytes.
+    try {
+      const res = await fetch(plan.video.url, {
+        headers: { Range: 'bytes=0-1023', 'User-Agent': 'Mozilla/5.0 (compatible; YTConvert/1.0)' },
+        signal: AbortSignal.timeout(20_000),
+      });
+      const body = new Uint8Array(await res.arrayBuffer());
+      check(
+        (res.status === 200 || res.status === 206) && body.length > 0,
+        `  ${c.kind}/${c.quality} video-only live GET`,
+        `HTTP ${res.status}, ${body.length} bytes`,
+      );
+    } catch (err) {
+      check(false, `  ${c.kind}/${c.quality} video-only live GET`, err.message);
+    }
+    continue;
+  }
+
   if (!check(Boolean(picked?.url), `pick ${c.kind}/${c.quality}`, picked ? '' : 'nothing picked')) continue;
 
   const mime = picked.mimeType || '';
