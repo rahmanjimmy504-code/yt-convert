@@ -4,6 +4,11 @@
  * Consistent with the other soft abuse guards in this project: per-instance
  * state, no persistence, good enough to stop casual hammering. Returns the
  * number of seconds to wait when limited, else 0.
+ *
+ * Security notes:
+ * - MAX_KEYS limits memory usage from DoS via many unique IPs
+ * - IP extraction uses x-forwarded-for and x-real-ip headers (trusted proxy headers)
+ * - No persistence means rate limits reset on server restart
  */
 
 const WINDOW_MS = 60_000;
@@ -32,10 +37,27 @@ export function rateLimit(ip: string, maxPerWindow: number): number {
   return 0;
 }
 
+/**
+ * Maximum IP address string length to prevent header injection attacks.
+ * IPv6 addresses can be up to 45 chars, so 64 provides a safe buffer.
+ */
+const MAX_IP_LENGTH = 64;
+
 export function clientIp(request: Request): string {
-  return (
-    (request.headers.get('x-forwarded-for') || '').split(',')[0].trim() ||
-    request.headers.get('x-real-ip') ||
-    'unknown'
-  );
+  const fromForwarded = (request.headers.get('x-forwarded-for') || '').split(',')[0].trim();
+  const fromRealIp = request.headers.get('x-real-ip') || '';
+  
+  // Use the first non-empty header, but sanitize to prevent header injection
+  const ip = fromForwarded || fromRealIp || 'unknown';
+  
+  // Truncate to max length and remove any control characters
+  const sanitized = ip.replace(/[\u0000-\u001F\u007F]/g, '').slice(0, MAX_IP_LENGTH);
+  
+  // Only return if it looks like a valid IP (or 'unknown')
+  // Basic check: alphanumeric, dots, colons, hyphens, underscores
+  if (sanitized && /^[a-fA-F0-9.:\-_]+$/.test(sanitized)) {
+    return sanitized;
+  }
+  
+  return 'unknown';
 }

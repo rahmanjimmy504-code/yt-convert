@@ -268,5 +268,10 @@ export function sanitizeDownloadFilename(title: string, ext: string): string {
       .trim()
       .slice(0, 80) || 'download';
   const cleanExt = ext.replace(/[^a-z0-9]/gi, '') || 'bin';
-  return `${base}.${cleanExt}`;
+  const filename = `${base}.${cleanExt}`;
+  // Ensure the filename is not empty and the extension is reasonable
+  if (!filename || filename.length > 120) {
+    return `download.${cleanExt.slice(0, 10)}`;
+  }
+  return filename;
 }
