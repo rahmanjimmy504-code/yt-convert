@@ -21,13 +21,11 @@ const ALLOWED_SUFFIXES = [
   // proxy host. The well-known public proxies are listed by default; an
   // operator can approve additional self-hosted proxies via PIPED_PROXY_HOSTS
   // (comma-separated suffixes, e.g. "pipedproxy.example.com").
+  // Kept in step with PIPED_INSTANCES in ./piped.ts (refreshed 2026-08-12):
+  // suffixes for instances that stopped serving Piped were removed.
   'kavin.rocks',
-  'pipedproxy.kavin.rocks',
-  'adminforge.de',
-  'leptons.xyz',
-  'drgns.space',
-  'ducks.party',
-  'piped.yt',
+  'private.coffee',
+  'reallyaweso.me',
 ] as const;
 
 /**

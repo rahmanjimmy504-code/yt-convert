@@ -19,6 +19,23 @@ describe('isAllowedMediaUrl', () => {
     expect(isAllowedMediaUrl('https://facebook.com/watch/?v=1')).toBe(false);
   });
 
+  it('allows the current public Piped proxy hosts (kept in step with piped.ts)', () => {
+    expect(isAllowedMediaUrl('https://pipedproxy-bom.kavin.rocks/videoplayback?id=1')).toBe(true);
+    expect(isAllowedMediaUrl('https://pipedproxy.api.piped.private.coffee/videoplayback?id=1')).toBe(true);
+    expect(isAllowedMediaUrl('https://proxy.piped.private.coffee/videoplayback?id=1')).toBe(true);
+    expect(isAllowedMediaUrl('https://pipedproxy.reallyaweso.me/videoplayback?id=1')).toBe(true);
+  });
+
+  it('drops proxy suffixes for Piped instances that stopped serving (2026-08-12)', () => {
+    // These instances no longer serve Piped, so their proxy hosts must not
+    // be silently proxiable anymore (see PIPED_INSTANCES refresh).
+    expect(isAllowedMediaUrl('https://pipedproxy.adminforge.de/videoplayback')).toBe(false);
+    expect(isAllowedMediaUrl('https://pipedproxy.leptons.xyz/videoplayback')).toBe(false);
+    expect(isAllowedMediaUrl('https://pipedproxy.drgns.space/videoplayback')).toBe(false);
+    expect(isAllowedMediaUrl('https://pipedproxy.ducks.party/videoplayback')).toBe(false);
+    expect(isAllowedMediaUrl('https://pipedproxy.piped.yt/videoplayback')).toBe(false);
+  });
+
   it('rejects http, credentials, IP literals, and localhost (SSRF)', () => {
     expect(isAllowedMediaUrl('http://rr1.googlevideo.com/videoplayback')).toBe(false);
     expect(isAllowedMediaUrl('https://user:pass@rr1.googlevideo.com/x')).toBe(false);

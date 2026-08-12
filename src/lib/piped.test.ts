@@ -142,11 +142,86 @@ describe('pipedFormats', () => {
     expect(result.formats).toEqual([]);
   });
 
-  it('ships 5 configured public instances', () => {
-    expect(PIPED_INSTANCES).toHaveLength(5);
+  it('ships the refreshed public instance list', () => {
+    expect(PIPED_INSTANCES).toEqual([
+      'https://pipedapi.kavin.rocks',
+      'https://api.piped.private.coffee',
+      'https://pipedapi.reallyaweso.me',
+    ]);
     for (const base of PIPED_INSTANCES) {
       expect(() => new URL(base)).not.toThrow();
       expect(base.startsWith('https://')).toBe(true);
     }
+  });
+
+  it('no longer lists the instances that stopped serving Piped (2026-08-12)', () => {
+    const dead = [
+      'https://pipedapi.adminforge.de', // subdomain now redirects to a blog
+      'https://pipedapi.leptons.xyz', // Cloudflare 502
+      'https://pipedapi.drgns.space', // TLS handshake broken
+      'https://pipedapi.ducks.party', // TLS certificate invalid
+    ];
+    for (const base of dead) {
+      expect(PIPED_INSTANCES).not.toContain(base);
+    }
+  });
+
+  it('records every instance outcome, including the one that succeeded', async () => {
+    let calls = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        calls += 1;
+        if (calls === 1) throw new Error('network down');
+        return jsonResponse(okStreams);
+      }),
+    );
+    const result = await pipedFormats('Y1Z3Q3O7IRE');
+    expect(result.instances).toHaveLength(2);
+    expect(result.instances[0]).toMatchObject({
+      base: PIPED_INSTANCES[0],
+      ok: false,
+      transient: true,
+    });
+    expect(result.instances[0].httpStatus).toBeUndefined();
+    expect(result.instances[0].error).toMatch(/network down/);
+    expect(result.instances[1]).toMatchObject({ base: PIPED_INSTANCES[1], ok: true, httpStatus: 200 });
+  });
+
+  it('marks HTTP 5xx from an instance as transient', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => jsonResponse({ error: 'bad gateway' }, 502)),
+    );
+    const result = await pipedFormats('Y1Z3Q3O7IRE');
+    expect(result.formats).toEqual([]);
+    expect(result.instances).toHaveLength(PIPED_INSTANCES.length);
+    for (const instance of result.instances) {
+      expect(instance.httpStatus).toBe(502);
+      expect(instance.transient).toBe(true);
+      expect(instance.error).toMatch(/502/);
+    }
+    expect(result.error).toMatch(/502/);
+  });
+
+  it('does NOT mark 4xx or video-level errors as transient', async () => {
+    let calls = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        calls += 1;
+        if (calls === 1) return jsonResponse({ error: 'rate limited' }, 429);
+        return jsonResponse({ error: 'Video unavailable' }, 200);
+      }),
+    );
+    const result = await pipedFormats('Y1Z3Q3O7IRE');
+    expect(result.formats).toEqual([]);
+    expect(result.instances[0]).toMatchObject({ httpStatus: 429, transient: false });
+    expect(result.instances[1]).toMatchObject({
+      httpStatus: 200,
+      ok: false,
+      transient: false,
+      error: 'Video unavailable',
+    });
   });
 });

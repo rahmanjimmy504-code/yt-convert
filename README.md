@@ -179,7 +179,7 @@ Set values in a `.env.local` file (excluded from Git via `.gitignore`) or in you
 
 YouTube / YT Music downloads try sources in order, stopping at the first that returns a direct, allowlisted stream:
 
-1. **Innertube clients** — `ANDROID`, `IOS`, `ANDROID_VR`, `VISIONOS`, then two embedded-player clients (`WEB_EMBEDDED_PLAYER` with the public API key, and `TVHTML5_SIMPLY_EMBEDDED_PLAYER`). The embedded clients bypass most age-gate / `LOGIN_REQUIRED` responses automatically because smart-TV/web embeds have no login flow.
+1. **Innertube clients** — `ANDROID`, `IOS`, `ANDROID_VR`, `VISIONOS`, then `WEB_EMBEDDED_PLAYER` (current version, public API key, non-YouTube `embedUrl`) and finally the `TVHTML5` TV client. The `WEB_EMBEDDED_PLAYER` client bypasses most age-gate / `LOGIN_REQUIRED` responses automatically because it presents itself as a third-party iframe embed (which has no login flow); the old `TVHTML5_SIMPLY_EMBEDDED_PLAYER` client was removed after YouTube retired it ("YouTube is no longer supported in this application or device").
 2. **Invidious instances** — public metadata/stream mirrors (secondary; often rate-limited).
 3. **Piped instances** — public NewPipeExtractor-backed mirrors that handle PO tokens / BotGuard server-side; the most reliable fallback for music-label videos. Stream URLs come from each instance's own `pipedproxy.*` host, which is why those hosts are on the media allowlist.
 4. **External PO-token server** (optional) — if `PO_TOKEN_SERVER_URL` + `PO_TOKEN_SERVER_AUTH` are configured, a token is fetched once (cached ~30 min) and attached to the Innertube requests under `serviceIntegrityDimensions`.
