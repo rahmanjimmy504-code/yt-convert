@@ -49,7 +49,10 @@ describe('catalog', () => {
       formats: ['mp3'],
       status: 'working',
     });
-    expect(getConverterByName('FBDown')?.status).toBe('unavailable');
+    expect(getConverterByName('FBDown')).toMatchObject({
+      url: 'https://fdown.net/',
+      status: 'working',
+    });
     expect(getConverterByName('VDFR')?.status).toBe('unavailable');
     expect(getConverterByName('SpotDown')?.status).toBe('working');
     expect(getConverterByName('Y2Mate')).toBeUndefined();
