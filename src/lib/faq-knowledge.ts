@@ -375,9 +375,23 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
     ],
   },
   {
+    id: "youtube-bot-check",
+    q: "Why does YouTube say 'Sign in to confirm you're not a bot'?",
+    a: "That LOGIN_REQUIRED text is a BotGuard challenge on this website server's public IP, not proof that a typical public video is private or age-restricted. Download here automatically tries public Piped/Invidious relays and the 9Convert/dlsrv farm next. If those paths also return no stream, use the 9Convert card below the result. Visitors do not need to run a PO-token service or Termux. This does not unlock private, DRM, members-only, deleted, or region-blocked videos, and YT Convert does not claim every YouTube video works.",
+    keywords: [
+      "sign in to confirm you're not a bot",
+      "confirm you are not a bot",
+      "youtube bot check",
+      "botguard",
+      "vercel ip",
+      "LOGIN_REQUIRED bot",
+      "9convert fallback",
+    ],
+  },
+  {
     id: "age-restricted",
     q: "Why do I get an age-restricted or login-required error?",
-    a: "Some uploads are age-gated or marked as login-required by their uploaders or by the platform. Without a signed-in session, the platform refuses to serve the stream (LOGIN_REQUIRED). If the site owner has enabled the session cookies feature, you will see an 'Advanced' section on the download panel — expand it, paste your session cookies (from browser DevTools → Application → Cookies → .youtube.com), and retry. The cookies are forwarded for that single download only and are never stored on the server. Private uploads cannot be downloaded unless you own the account. If the cookies feature is not available, use a third-party converter from the list below the result card.",
+    a: "Some uploads are genuinely age-gated or login-required. This is different from the 'confirm you're not a bot' BotGuard message on the website server's IP. Without a signed-in session, YouTube refuses age-gated playback. If the site owner has enabled the optional session-cookies field, those cookies are forwarded for that single request and never stored; otherwise use a converter card below. YT Convert does not support private, members-only, deleted, DRM, or region-blocked videos.",
     keywords: [
       "age restricted",
       "age gate",

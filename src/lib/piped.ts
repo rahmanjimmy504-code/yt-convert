@@ -1,13 +1,10 @@
 /**
- * Piped API client — a TERTIARY fallback for YouTube videos that the
- * Innertube clients and Invidious instances cannot serve.
+ * Piped API client — a mirror fallback after direct Innertube comes up empty.
  *
- * Public Piped instances run NewPipeExtractor server-side, where the
- * maintainers keep up with YouTube's PO-token / BotGuard challenges so
- * individual self-hosters don't have to. That makes Piped the most reliable
- * fallback for music-label and otherwise-throttled videos. We only reach for
- * it after every direct Innertube client and every Invidious instance has
- * already come up empty, so a healthy video never pays the extra hop.
+ * Public Piped instances run NewPipeExtractor server-side, where maintainers
+ * keep up with YouTube's PO-token / BotGuard changes. Piped, Invidious, and
+ * embed fallbacks are raced so one dead public host cannot serialize several
+ * serverless timeouts. A healthy direct Innertube video never pays this hop.
  *
  * Stream URLs come back on each instance's own proxy host (e.g.
  * `pipedproxy-bom.kavin.rocks/videoplayback?...`), not on googlevideo.com.
@@ -15,13 +12,14 @@
  * be proxied by /api/convert.
  */
 
+import { isAllowedMediaUrl } from './media-hosts';
 import type { PlayerFormat } from './youtube-formats';
 
 /**
- * Public Piped API instances, tried in order until one answers with streams.
- * The official kavin.rocks instance first because it fronts multiple
- * regional edge proxies, followed by the instances that were verifiably
- * alive when this list was last refreshed.
+ * Public Piped API instances, queried concurrently and preferred in this
+ * order when more than one answers. The official kavin.rocks instance comes
+ * first; additional hosts are from TeamPiped's public list and remain
+ * best-effort because public instance health changes without notice.
  *
  * Refresh notes (2026-08-12, probed from this environment + TeamPiped docs
  * https://github.com/TeamPiped/documentation/blob/main/content/docs/public-instances/index.md):
@@ -41,14 +39,23 @@ import type { PlayerFormat } from './youtube-formats';
  *   - pipedapi.reallyaweso.me — added: still listed in the docs and the
  *     server answers HTTP 200, though it returns empty bodies to crawlers
  *     (its real health is unverified — the live workflow will show it).
+ *   - nosebs, privacy.com.de, owo.si, codespace.cz, darkness.services, and
+ *     orangenet.cc — additional documented fallbacks, all raced rather than
+ *     serialised. Their proxy suffixes are explicitly allowlisted.
  *
- * Dead instances simply cost one skipped request because callers try them in
- * order and move on.
+ * Dead instances add at most one shared timeout because all calls run in
+ * parallel.
  */
 export const PIPED_INSTANCES = [
   'https://pipedapi.kavin.rocks',
   'https://api.piped.private.coffee',
   'https://pipedapi.reallyaweso.me',
+  'https://pipedapi.nosebs.ru',
+  'https://piped-api.privacy.com.de',
+  'https://pipedapi.owo.si',
+  'https://piped-api.codespace.cz',
+  'https://pipedapi.darkness.services',
+  'https://pipedapi.orangenet.cc',
 ] as const;
 
 const PIPED_TIMEOUT_MS = 12_000;
@@ -194,21 +201,24 @@ export interface PipedResult {
  * googlevideo.com; callers must accept those hosts (see isAllowedMediaUrl and
  * the PIPED_PROXY_HOSTS allowlist).
  */
-export async function pipedFormats(videoId: string): Promise<PipedResult> {
-  let lastError: string | undefined;
-  const instances: PipedInstanceResult[] = [];
+interface PipedAttempt {
+  outcome: PipedInstanceResult;
+  formats: PlayerFormat[];
+}
 
-  for (const base of PIPED_INSTANCES) {
-    try {
-      const response = await fetch(pipedStreamsUrl(base, videoId), {
-        headers: {
-          Accept: 'application/json',
-          'User-Agent': 'Mozilla/5.0 (compatible; YTConvert/1.0)',
-        },
-        signal: AbortSignal.timeout(PIPED_TIMEOUT_MS),
-      });
-      if (!response.ok) {
-        const outcome: PipedInstanceResult = {
+async function queryPipedInstance(base: string, videoId: string): Promise<PipedAttempt> {
+  try {
+    const response = await fetch(pipedStreamsUrl(base, videoId), {
+      headers: {
+        Accept: 'application/json',
+        'User-Agent': 'Mozilla/5.0 (compatible; YTConvert/1.0)',
+      },
+      signal: AbortSignal.timeout(PIPED_TIMEOUT_MS),
+    });
+    if (!response.ok) {
+      return {
+        formats: [],
+        outcome: {
           base,
           ok: false,
           httpStatus: response.status,
@@ -216,43 +226,54 @@ export async function pipedFormats(videoId: string): Promise<PipedResult> {
           // 5xx (including the classic Piped 502 Bad Gateway) is a server
           // problem, not a statement about the video — safe to retry.
           transient: response.status >= 500,
-        };
-        instances.push(outcome);
-        lastError = outcome.error;
-        continue;
-      }
-      const data = (await response.json()) as PipedStreamsResponse;
-
-      // Piped returns 200 with an `error` string for age-restricted / private /
-      // region-locked / unavailable videos. Capture it but keep trying — a
-      // different instance may still have the stream. These reasons are
-      // PERMANENT (the video itself is blocked), so never marked transient.
-      const errorMessage = asString(data.error) || asString(data.message);
-      if (errorMessage && (!Array.isArray(data.videoStreams) || data.videoStreams.length === 0)) {
-        instances.push({ base, ok: false, httpStatus: response.status, error: errorMessage, transient: false });
-        lastError = errorMessage;
-        continue;
-      }
-
-      const audio = (data.audioStreams || []).map(item => mapStream(item, 'audio'));
-      const video = (data.videoStreams || []).map(item => mapStream(item, 'video'));
-      const formats = [...video, ...audio].filter(
-        f => typeof f.url === 'string' && /^https:\/\//i.test(f.url),
-      );
-      if (formats.length > 0) {
-        instances.push({ base, ok: true, httpStatus: response.status });
-        return { formats, instances };
-      }
-      instances.push({ base, ok: false, httpStatus: response.status, error: 'no usable streams', transient: false });
-      lastError = 'no usable streams';
-    } catch (err) {
-      // Network error / timeout / malformed JSON — try the next instance.
-      // Network failures are transient by nature (a retry may succeed).
-      const message = err instanceof Error ? err.message : String(err);
-      instances.push({ base, ok: false, error: message, transient: true });
-      lastError = message;
+        },
+      };
     }
-  }
+    const data = (await response.json()) as PipedStreamsResponse;
 
+    // Piped returns 200 with an `error` string for age-restricted / private /
+    // region-locked / unavailable videos. Keep the reason for diagnostics;
+    // another regional instance may still return streams.
+    const errorMessage = asString(data.error) || asString(data.message);
+    if (errorMessage && (!Array.isArray(data.videoStreams) || data.videoStreams.length === 0)) {
+      return {
+        formats: [],
+        outcome: { base, ok: false, httpStatus: response.status, error: errorMessage, transient: false },
+      };
+    }
+
+    const audio = (data.audioStreams || []).map(item => mapStream(item, 'audio'));
+    const video = (data.videoStreams || []).map(item => mapStream(item, 'video'));
+    const formats = [...video, ...audio].filter(
+      format => typeof format.url === 'string' && isAllowedMediaUrl(format.url),
+    );
+    if (formats.length) {
+      return { formats, outcome: { base, ok: true, httpStatus: response.status } };
+    }
+    return {
+      formats: [],
+      outcome: { base, ok: false, httpStatus: response.status, error: 'no usable streams', transient: false },
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return {
+      formats: [],
+      outcome: { base, ok: false, error: message, transient: true },
+    };
+  }
+}
+
+export async function pipedFormats(videoId: string): Promise<PipedResult> {
+  // Public instances disappear frequently. Querying them serially multiplied
+  // a 12-second timeout by the number of dead hosts and exceeded serverless
+  // request limits. Race all of them, but preserve configured order when more
+  // than one succeeds so behaviour and diagnostics remain deterministic.
+  const attempts = await Promise.all(
+    PIPED_INSTANCES.map(base => queryPipedInstance(base, videoId)),
+  );
+  const instances = attempts.map(attempt => attempt.outcome);
+  const winner = attempts.find(attempt => attempt.formats.length > 0);
+  if (winner) return { formats: winner.formats, instances };
+  const lastError = [...instances].reverse().find(instance => instance.error)?.error;
   return { formats: [], error: lastError, instances };
 }

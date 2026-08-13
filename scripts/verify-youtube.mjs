@@ -63,6 +63,7 @@ import {
   playabilityMessage,
 } from '../src/lib/extract.ts';
 import { pipedFormats } from '../src/lib/piped.ts';
+import { nineConvertFormats } from '../src/lib/nineconvert.ts';
 import { cobaltFormats, cobaltConfigFromEnv, isCobaltConfigured } from '../src/lib/cobalt.ts';
 import { isPoTokenServerConfigured } from '../src/lib/po-token.ts';
 import { extensionForMime, isUsableFormatUrl, pickYouTubeFormat, planVideoDownload } from '../src/lib/youtube-formats.ts';
@@ -182,7 +183,7 @@ for (const client of INNERTUBE_CLIENTS) {
   );
 }
 
-/* -- 2. The real code path: Innertube -> Invidious -> Piped -- */
+/* -- 2. The extraction sources: Innertube -> mirrors -> 9Convert -> cobalt -- */
 console.log('\n--- innertubeFormats() ---');
 const result = await retryOnce('innertubeFormats', () => innertubeFormats(videoId), isInnertubeTransient);
 let formats = result.formats;
@@ -220,6 +221,19 @@ if (!formats.length) {
   check(formats.length > 0, 'pipedFormats() fallback returned formats', piped.error || `${formats.length} formats`);
 }
 
+/* -- Public 9Convert/dlsrv farm, after mirrors and before cobalt. Probe both
+   kinds because the normal request asks for only the format the user chose. -- */
+if (!formats.length) {
+  console.log('  → falling back to the public 9Convert/dlsrv farm…');
+  const [farmVideo, farmAudio] = await Promise.all([
+    nineConvertFormats(videoId, 'mp4', '360'),
+    nineConvertFormats(videoId, 'mp3', '128'),
+  ]);
+  formats = [...farmVideo, ...farmAudio];
+  if (formats.length) via = '9convert';
+  check(formats.length > 0, 'nineConvertFormats() fallback returned formats', `${formats.length} formats`);
+}
+
 /* -- Last resort: cobalt. Probed even when unconfigured, so the log states
    plainly why it did nothing. -- */
 if (!formats.length) {
@@ -247,15 +261,15 @@ if (!formats.length) {
 }
 
 if (!formats.length) {
-  console.log('\n✗ No formats from any source (Innertube, Invidious, Piped, or cobalt) — extraction is broken for this video.');
+  console.log('\n✗ No formats from any source (Innertube, Invidious, Piped, 9Convert, or cobalt).');
   console.log('  If every Innertube client says "Sign in to confirm you\'re not a bot", the runner IP is');
-  console.log('  being BotGuard-challenged — the durable fix is deploying the po-token-server sidecar');
-  console.log('  (see po-token-server/README.md and the PO_TOKEN_SERVER_URL/PO_TOKEN_SERVER_AUTH env vars).');
+  console.log('  being BotGuard-challenged. An operator-owned PO-token path helps only when token minting,');
+  console.log('  Innertube, and googlevideo share this same public egress IP (one VPS/site or YT_EGRESS_PROXY).');
   process.exit(1);
 }
 
-// Innertube/Invidious serve googlevideo.com; the Piped fallback serves from
-// each instance's own pipedproxy.* host. Both are allowlisted media hosts.
+// Innertube/Invidious can serve googlevideo.com; mirror/farm fallbacks serve
+// from their explicitly allowlisted proxy/file hosts.
 const allAllowed = formats.every(f => isAllowedMediaUrl(f.url));
 check(allAllowed, `every returned format URL is an allowlisted media host (source: ${via})`);
 

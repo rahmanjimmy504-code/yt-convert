@@ -5,29 +5,35 @@ universal YouTube downloader and it does not claim to be.
 
 ## What works
 
-Typical public YouTube / YouTube Music videos, when Innertube (or Invidious /
-Piped / an operator-configured cobalt instance) returns a **direct** HTTPS
-URL on an allowlisted CDN. Progressive MP4 (often 360p/720p) and AAC/M4A
-audio. SoundCloud progressive tracks. Public TikTok / X / Instagram / Facebook
-embeds when those sites still expose a file.
+Typical public YouTube / YouTube Music videos, when Music-first Innertube, a
+public Piped/Invidious relay, the 9Convert/dlsrv farm, or an
+operator-configured cobalt instance returns a **direct** HTTPS URL on an
+allowlisted CDN. Progressive MP4 (often 360p/720p) and AAC/M4A audio; the farm
+may return a completed MP3/MP4 conversion. SoundCloud progressive tracks.
+Public TikTok / X / Instagram / Facebook embeds when those sites still expose
+a file.
 
 Sites such as [9convert.org](https://9convert.org/) follow the same pattern
 every browser converter uses: the user pastes a watch URL, the backend asks
 YouTube (or a mirror) for `streamingData`, picks an itag, and either redirects
-the browser at `googlevideo.com` or muxes adaptive tracks server-side. They
-do **not** decrypt Widevine, they do **not** open private videos, and they
-fail on the same BotGuard / SABR / region walls we document here.
+the browser at `googlevideo.com` or muxes adaptive tracks server-side. Their
+separate farm IP can succeed when Vercel's IP is challenged, but it is not a
+universal bypass. They do **not** decrypt Widevine, open private/member-only
+videos, restore deleted uploads, or override region policy.
 
 **Why 9convert can get Tobu – Hope and a Vercel deploy of ours often cannot:**
 that track (`Y1Z3Q3O7IRE`) is a music-label upload. Regular `ANDROID` now
 answers SABR-only / empty `streamingData`. 9convert’s `embed.dlsrv.online`
 farm uses YouTube **Music** clients (`ANDROID_MUSIC` / `IOS_MUSIC`), takes
 progressive itag 18 when no adaptive AAC exists, and mints PO tokens on the
-**same IP** that fetches googlevideo. We now do the first two of those. The
-third still requires the same public IP. A free Android phone can be that
-IP (Termux HTTP proxy or Tailscale exit node) — see
-[docs/android-egress.md](android-egress.md). Tokens minted on the phone
-and spent from Vercel still fail.
+**same IP** that fetches googlevideo. We do the first two directly and can use
+the public dlsrv farm as a fallback. Operators who mint their own tokens still
+need the third condition: the token sidecar, Innertube request, and
+`googlevideo` fetch must share one public IP. A one-VPS Compose stack, a phone
+that is the website, or `YT_EGRESS_PROXY` can provide that path — see
+[docs/android-egress.md](android-egress.md). Tokens minted on the phone and
+spent from Vercel still fail. Termux is not required for Vercel-only plus the
+public 9Convert fallback.
 
 ## What we do not do
 

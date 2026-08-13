@@ -20,20 +20,38 @@ const ALLOWED_SUFFIXES = [
   'twimg.com',
   'cdninstagram.com',
   'fbcdn.net',
-  // Piped tertiary fallback — each instance serves streams from its own
-  // proxy host. The well-known public proxies are listed by default; an
-  // operator can approve additional self-hosted proxies via PIPED_PROXY_HOSTS
-  // (comma-separated suffixes, e.g. "pipedproxy.example.com").
-  // Kept in step with PIPED_INSTANCES in ./piped.ts (refreshed 2026-08-12):
-  // suffixes for instances that stopped serving Piped were removed.
+  // Public 9Convert/dlsrv farm. These are the only farm-owned hosts we proxy;
+  // a dlink on any other hostname is rejected before /api/convert fetches it.
+  'dlsrv.online',
+  '9convert.org',
+  '9convert.com',
+  // Piped mirror fallback — each instance serves streams from its own proxy
+  // host. Keep these suffixes in step with PIPED_INSTANCES in ./piped.ts.
   'kavin.rocks',
   'private.coffee',
   'reallyaweso.me',
+  'nosebs.ru',
+  'privacy.com.de',
+  'owo.si',
+  'codespace.cz',
+  'darkness.services',
+  'orangenet.cc',
   // Cobalt last-resort fallback — tunnel/redirect URLs are served from the
   // instance's own host. The official instance is allowlisted by default;
   // self-hosted instances (the only ones that actually work for YouTube) are
   // approved by the operator via COBALT_PROXY_HOSTS.
   'cobalt.tools',
+] as const;
+
+// Invidious /latest_version with local=true keeps googlevideo retrieval on
+// the mirror's IP. These are exact API hosts rather than broad parent-domain
+// suffixes, so unrelated services on the same domains are not proxiable.
+const ALLOWED_EXACT_HOSTS = [
+  'invidious.tiekoetter.com',
+  'invidious.f5.si',
+  'yt.chocolatemoo53.com',
+  'inv.nadeko.net',
+  'invidious.nerdvpn.de',
 ] as const;
 
 /**
@@ -73,6 +91,7 @@ function extraCobaltSuffixes(): string[] {
 
 function isAllowedHost(host: string): boolean {
   const h = host.toLowerCase();
+  if (ALLOWED_EXACT_HOSTS.some(allowed => h === allowed)) return true;
   if (ALLOWED_SUFFIXES.some(suffix => h === suffix || h.endsWith(`.${suffix}`))) return true;
   const extras = [...extraPipedSuffixes(), ...extraCobaltSuffixes()];
   return extras.some(suffix => h === suffix || h.endsWith(`.${suffix}`));

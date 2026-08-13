@@ -27,9 +27,9 @@ describe('Innertube client table', () => {
   it('only ships clients known to return direct URLs', () => {
     const names = INNERTUBE_CLIENTS.map(c => c.clientName);
     expect(names).toEqual([
-      'ANDROID',
       'ANDROID_MUSIC',
       'IOS_MUSIC',
+      'ANDROID',
       'IOS',
       'ANDROID_VR',
       'VISIONOS',
@@ -38,8 +38,11 @@ describe('Innertube client table', () => {
     ]);
   });
 
-  it('tries ANDROID first and pairs each client with a matching id', () => {
-    expect(INNERTUBE_CLIENTS[0].clientName).toBe('ANDROID');
+  it('tries 9Convert-style Music clients first and pairs each client with a matching id', () => {
+    expect(INNERTUBE_CLIENTS.slice(0, 2).map(client => client.clientName)).toEqual([
+      'ANDROID_MUSIC',
+      'IOS_MUSIC',
+    ]);
     const ids = Object.fromEntries(INNERTUBE_CLIENTS.map(c => [c.clientName, c.clientId]));
     expect(ids).toMatchObject({
       ANDROID: '3',
@@ -570,13 +573,28 @@ describe('innertubeFormats', () => {
       }),
     );
     await innertubeFormats('dQw4w9WgXcQ');
-    // The first call (ANDROID) has no key.
+    // The first call (ANDROID_MUSIC) has no key.
     expect(urls[0]).not.toContain('key=');
     // Exactly one call carries the key: the WEB_EMBEDDED_PLAYER request.
     const webCalls = urls.filter(u => u.includes('key='));
     expect(webCalls).toHaveLength(1);
     expect(webCalls[0]).toContain('AIza');
     expect(webCalls[0]).toMatch(/[?&]key=AIza/);
+  });
+
+  it('keeps client-bound PO tokens off mismatched Innertube clients', () => {
+    const music = INNERTUBE_CLIENTS.find(client => client.clientName === 'ANDROID_MUSIC')!;
+    const android = INNERTUBE_CLIENTS.find(client => client.clientName === 'ANDROID')!;
+    const poToken = {
+      visitorData: 'VISITOR_DATA_TOKEN',
+      poToken: 'PO_TOKEN_VALUE',
+      client: 'ANDROID_MUSIC',
+    };
+    const musicBody = buildInnertubePlayerRequest(music, 'dQw4w9WgXcQ', { poToken }).body;
+    const androidBody = buildInnertubePlayerRequest(android, 'dQw4w9WgXcQ', { poToken }).body;
+    expect((musicBody.serviceIntegrityDimensions as { poToken?: string })?.poToken).toBe('PO_TOKEN_VALUE');
+    expect(androidBody.serviceIntegrityDimensions).toBeUndefined();
+    expect((androidBody.context as { client: { visitorData?: string } }).client.visitorData).toBe('VISITOR_DATA_TOKEN');
   });
 
   it('attaches an externally-provided PO token to non-TV client requests', async () => {
@@ -610,8 +628,8 @@ describe('innertubeFormats', () => {
     await innertubeFormats('dQw4w9WgXcQ', {
       poToken: { visitorData: 'VISITOR_DATA_TOKEN', poToken: 'PO_TOKEN_VALUE' },
     });
-    // The first client (ANDROID) receives both visitorData and the poToken.
-    expect(calls[0].client).toBe('ANDROID');
+    // The first Music client receives both visitorData and the poToken.
+    expect(calls[0].client).toBe('ANDROID_MUSIC');
     expect(calls[0].hasVisitorData).toBe(true);
     expect(calls[0].hasPoToken).toBe(true);
     // The PO token is NOT attached to the TV client (it ignores it and

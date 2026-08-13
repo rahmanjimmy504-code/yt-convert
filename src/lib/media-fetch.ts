@@ -27,6 +27,19 @@ export async function fetchAllowedMedia(url: string, init: RequestInit = {}, hop
   if (!headers.has('User-Agent')) {
     headers.set('User-Agent', 'Mozilla/5.0 (compatible; YTConvert/1.0)');
   }
+  // 9Convert's browser flow opens the dlink from its result page. Preserve a
+  // same-site Referer for farm-owned file endpoints that enforce that normal
+  // hotlink check; never forward the user's original page or credentials.
+  if (!headers.has('Referer')) {
+    const host = new URL(url).hostname.toLowerCase();
+    if (host === 'dlsrv.online' || host.endsWith('.dlsrv.online')) {
+      headers.set('Referer', 'https://embed.dlsrv.online/');
+    } else if (host === '9convert.org' || host.endsWith('.9convert.org')) {
+      headers.set('Referer', 'https://9convert.org/');
+    } else if (host === '9convert.com' || host.endsWith('.9convert.com')) {
+      headers.set('Referer', 'https://9convert.com/');
+    }
+  }
 
   // Time out only the connection / headers phase. Once headers arrive we
   // clear the timer so a long progressive download is not aborted mid-stream.

@@ -25,6 +25,25 @@ describe('isAllowedMediaUrl', () => {
     expect(isAllowedMediaUrl('https://pipedproxy.api.piped.private.coffee/videoplayback?id=1')).toBe(true);
     expect(isAllowedMediaUrl('https://proxy.piped.private.coffee/videoplayback?id=1')).toBe(true);
     expect(isAllowedMediaUrl('https://pipedproxy.reallyaweso.me/videoplayback?id=1')).toBe(true);
+    expect(isAllowedMediaUrl('https://pipedproxy.nosebs.ru/videoplayback?id=1')).toBe(true);
+    expect(isAllowedMediaUrl('https://proxy.piped-api.codespace.cz/videoplayback?id=1')).toBe(true);
+    expect(isAllowedMediaUrl('https://pipedproxy.orangenet.cc/videoplayback?id=1')).toBe(true);
+  });
+
+  it('allows only the public 9Convert farm suffixes and googlevideo dlinks', () => {
+    expect(isAllowedMediaUrl('https://embed.dlsrv.online/file.mp4')).toBe(true);
+    expect(isAllowedMediaUrl('https://cdn.9convert.org/file.mp3')).toBe(true);
+    expect(isAllowedMediaUrl('https://s1.9convert.com/file.mp4')).toBe(true);
+    expect(isAllowedMediaUrl('https://rr1---sn-test.googlevideo.com/videoplayback')).toBe(true);
+    expect(isAllowedMediaUrl('https://dlsrv.online.evil.example/file')).toBe(false);
+    expect(isAllowedMediaUrl('https://evil9convert.org/file')).toBe(false);
+  });
+
+  it('allows local Invidious latest_version streams only on configured mirror suffixes', () => {
+    expect(isAllowedMediaUrl('https://invidious.tiekoetter.com/latest_version?id=x&itag=18&local=true')).toBe(true);
+    expect(isAllowedMediaUrl('https://inv.nadeko.net/videoplayback?id=x')).toBe(true);
+    expect(isAllowedMediaUrl('https://other.nadeko.net/videoplayback?id=x')).toBe(false);
+    expect(isAllowedMediaUrl('https://random-invidious.example/latest_version?id=x')).toBe(false);
   });
 
   it('drops proxy suffixes for Piped instances that stopped serving (2026-08-12)', () => {
@@ -84,6 +103,18 @@ describe('fetchAllowedMedia', () => {
     expect(res.status).toBe(200);
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(fetchMock.mock.calls[0][1].redirect).toBe('manual');
+  });
+
+  it('sends a same-site Referer for 9Convert farm dlinks', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      status: 200,
+      ok: true,
+      headers: { get: () => null },
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    await fetchAllowedMedia('https://media.embed.dlsrv.online/file.mp4');
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    expect(new Headers(init.headers as HeadersInit).get('referer')).toBe('https://embed.dlsrv.online/');
   });
 
   it('forwards a Range header and leaves the body stream to the caller', async () => {
