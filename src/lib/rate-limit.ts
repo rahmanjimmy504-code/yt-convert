@@ -122,6 +122,13 @@ export async function rateLimit(key: string, maxPerWindow: number): Promise<numb
     : memoryRateLimit(key, maxPerWindow);
 }
 
+/**
+ * Read the address supplied by the deployment's trusted ingress proxy.
+ * Vercel overwrites client-supplied forwarding headers, so its first (normally
+ * only) x-forwarded-for value is authoritative. Off Vercel this makes the same
+ * trust assumption: self-hosters must configure their public reverse proxy to
+ * overwrite untrusted forwarding headers before requests reach this app.
+ */
 export function clientIp(request: Request): string {
   return (
     (request.headers.get('x-forwarded-for') || '').split(',')[0].trim() ||

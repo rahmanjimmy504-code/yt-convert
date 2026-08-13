@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { rateLimit } from './rate-limit';
+import { clientIp, rateLimit } from './rate-limit';
 
 beforeEach(() => {
   vi.stubEnv('UPSTASH_REDIS_REST_URL', '');
@@ -10,6 +10,25 @@ afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
+});
+
+describe('clientIp', () => {
+  it('uses the first address supplied by a trusted forwarding proxy', () => {
+    const request = new Request('https://example.com', {
+      headers: { 'X-Forwarded-For': '203.0.113.8, 192.0.2.4' },
+    });
+
+    expect(clientIp(request)).toBe('203.0.113.8');
+  });
+
+  it('falls back to x-real-ip and then unknown off platform', () => {
+    const realIpRequest = new Request('https://example.com', {
+      headers: { 'X-Real-IP': '198.51.100.7' },
+    });
+
+    expect(clientIp(realIpRequest)).toBe('198.51.100.7');
+    expect(clientIp(new Request('https://example.com'))).toBe('unknown');
+  });
 });
 
 describe('in-memory rateLimit', () => {
