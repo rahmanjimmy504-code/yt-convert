@@ -5,10 +5,13 @@ import {
   extractTikTokId,
   extractTweetId,
   innertubeFormats,
+  isBotChallenge,
   isExtractError,
+  playabilityMessage,
   sanitizeYouTubeCookies,
   twitterSyndicationToken,
 } from './extract';
+import { __resetPoTokenCacheForTests } from './po-token';
 
 describe('id parsers', () => {
   it('extracts TikTok video ids', () => {
@@ -280,5 +283,185 @@ describe('extractMedia YouTube fallbacks', () => {
     if (isExtractError(result)) {
       expect(result.error).toMatch(/age-restricted|signed-in account/i);
     }
+  });
+});
+
+describe('isBotChallenge / playabilityMessage', () => {
+  it('detects the BotGuard IP challenge behind LOGIN_REQUIRED', () => {
+    expect(isBotChallenge('LOGIN_REQUIRED', "Sign in to confirm you're not a bot")).toBe(true);
+    expect(isBotChallenge('LOGIN_REQUIRED', 'Sign in to confirm you’re not a bot')).toBe(true);
+    expect(isBotChallenge('ERROR', 'We have detected unusual traffic from your network')).toBe(true);
+  });
+
+  it('does not mistake a real age gate for a bot check', () => {
+    expect(isBotChallenge('LOGIN_REQUIRED', 'Sign in to confirm your age')).toBe(false);
+    expect(isBotChallenge('LOGIN_REQUIRED', undefined)).toBe(false);
+    expect(isBotChallenge('AGE_VERIFICATION_REQUIRED', 'This video may be inappropriate')).toBe(false);
+  });
+
+  it('reports a bot check honestly instead of "age-restricted or private"', () => {
+    const msg = playabilityMessage('LOGIN_REQUIRED', "Sign in to confirm you're not a bot");
+    expect(msg).toMatch(/bot check/i);
+    expect(msg).not.toMatch(/age-restricted/i);
+    expect(msg).toMatch(/po-token server/i);
+  });
+
+  it('says so when a sidecar is configured but did not clear the challenge', () => {
+    const msg = playabilityMessage('LOGIN_REQUIRED', "Sign in to confirm you're not a bot", true);
+    expect(msg).toMatch(/did not clear it/i);
+  });
+
+  it('still reports genuine age gates as before', () => {
+    expect(playabilityMessage('LOGIN_REQUIRED', 'Sign in to confirm your age')).toMatch(
+      /age-restricted or private/i,
+    );
+  });
+});
+
+describe('PO-token bot-challenge retry', () => {
+  const SAVED = { ...process.env };
+
+  afterEach(() => {
+    process.env = { ...SAVED };
+    vi.unstubAllGlobals();
+    __resetPoTokenCacheForTests();
+  });
+
+  function botWall() {
+    return new Response(
+      JSON.stringify({
+        playabilityStatus: { status: 'LOGIN_REQUIRED', reason: "Sign in to confirm you're not a bot" },
+      }),
+      { headers: { 'Content-Type': 'application/json' } },
+    );
+  }
+
+  it('retries the player request once with a freshly minted token', async () => {
+    process.env.PO_TOKEN_SERVER_URL = 'https://token.example';
+    process.env.PO_TOKEN_SERVER_AUTH = 'secret';
+    let tokenCalls = 0;
+    const playerBodies: string[] = [];
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (url.startsWith('https://token.example')) {
+          tokenCalls += 1;
+          return new Response(
+            JSON.stringify({ visitorData: `VD${tokenCalls}`, poToken: `POT${tokenCalls}` }),
+            { headers: { 'Content-Type': 'application/json' } },
+          );
+        }
+        if (url.includes('youtubei/v1/player')) {
+          playerBodies.push(String(init?.body ?? ''));
+          return botWall();
+        }
+        return new Response('{}', { status: 404 });
+      }),
+    );
+
+    await extractMedia('youtube', 'https://www.youtube.com/watch?v=Y1Z3Q3O7IRE', 'mp4', 'best');
+
+    // Two token fetches: the up-front one and the forced refresh.
+    expect(tokenCalls).toBe(2);
+    expect(playerBodies.some(b => b.includes('POT1'))).toBe(true);
+    expect(playerBodies.some(b => b.includes('POT2'))).toBe(true);
+  });
+
+  it('does not retry when no PO-token server is configured', async () => {
+    let tokenCalls = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        if (url.startsWith('https://token.example')) {
+          tokenCalls += 1;
+          return new Response('{}', { status: 500 });
+        }
+        if (url.includes('youtubei/v1/player')) return botWall();
+        return new Response('{}', { status: 404 });
+      }),
+    );
+
+    const result = await extractMedia('youtube', 'https://www.youtube.com/watch?v=Y1Z3Q3O7IRE', 'mp4', 'best');
+    expect(tokenCalls).toBe(0);
+    expect(isExtractError(result)).toBe(true);
+    if (isExtractError(result)) expect(result.error).toMatch(/bot check/i);
+  });
+});
+
+describe('cobalt last-resort fallback through extractMedia', () => {
+  const SAVED = { ...process.env };
+
+  afterEach(() => {
+    process.env = { ...SAVED };
+    vi.unstubAllGlobals();
+  });
+
+  /** Every upstream source (Innertube/Invidious/Piped) returns nothing. */
+  function stubDeadUpstreams(cobaltPayload: unknown) {
+    const calls: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        calls.push(url);
+        if (url.startsWith('https://cobalt.example.com')) {
+          return new Response(JSON.stringify(cobaltPayload), {
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        return new Response('{}', { status: 404 });
+      }),
+    );
+    return calls;
+  }
+
+  it('serves an mp3 from a cobalt tunnel when everything else is empty', async () => {
+    process.env.COBALT_API_URL = 'https://cobalt.example.com';
+    process.env.COBALT_PROXY_HOSTS = 'cobalt.example.com';
+    stubDeadUpstreams({ status: 'tunnel', url: 'https://cobalt.example.com/tunnel?id=1' });
+
+    const result = await extractMedia('youtube', 'https://www.youtube.com/watch?v=Y1Z3Q3O7IRE', 'mp3', 'best');
+    expect(isExtractError(result)).toBe(false);
+    if (!isExtractError(result)) {
+      expect(result.url).toBe('https://cobalt.example.com/tunnel?id=1');
+      expect(result.mimeType).toBe('audio/mpeg');
+      expect(result.extension).toBe('mp3');
+    }
+  });
+
+  it('serves an mp4 from a cobalt tunnel', async () => {
+    process.env.COBALT_API_URL = 'https://cobalt.example.com';
+    process.env.COBALT_PROXY_HOSTS = 'cobalt.example.com';
+    stubDeadUpstreams({ status: 'tunnel', url: 'https://cobalt.example.com/tunnel?id=2' });
+
+    const result = await extractMedia('youtube', 'https://www.youtube.com/watch?v=Y1Z3Q3O7IRE', 'mp4', 'best');
+    expect(isExtractError(result)).toBe(false);
+    if (!isExtractError(result)) expect(result.mimeType).toBe('video/mp4');
+  });
+
+  it('refuses a cobalt URL that is not on the media allowlist', async () => {
+    process.env.COBALT_API_URL = 'https://cobalt.example.com';
+    delete process.env.COBALT_PROXY_HOSTS;
+    stubDeadUpstreams({ status: 'tunnel', url: 'https://evil.example/tunnel?id=3' });
+
+    const result = await extractMedia('youtube', 'https://www.youtube.com/watch?v=Y1Z3Q3O7IRE', 'mp4', 'best');
+    expect(isExtractError(result)).toBe(true);
+  });
+
+  it('surfaces a cobalt refusal code in the error message', async () => {
+    process.env.COBALT_API_URL = 'https://cobalt.example.com';
+    stubDeadUpstreams({ status: 'error', error: { code: 'error.api.youtube.login' } });
+
+    const result = await extractMedia('youtube', 'https://www.youtube.com/watch?v=Y1Z3Q3O7IRE', 'mp4', 'best');
+    expect(isExtractError(result)).toBe(true);
+    if (isExtractError(result)) expect(result.error).toMatch(/error\.api\.youtube\.login/);
+  });
+
+  it('is never called when COBALT_API_URL is unset', async () => {
+    delete process.env.COBALT_API_URL;
+    const calls = stubDeadUpstreams({ status: 'tunnel', url: 'https://cobalt.example.com/x' });
+
+    await extractMedia('youtube', 'https://www.youtube.com/watch?v=Y1Z3Q3O7IRE', 'mp4', 'best');
+    expect(calls.some(u => u.startsWith('https://cobalt.example.com'))).toBe(false);
   });
 });

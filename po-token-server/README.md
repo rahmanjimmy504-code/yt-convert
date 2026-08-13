@@ -78,6 +78,20 @@ PO_TOKEN_SERVER_AUTH=<the same AUTH_TOKEN the sidecar uses>
 Both must be set; without either, the main app simply does not request a
 token and falls back to its existing Innertube → Invidious → Piped chain.
 
+### One-shot retry on bot challenges
+
+When YouTube refuses every Innertube client with `LOGIN_REQUIRED` +
+*"Sign in to confirm you're not a bot"* (a BotGuard challenge against the
+app server's IP), the main app mints a **fresh** token from this sidecar —
+bypassing its ~30 minute cache — and retries the player request exactly once.
+A burnt or missing token would fail identically on replay, so only a forced
+refresh can change the outcome.
+
+That means this sidecar is asked for a new token slightly more often than the
+TTL alone implies. `TOKEN_TTL_MS` still governs the sidecar's own reuse; the
+retry is bounded to one extra attempt per extraction, so a challenged IP
+cannot turn into a request loop.
+
 ## Configuration
 
 | Variable       | Default                | Purpose                                            |
