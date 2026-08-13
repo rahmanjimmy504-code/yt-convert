@@ -6,10 +6,43 @@ import {
   nineConvertFormats,
 } from './nineconvert';
 
-function json(body: unknown, status = 200): Response {
+function json(body: unknown, status = 200, headers: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...headers },
+  });
+}
+
+function fakeMp4Response(): Response {
+  // Minimal ISO-BMFF ftyp box (32 bytes).
+  const bytes = new Uint8Array(32);
+  const dv = new DataView(bytes.buffer);
+  dv.setUint32(0, 0x20);
+  bytes.set(new TextEncoder().encode('ftyp'), 4);
+  bytes.set(new TextEncoder().encode('isom'), 8);
+  dv.setUint32(12, 0x200);
+  bytes.set(new TextEncoder().encode('isomavc1mp41dash'), 16);
+  return new Response(bytes, {
+    status: 200,
+    headers: {
+      'Content-Type': 'video/mp4',
+      'Content-Length': String(bytes.length),
+    },
+  });
+}
+
+function fakeMp3Response(): Response {
+  const bytes = new Uint8Array(256);
+  bytes.set(new TextEncoder().encode('ID3'), 0);
+  bytes[3] = 0x03; bytes[4] = 0x00;
+  bytes[10] = 0xff; bytes[11] = 0xfb;
+  return new Response(bytes, {
+    status: 206,
+    headers: {
+      'Content-Type': 'audio/mpeg',
+      'Content-Range': `bytes 0-${bytes.length - 1}/${bytes.length}`,
+      'Content-Length': String(bytes.length),
+    },
   });
 }
 
@@ -18,11 +51,12 @@ afterEach(() => {
 });
 
 describe('nineConvertFormats', () => {
-  it('uses the moved embed.dlsrv /api/info + /api/download contract', async () => {
-    const calls: Array<{ url: string; body: string; headers: Headers }> = [];
-    vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => {
-      calls.push({ url, body: String(init.body), headers: new Headers(init.headers) });
-      if (url.endsWith('/api/info')) {
+  it('uses the moved embed.dlsrv /api/info + /api/download contract and probes dlink', async () => {
+    const calls: Array<{ url: string; body: string; method: string; headers: Headers }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit = {}) => {
+      const method = (init.method || 'GET').toUpperCase();
+      calls.push({ url, body: String(init.body || ''), method, headers: new Headers(init.headers) });
+      if (url.endsWith('/api/info') && method === 'POST') {
         return json({
           status: 'info',
           info: {
@@ -33,8 +67,11 @@ describe('nineConvertFormats', () => {
           },
         });
       }
-      if (url.endsWith('/api/download/mp4')) {
+      if (url.endsWith('/api/download/mp4') && method === 'POST') {
         return json({ url: 'https://media.embed.dlsrv.online/file.mp4', filename: 'video.mp4' });
+      }
+      if (url === 'https://media.embed.dlsrv.online/file.mp4' && method === 'GET') {
+        return fakeMp4Response();
       }
       return json({}, 404);
     }));
@@ -46,23 +83,29 @@ describe('nineConvertFormats', () => {
       height: 720,
       audioQuality: 'AUDIO_QUALITY_MEDIUM',
     });
-    expect(calls.map(call => call.url)).toEqual([
-      `${DLSRV_CURRENT_BASE}/info`,
-      `${DLSRV_CURRENT_BASE}/download/mp4`,
-    ]);
-    expect(JSON.parse(calls[1].body)).toEqual({ videoId: 'dQw4w9WgXcQ', format: 'mp4', quality: '720' });
-    expect(calls[1].headers.get('origin')).toBe('https://embed.dlsrv.online');
+    expect(calls.map(call => call.url)).toEqual(
+      expect.arrayContaining([
+        `${DLSRV_CURRENT_BASE}/info`,
+        `${DLSRV_CURRENT_BASE}/download/mp4`,
+        'https://media.embed.dlsrv.online/file.mp4',
+      ]),
+    );
+    const dl = calls.find(c => c.url.endsWith('/download/mp4'))!;
+    expect(JSON.parse(dl.body)).toEqual({ videoId: 'dQw4w9WgXcQ', format: 'mp4', quality: '720' });
+    expect(dl.headers.get('origin')).toBe('https://embed.dlsrv.online');
+    // dlink probe carries same-site Referer.
+    const probe = calls.find(c => c.url === 'https://media.embed.dlsrv.online/file.mp4')!;
+    expect(probe.headers.get('referer')).toMatch(/embed\.dlsrv\.online\/v2\/full\?videoId=/);
   });
 
   it('falls back to ajaxSearch then ajaxConvert and keeps k unchanged', async () => {
-    const calls: Array<{ url: string; body: string }> = [];
-    vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => {
-      calls.push({ url, body: String(init.body) });
-      // Current dlsrv endpoints are gone/empty: this must be non-fatal.
-      if (url === `${DLSRV_CURRENT_BASE}/info` || url === `${DLSRV_CURRENT_BASE}/download/mp3`) {
-        return json({}, url.endsWith('/info') ? 404 : 200);
-      }
-      if (url === `${NINECONVERT_BASES[0]}/api/ajaxSearch/index`) {
+    const calls: Array<{ url: string; body: string; method: string }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit = {}) => {
+      const method = (init.method || 'GET').toUpperCase();
+      calls.push({ url, body: String(init.body || ''), method });
+      if (url === `${DLSRV_CURRENT_BASE}/info` && method === 'POST') return json({}, 404);
+      if (url === `${DLSRV_CURRENT_BASE}/download/mp3` && method === 'POST') return json({}, 200);
+      if (url === `${NINECONVERT_BASES[0]}/api/ajaxSearch/index` && method === 'POST') {
         return json({
           vid: 'dQw4w9WgXcQ',
           links: {
@@ -73,8 +116,11 @@ describe('nineConvertFormats', () => {
           },
         });
       }
-      if (url === `${NINECONVERT_BASES[0]}/api/ajaxConvert/convert`) {
+      if (url === `${NINECONVERT_BASES[0]}/api/ajaxConvert/convert` && method === 'POST') {
         return json({ dlink: 'https://files.9convert.org/download/song.mp3' });
+      }
+      if (url === 'https://files.9convert.org/download/song.mp3' && method === 'GET') {
+        return fakeMp3Response();
       }
       return json({}, 404);
     }));
@@ -93,16 +139,91 @@ describe('nineConvertFormats', () => {
     expect(new URLSearchParams(convert.body).get('k')).toBe('key+/=kept');
   });
 
+  it('drops an HTML/CAPTCHA dlink and continues to the legacy farm attempt', async () => {
+    let dlsrvProbed = false;
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit = {}) => {
+      const method = (init.method || 'GET').toUpperCase();
+      if (url === `${DLSRV_CURRENT_BASE}/info` && method === 'POST') {
+        return json({ status: 'info', info: { formats: [{ type: 'video', format: 'mp4', quality: '720p' }] } });
+      }
+      if (url === `${DLSRV_CURRENT_BASE}/download/mp4` && method === 'POST') {
+        return json({ url: 'https://media.embed.dlsrv.online/captcha' });
+      }
+      if (url === 'https://media.embed.dlsrv.online/captcha' && method === 'GET') {
+        dlsrvProbed = true;
+        return new Response('<!doctype html><html><body>CAPTCHA</body></html>', {
+          status: 200,
+          headers: { 'Content-Type': 'text/html' },
+        });
+      }
+      if (url === `${NINECONVERT_BASES[0]}/api/ajaxSearch/index` && method === 'POST') {
+        return json({ vid: 'dQw4w9WgXcQ', links: { mp4: { 720: { f: 'mp4', q: '720', k: 'k' } } } });
+      }
+      if (url === `${NINECONVERT_BASES[0]}/api/ajaxConvert/convert` && method === 'POST') {
+        return json({ dlink: 'https://files.9convert.org/file.mp4' });
+      }
+      if (url === 'https://files.9convert.org/file.mp4' && method === 'GET') {
+        return fakeMp4Response();
+      }
+      return json({}, 404);
+    }));
+    const formats = await nineConvertFormats('dQw4w9WgXcQ', 'mp4', '720');
+    expect(dlsrvProbed).toBe(true);
+    expect(formats).toHaveLength(1);
+    expect(formats[0].url).toBe('https://files.9convert.org/file.mp4');
+  });
+
+  it('rejects a WebM dlink even when the API claims MP4', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit = {}) => {
+      const method = (init.method || 'GET').toUpperCase();
+      if (url === `${DLSRV_CURRENT_BASE}/info` && method === 'POST') {
+        return json({ status: 'info', info: { formats: [{ type: 'video', format: 'mp4', quality: '720p' }] } });
+      }
+      if (url === `${DLSRV_CURRENT_BASE}/download/mp4` && method === 'POST') {
+        return json({ url: 'https://media.embed.dlsrv.online/wrong.webm' });
+      }
+      if (url === 'https://media.embed.dlsrv.online/wrong.webm' && method === 'GET') {
+        return new Response(new Uint8Array([0x1a, 0x45, 0xdf, 0xa3, 0x01, 0x00]), {
+          status: 200, headers: { 'Content-Type': 'video/webm' },
+        });
+      }
+      return json({}, 404);
+    }));
+    await expect(nineConvertFormats('dQw4w9WgXcQ', 'mp4', '720')).resolves.toEqual([]);
+  });
+
+  it('waits for a bounded "processing" response before giving up', async () => {
+    let calls = 0;
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit = {}) => {
+      const method = (init.method || 'GET').toUpperCase();
+      if (url === `${DLSRV_CURRENT_BASE}/info` && method === 'POST') {
+        return json({ status: 'info', info: { formats: [{ type: 'audio', format: 'mp3', quality: '320' }] } });
+      }
+      if (url === `${DLSRV_CURRENT_BASE}/download/mp3` && method === 'POST') {
+        calls += 1;
+        if (calls < 3) return json({ status: 'processing', sleep: 0.1 });
+        return json({ url: 'https://media.embed.dlsrv.online/song.mp3' });
+      }
+      if (url === 'https://media.embed.dlsrv.online/song.mp3' && method === 'GET') {
+        return fakeMp3Response();
+      }
+      return json({}, 404);
+    }));
+    const formats = await nineConvertFormats('dQw4w9WgXcQ', 'mp3', '320');
+    expect(formats).toHaveLength(1);
+    expect(calls).toBeGreaterThanOrEqual(3);
+  });
+
   it('restricts farm dlinks to dlsrv, 9Convert, and googlevideo', async () => {
     expect(isAllowedNineConvertUrl('https://media.embed.dlsrv.online/file.mp4')).toBe(true);
     expect(isAllowedNineConvertUrl('https://files.9convert.org/file.mp3')).toBe(true);
     expect(isAllowedNineConvertUrl('https://rr1---sn-test.googlevideo.com/videoplayback')).toBe(true);
-    // These hosts are valid for other extractors, but never for a farm dlink.
     expect(isAllowedNineConvertUrl('https://cf-media.sndcdn.com/file.mp3')).toBe(false);
     expect(isAllowedNineConvertUrl('https://pipedproxy-bom.kavin.rocks/videoplayback')).toBe(false);
 
-    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
-      if (url.endsWith('/api/download/mp4')) return json({ url: 'https://cf-media.sndcdn.com/not-a-farm-file' });
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit = {}) => {
+      const method = (init.method || 'GET').toUpperCase();
+      if (url.endsWith('/api/download/mp4') && method === 'POST') return json({ url: 'https://cf-media.sndcdn.com/not-a-farm-file' });
       return json({}, 404);
     }));
     await expect(nineConvertFormats('dQw4w9WgXcQ', 'mp4', 'best')).resolves.toEqual([]);

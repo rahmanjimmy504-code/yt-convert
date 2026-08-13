@@ -55,6 +55,13 @@ function isProgressiveMp4(format: PlayerFormat): boolean {
   return /video\/mp4/i.test(mime) && hasAudio(format) && !/audio\/only/i.test(mime);
 }
 
+/** Hardcoded itags that are known to be progressive (muxed audio+video MP4). */
+const PROGRESSIVE_MP4_ITAGS = new Set<number>([18, 22, 37, 38, 59, 78]);
+
+export function isProgressiveMp4Itag(itag: number | undefined): boolean {
+  return typeof itag === 'number' && PROGRESSIVE_MP4_ITAGS.has(itag);
+}
+
 /** A video-only adaptive MP4: H.264 video with no audio track of its own. */
 function isVideoOnlyMp4(format: PlayerFormat): boolean {
   const mime = mimeOf(format);
@@ -69,6 +76,10 @@ function isAudioOnly(format: PlayerFormat): boolean {
 
 function isM4a(format: PlayerFormat): boolean {
   return /audio\/(mp4|aac|x-m4a)|mp4a/i.test(mimeOf(format));
+}
+
+function isRealMp3(format: PlayerFormat): boolean {
+  return /audio\/(mpeg|mp3)/i.test(mimeOf(format));
 }
 
 /** Audio bitrate options (kbps) shown in the UI and accepted by the API. */
@@ -151,12 +162,26 @@ export function pickYouTubeFormat(
   }
 
   const audio = usable.filter(isAudioOnly);
+  // Honest-MP3 first: Innertube never hands back MP3 for YouTube (it serves
+  // AAC in MP4 or Opus in WebM), but the 9Convert/cobalt fallbacks may return
+  // a real audio/mpeg stream and we must not \"downgrade\" a genuine MP3 to
+  // M4A by preferring the latter. For MP3-only sources (SoundCloud) this is
+  // also the correct pool.
+  const realMp3 = audio.filter(isRealMp3);
+  if (realMp3.length > 0) {
+    if (quality === 'best' || !/^\d+$/.test(quality)) {
+      realMp3.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
+      return realMp3[0];
+    }
+    return pickClosestBitrate(realMp3, parseInt(quality, 10));
+  }
   const preferred = audio.filter(isM4a);
   const pool = preferred.length > 0 ? preferred : audio;
   // Music-label videos (e.g. Tobu – Hope) often expose only a progressive
-  // itag 18 and no adaptive audio. 9convert still converts those by taking
-  // the muxed file. We do the same as a last resort — the container stays
-  // honest (usually .mp4 / .m4a), never relabelled as MP3.
+  // itag 18 and no adaptive audio. 9Convert-style farms take that muxed file
+  // as their conversion source; we keep the same selection here so callers
+  // can see the candidate and decide (MP3 requests fall through to farms
+  // for an actual transcode rather than relabelling the MP4 as MP3).
   if (pool.length === 0) {
     return pickProgressiveForQuality(usable.filter(isProgressiveMp4), 'best');
   }

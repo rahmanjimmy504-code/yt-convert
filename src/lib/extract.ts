@@ -14,6 +14,7 @@ import { youtubeAwareFetch } from './youtube-egress';
 import {
   extensionForMime,
   pickYouTubeFormat,
+  isProgressiveMp4Itag,
   type PlayerFormat,
 } from './youtube-formats';
 
@@ -723,6 +724,8 @@ async function extractYouTube(
   let source: 'innertube' | 'piped' | 'invidious-latest' | 'invidious-api' | 'youtube-embed' | '9convert' | 'cobalt' = 'innertube';
   let pipedError: string | undefined;
 
+  const want = format === 'mp4' ? 'video' : 'audio';
+
   if (!formats.length) {
     // Mirror paths are independent and public instances disappear often. Race
     // them so a dead first host cannot multiply 10–12 second timeouts. Prefer
@@ -750,19 +753,43 @@ async function extractYouTube(
     }
   }
 
+  // MP3 requests: the direct clients/mirrors/Piped never produce a real MP3
+  // (they serve M4A/AAC or Opus/WebM). Continue to the farm and cobalt paths
+  // even when formats exist so a transcoded MP3 is preferred over silently
+  // handing back a renamed M4A. MP4 keeps the existing "formats present → use
+  // them" fast path.
+  const needTranscodedMp3 = want === 'audio'
+    && formats.length > 0
+    && !formats.some(f => /audio\/(mpeg|mp3)/i.test(f.mimeType || ''));
+  if (needTranscodedMp3) formats = [];
+
   // Public 9Convert family farm. It performs extraction/conversion on its own
   // egress IP and returns a completed allowlisted dlink, which is why it can
   // survive a BotGuard wall on this Vercel host. Empty/404 farm hops are
   // explicitly non-fatal and fall through to cobalt/the honest error below.
+  let cobaltError: string | undefined;
   if (!formats.length) {
-    formats = await nineConvertFormats(id, format === 'mp4' ? 'mp4' : 'mp3', quality);
-    if (formats.length) source = '9convert';
+    const farmFormats = await nineConvertFormats(id, format === 'mp4' ? 'mp4' : 'mp3', quality);
+    if (farmFormats.length) {
+      formats = farmFormats;
+      source = '9convert';
+    } else if (needTranscodedMp3 && isCobaltConfigured()) {
+      // MP3 specifically needs a transcode; the direct clients didn't have
+      // one, the farm didn't answer. Try cobalt before giving up.
+      const cobalt = await cobaltFormats(pageUrl, 'audio');
+      const cobaltUrls = cobalt.formats.filter(f => f.url && isAllowedMediaUrl(f.url));
+      if (cobaltUrls.length) {
+        formats = cobaltUrls;
+        source = 'cobalt';
+      } else {
+        cobaltError = cobalt.error;
+      }
+    }
   }
 
   // Last resort: an operator-configured cobalt instance. Disabled unless
   // COBALT_API_URL is set, and it returns a finished muxed file rather than a
   // format list, so it runs only when everything else produced nothing.
-  let cobaltError: string | undefined;
   if (!formats.length && isCobaltConfigured()) {
     const cobalt = await cobaltFormats(pageUrl, format === 'mp4' ? 'video' : 'audio');
     formats = cobalt.formats.filter(f => f.url && isAllowedMediaUrl(f.url));
@@ -798,16 +825,60 @@ async function extractYouTube(
   }
 
   const kind = format === 'mp4' ? 'video' : 'audio';
-  const picked = pickYouTubeFormat(formats, kind, quality);
-  if (!picked?.url) {
+
+  // MP3 requests: only accept a real audio/mpeg stream (returned by the
+  // 9Convert/cobalt fallbacks). Innertube/Mirrors/Piped never produce MP3;
+  // they return M4A/AAC or Opus/WebM. If no real MP3 source is among the
+  // current formats, return an error so the caller surfaces an honest
+  // "try a converter" message rather than saving an M4A renamed .mp3.
+  if (kind === 'audio') {
+    const mp3 = pickYouTubeFormat(formats, 'audio', quality);
+    if (mp3?.url) {
+      const mimeType = mp3.mimeType || 'audio/mpeg';
+      const gvsMatchesPickedClient = source === 'innertube'
+        && Boolean(gvsToken?.client)
+        && gvsToken?.client === mp3.sourceClient;
+      const mediaUrl = gvsMatchesPickedClient
+        ? attachMediaUrlToken(mp3.url, gvsToken?.poToken)
+        : mp3.url;
+      const notes: Partial<Record<typeof source, string>> = {
+        piped: 'Piped fallback stream',
+        'invidious-latest': 'Invidious relayed stream',
+        'invidious-api': 'Invidious fallback stream',
+        'youtube-embed': 'YouTube embed fallback stream',
+        '9convert': '9Convert farm fallback',
+        cobalt: 'Cobalt fallback stream',
+      };
+      return ok({
+        url: mediaUrl,
+        mimeType: /audio\/(mpeg|mp3)/i.test(mimeType) ? 'audio/mpeg' : mimeType,
+        extension: 'mp3',
+        qualityLabel: mp3.qualityLabel,
+        note: notes[source],
+      });
+    }
     return fail(
-      kind === 'video'
-        ? 'No progressive MP4 with audio is available for this video. Higher resolutions may need a converter that combines separate video and audio tracks — try one below.'
-        : 'No audio stream is available for this video. Try a converter below.',
+      'No real MP3 source is available from this server. The available streams are M4A/AAC or Opus/WebM — use the converter below for an MP3.',
     );
   }
 
-  const mimeType = picked.mimeType || (kind === 'video' ? 'video/mp4' : 'audio/mp4');
+  // MP4: require a real progressive (muxed, video+audio) MP4. Preserve itag
+  // 18 when no adaptive-with-audio path exists.
+  let picked = pickYouTubeFormat(formats, 'video', quality);
+  if (!picked?.url) {
+    // Fallback: if pickYouTubeFormat couldn't find a progressive MP4 but a
+    // progressive itag 18 is present, use it. This mirrors the existing
+    // "preserve progressive itag 18" contract.
+    const itag18 = formats.find(f => f.itag === 18 && typeof f.url === 'string');
+    if (itag18?.url && isProgressiveMp4Itag(18)) picked = itag18;
+  }
+  if (!picked?.url) {
+    return fail(
+      'No progressive MP4 with audio is available for this video. Higher resolutions may need a converter that combines separate video and audio tracks — try one below.',
+    );
+  }
+
+  const mimeType = picked.mimeType || 'video/mp4';
   // GVS tokens are IP/visitor/client-bound. Attach one only to an Innertube
   // URL minted by that same client on this app's egress, never to a URL from
   // another client, embed page, mirror, or farm.
@@ -827,8 +898,8 @@ async function extractYouTube(
   };
   return ok({
     url: mediaUrl,
-    mimeType,
-    extension: extensionForMime(mimeType, kind === 'video' ? 'mp4' : 'm4a'),
+    mimeType: /video\/mp4|application\/mp4/i.test(mimeType) ? 'video/mp4' : mimeType,
+    extension: 'mp4',
     qualityLabel: picked.qualityLabel,
     note: notes[source],
   });

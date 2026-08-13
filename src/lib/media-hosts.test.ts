@@ -105,7 +105,21 @@ describe('fetchAllowedMedia', () => {
     expect(fetchMock.mock.calls[0][1].redirect).toBe('manual');
   });
 
-  it('sends a same-site Referer for 9Convert farm dlinks', async () => {
+  it('overrides an existing (YouTube) Referer with the dlsrv same-site Referer', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      status: 200,
+      ok: true,
+      headers: { get: () => null },
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    await fetchAllowedMedia('https://media.embed.dlsrv.online/file.mp4', {
+      headers: { Referer: 'https://www.youtube.com/' },
+    });
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    expect(new Headers(init.headers as HeadersInit).get('referer')).toBe('https://embed.dlsrv.online/');
+  });
+
+  it('sends a same-site Referer for 9Convert farm dlinks when none was supplied', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       status: 200,
       ok: true,

@@ -4,6 +4,7 @@ import { verifyConvertTicket } from '@/lib/convert-ticket';
 import { extractMedia, isExtractError, sanitizeYouTubeCookies } from '@/lib/extract';
 import { fetchAllowedMedia, MediaHostError } from '@/lib/media-fetch';
 import { isValidQuality, sanitizeDownloadFilename } from '@/lib/youtube-formats';
+import { acceptMediaResponse, sniffStreamPrefix, SNIFF_BYTES } from '@/lib/media-content';
 import { clientIp, rateLimit } from '@/lib/rate-limit';
 import { recordEvent } from '@/lib/stats';
 
@@ -18,6 +19,66 @@ function json(error: string, status: number, extra?: Record<string, unknown>) {
     { error, ...extra },
     { status, headers: { 'Cache-Control': 'no-store' } },
   );
+}
+
+/**
+ * Stream the upstream body to the client while using a tee'd inspection
+ * branch to sniff the first ~2 KB for HTML/CAPTCHA content. If HTML (or a
+ * container mismatch) is detected, we cancel the media branch and abort the
+ * response; otherwise bytes flow through unmodified.
+ *
+ * The inspection branch is drained in the background (see sniffStreamPrefix)
+ * so we never await cancellation of the inspection branch before streaming
+ * the media branch — that deadlocked a previous version when the consumer
+ * was a slow Response body.
+ */
+function validatedMediaBody(
+  upstream: Response,
+  requested: 'mp3' | 'mp4',
+  contentType: string,
+): { body: ReadableStream<Uint8Array>; valid: Promise<{ ok: true } | { ok: false; reason: string }> } {
+  const upstreamBody = upstream.body;
+  if (!upstreamBody) {
+    // No body: let the caller handle it (status was already non-ok/206
+    // filtered upstream).
+    return {
+      body: new ReadableStream({ start(c) { c.close(); } }),
+      valid: Promise.resolve({ ok: false, reason: 'empty response body' }),
+    };
+  }
+
+  const [inspectionBranch, mediaBranch] = upstreamBody.tee();
+  const inspector = inspectionBranch.getReader();
+  const abortController = new AbortController();
+
+  // Start sniffing immediately but don't block the media branch from being
+  // returned. The `valid` promise resolves once we've seen enough bytes to
+  // decide. If it resolves to ok=false, the route handler will cancel
+  // mediaBranch and replace the response with a JSON 502.
+  const valid: Promise<{ ok: true } | { ok: false; reason: string }> = (async () => {
+    try {
+      const prefix = await sniffStreamPrefix(inspector, abortController);
+      const verdict = acceptMediaResponse(requested, contentType, prefix);
+      if (verdict.ok) return { ok: true as const };
+      return { ok: false as const, reason: verdict.reason || 'invalid container' };
+    } catch (err) {
+      return { ok: false as const, reason: (err as Error)?.message || 'stream inspection failed' };
+    }
+  })();
+
+  // When the verdict comes back negative, cancel both branches so the
+  // upstream TCP connection isn't left hanging. We do this as a side-effect
+  // attached to `valid` rather than inside the reader so that even if the
+  // caller ignores the promise we still clean up.
+  valid.then(result => {
+    if (!result.ok) {
+      try { mediaBranch.cancel('html/invalid container detected').catch(() => {}); } catch { /* noop */ }
+      try { inspector.cancel('done').catch(() => {}); } catch { /* noop */ }
+      abortController.abort();
+    }
+  });
+
+  return { body: mediaBranch, valid };
 }
 
 export async function GET(request: Request) {
@@ -86,10 +147,28 @@ export async function GET(request: Request) {
       return json(extracted.error, 502);
     }
 
+    // Enforce an honest container: do not stream a picked M4A/WebM/MP4 when
+    // the user asked for MP3, or WebM/HTML when they asked for MP4. The
+    // extension/mime from the extractor already reflects the real container
+    // (see extensionForMime), so a mismatch here means no true MP3/MP4
+    // source was available and we should not hand the user a renamed file.
+    const requestedExt = format === 'mp3' ? 'mp3' : 'mp4';
+    if (extracted.extension !== requestedExt) {
+      recordEvent({ type: 'lookup', platform, ok: false, error: `no ${requestedExt} source` });
+      return json(
+        `No real ${requestedExt.toUpperCase()} source was available for this video. The available stream is ${extracted.extension.toUpperCase()} — try a converter below.`,
+        502,
+      );
+    }
+
     const filename = sanitizeDownloadFilename(title || 'download', extracted.extension);
     const range = request.headers.get('range');
     const upstreamHeaders: Record<string, string> = {
       Accept: '*/*',
+      // This Referer identifies the ORIGINAL page the user was on. For
+      // dlsrv/9Convert farm dlinks, fetchAllowedMedia will OVERRIDE it with
+      // the correct same-site Referer before sending — sending the original
+      // youtube.com Referer to a farm endpoint caused it to serve HTML.
       Referer: parsed.origin + '/',
       'User-Agent': 'Mozilla/5.0 (compatible; YTConvert/1.0)',
     };
@@ -106,22 +185,77 @@ export async function GET(request: Request) {
       return json('The media host refused the stream. Try a converter below.', 502);
     }
 
-    const mimeType = upstream.headers.get('content-type') || extracted.mimeType || 'application/octet-stream';
+    const upstreamCT = upstream.headers.get('content-type') || extracted.mimeType || 'application/octet-stream';
+
+    // If the caller sent Range and the upstream answered 206 with a
+    // non-zero start, we can't safely sniff the beginning of the fragment
+    // for container magic — just stream it. Modern browsers don't send
+    // Range on the initial attachment download; resumable downloads will
+    // fall back to a full get if the first chunk looks wrong.
+    const isRange = upstream.status === 206;
+    const contentRange = upstream.headers.get('content-range');
+    const rangeIsFromZero = !contentRange || /^bytes\s+0-/.test(contentRange);
+
+    let outBody: BodyInit;
+    let outMime: string;
+    let outLength: string | null = null;
+    let outRange: string | null = null;
+
+    const wantedMime = format === 'mp3' ? 'audio/mpeg' : 'video/mp4';
+
+    if (isRange && !rangeIsFromZero) {
+      // Trust the upstream for mid-file ranges.
+      outBody = upstream.body;
+      outMime = wantedMime;
+      outLength = upstream.headers.get('content-length');
+      outRange = contentRange;
+    } else {
+      const { body, valid } = validatedMediaBody(upstream, format, upstreamCT);
+      // Wait for up to ~250ms or until the sniffer has enough bytes to
+      // render a verdict. If the verdict is negative we return JSON; if the
+      // sniffer hasn't decided quickly enough, we still return the body —
+      // but the valid promise will keep watching and cancel the stream if
+      // it later turns out to be HTML. That tradeoff avoids TTFB stalls.
+      const waitForSniff = await Promise.race([
+        valid,
+        new Promise<null>(resolve => setTimeout(() => resolve(null), 250)),
+      ]);
+      if (waitForSniff && !waitForSniff.ok) {
+        recordEvent({ type: 'lookup', platform, ok: false, error: 'html challenge' });
+        return json(
+          `The media host returned an HTML/CAPTCHA page instead of ${requestedExt.toUpperCase()} bytes. Try a converter below. (${waitForSniff.reason})`,
+          502,
+        );
+      }
+      outBody = body;
+      outMime = wantedMime;
+      outLength = upstream.headers.get('content-length');
+      outRange = contentRange;
+
+      // If the verdict still resolves to failure while streaming, the
+      // cancel() in valid.then will tear down the media branch; there's no
+      // way to "take back" the 200 response at that point, but the browser
+      // will see a truncated response and the saved file will be incomplete
+      // rather than a full HTML page. That's strictly better than silently
+      // saving a CAPTCHA page as .mp3.
+    }
+
     const encodedName = encodeURIComponent(filename).replace(/['()]/g, '');
     const headers = new Headers({
-      'Content-Type': mimeType,
+      'Content-Type': outMime,
+      // Never attach Content-Disposition until we've confirmed the response
+      // is genuine media. (Range-fragment responses already imply an earlier
+      // valid first chunk.)
       'Content-Disposition': `attachment; filename="${filename.replace(/"/g, '')}"; filename*=UTF-8''${encodedName}`,
       'Cache-Control': 'no-store',
       'X-Content-Type-Options': 'nosniff',
       'Accept-Ranges': 'bytes',
     });
-    const length = upstream.headers.get('content-length');
-    if (length) headers.set('Content-Length', length);
-    const contentRange = upstream.headers.get('content-range');
-    if (contentRange) headers.set('Content-Range', contentRange);
+    if (outLength) headers.set('Content-Length', outLength);
+    if (outRange) headers.set('Content-Range', outRange);
 
     recordEvent({ type: 'lookup', platform, ok: true });
-    return new Response(upstream.body, { status: upstream.status === 206 ? 206 : 200, headers });
+    return new Response(outBody, { status: upstream.status === 206 ? 206 : 200, headers });
   } catch (err) {
     if (err instanceof MediaHostError) {
       recordEvent({ type: 'lookup', platform, ok: false, error: 'convert ssrf' });

@@ -18,28 +18,46 @@ export class MediaHostError extends Error {
   }
 }
 
+/**
+ * Pick the correct Referer for a media URL. Farm-owned endpoints enforce a
+ * same-site hotlink check: if the request carries a youtube.com Referer
+ * (which /api/convert always sends as the "original page"), they serve a
+ * CAPTCHA HTML page instead of bytes. We therefore OVERRIDE any supplied
+ * Referer for those hosts, rather than only filling one in when absent.
+ */
+export function refererForMediaUrl(url: string): string | null {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    if (host === 'dlsrv.online' || host.endsWith('.dlsrv.online')) {
+      return 'https://embed.dlsrv.online/';
+    }
+    if (host === '9convert.org' || host.endsWith('.9convert.org')) {
+      return 'https://9convert.org/';
+    }
+    if (host === '9convert.com' || host.endsWith('.9convert.com')) {
+      return 'https://9convert.com/';
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function applyFarmHeaders(url: string, headers: Headers): void {
+  const override = refererForMediaUrl(url);
+  if (override) headers.set('Referer', override);
+  if (!headers.has('User-Agent')) {
+    headers.set('User-Agent', 'Mozilla/5.0 (compatible; YTConvert/1.0)');
+  }
+}
+
 /** Fetch a media URL, following redirects only onto allowlisted hosts. */
 export async function fetchAllowedMedia(url: string, init: RequestInit = {}, hop = 0): Promise<Response> {
   if (hop > MAX_REDIRECTS) throw new MediaHostError('Too many redirects');
   if (!isAllowedMediaUrl(url)) throw new MediaHostError('Refusing to fetch a non-allowlisted host');
 
   const headers = new Headers(init.headers);
-  if (!headers.has('User-Agent')) {
-    headers.set('User-Agent', 'Mozilla/5.0 (compatible; YTConvert/1.0)');
-  }
-  // 9Convert's browser flow opens the dlink from its result page. Preserve a
-  // same-site Referer for farm-owned file endpoints that enforce that normal
-  // hotlink check; never forward the user's original page or credentials.
-  if (!headers.has('Referer')) {
-    const host = new URL(url).hostname.toLowerCase();
-    if (host === 'dlsrv.online' || host.endsWith('.dlsrv.online')) {
-      headers.set('Referer', 'https://embed.dlsrv.online/');
-    } else if (host === '9convert.org' || host.endsWith('.9convert.org')) {
-      headers.set('Referer', 'https://9convert.org/');
-    } else if (host === '9convert.com' || host.endsWith('.9convert.com')) {
-      headers.set('Referer', 'https://9convert.com/');
-    }
-  }
+  applyFarmHeaders(url, headers);
 
   // Time out only the connection / headers phase. Once headers arrive we
   // clear the timer so a long progressive download is not aborted mid-stream.
@@ -69,7 +87,15 @@ export async function fetchAllowedMedia(url: string, init: RequestInit = {}, hop
   if (response.status >= 300 && response.status < 400) {
     const location = response.headers.get('location');
     if (!location) throw new MediaHostError('Redirect without Location');
+    // Drain/ignore the body of the redirect response so undici doesn't
+    // complain about an unconsumed stream.
+    if (response.body) {
+      try { await response.arrayBuffer(); } catch { /* ignore */ }
+    }
     const next = new URL(location, url).toString();
+    // Redirects get the same init (including any caller-supplied cookies),
+    // but applyFarmHeaders will override Referer again for each new hop if
+    // needed.
     return fetchAllowedMedia(next, init, hop + 1);
   }
 
