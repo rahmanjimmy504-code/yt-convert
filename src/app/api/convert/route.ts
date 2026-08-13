@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { canConvertPlatform, convertUnavailableReason, detectPlatform, extractYouTubeId, type FormatKey } from '@/lib/platforms';
 import { verifyConvertTicket } from '@/lib/convert-ticket';
 import { extractMedia, isExtractError, sanitizeYouTubeCookies } from '@/lib/extract';
-import { fetchAllowedMedia, MediaHostError } from '@/lib/media-hosts';
+import { fetchAllowedMedia, MediaHostError } from '@/lib/media-fetch';
 import { isValidQuality, sanitizeDownloadFilename } from '@/lib/youtube-formats';
 import { clientIp, rateLimit } from '@/lib/rate-limit';
 import { recordEvent } from '@/lib/stats';

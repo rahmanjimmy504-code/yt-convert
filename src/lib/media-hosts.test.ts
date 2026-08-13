@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fetchAllowedMedia, isAllowedMediaUrl } from './media-hosts';
+import { fetchAllowedMedia } from './media-fetch';
+import { isAllowedMediaUrl } from './media-hosts';
 
 describe('isAllowedMediaUrl', () => {
   it('accepts allowlisted HTTPS media hosts', () => {

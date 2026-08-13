@@ -1,9 +1,10 @@
 /**
  * SSRF-safe media URL checks. The convert proxy may only fetch allowlisted
  * HTTPS media CDNs. Redirect hops must be re-checked with the same rules.
+ *
+ * This module is client-safe: it must not import undici or youtube-egress.
+ * Server fetch + redirect following lives in ./media-fetch.
  */
-
-import { youtubeAwareFetch } from './youtube-egress';
 
 const ALLOWED_SUFFIXES = [
   'googlevideo.com',
@@ -104,60 +105,4 @@ export function isAllowedMediaUrl(raw: string): boolean {
   const host = parsed.hostname.toLowerCase();
   if (!host || isBlockedHost(host)) return false;
   return isAllowedHost(host);
-}
-
-const MAX_REDIRECTS = 4;
-/** Only waits for upstream headers. Cleared before the body is streamed. */
-const CONNECT_TIMEOUT_MS = 20_000;
-
-export class MediaHostError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'MediaHostError';
-  }
-}
-
-/** Fetch a media URL, following redirects only onto allowlisted hosts. */
-export async function fetchAllowedMedia(url: string, init: RequestInit = {}, hop = 0): Promise<Response> {
-  if (hop > MAX_REDIRECTS) throw new MediaHostError('Too many redirects');
-  if (!isAllowedMediaUrl(url)) throw new MediaHostError('Refusing to fetch a non-allowlisted host');
-
-  const headers = new Headers(init.headers);
-  if (!headers.has('User-Agent')) {
-    headers.set('User-Agent', 'Mozilla/5.0 (compatible; YTConvert/1.0)');
-  }
-
-  // Time out only the connection / headers phase. Once headers arrive we
-  // clear the timer so a long progressive download is not aborted mid-stream.
-  let response: Response;
-  if (init.signal) {
-    response = await youtubeAwareFetch(url, {
-      ...init,
-      headers,
-      redirect: 'manual',
-      signal: init.signal,
-    });
-  } else {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), CONNECT_TIMEOUT_MS);
-    try {
-      response = await youtubeAwareFetch(url, {
-        ...init,
-        headers,
-        redirect: 'manual',
-        signal: controller.signal,
-      });
-    } finally {
-      clearTimeout(timer);
-    }
-  }
-
-  if (response.status >= 300 && response.status < 400) {
-    const location = response.headers.get('location');
-    if (!location) throw new MediaHostError('Redirect without Location');
-    const next = new URL(location, url).toString();
-    return fetchAllowedMedia(next, init, hop + 1);
-  }
-
-  return response;
 }
