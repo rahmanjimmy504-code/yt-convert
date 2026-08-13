@@ -29,7 +29,7 @@ const ISSUE_LABELS: Record<ReportIssue, string> = {
  * dashboard (/status).
  */
 export async function POST(request: Request) {
-  const retryAfter = rateLimit(clientIp(request), REPORT_LIMIT_PER_HOUR);
+  const retryAfter = await rateLimit(`converters-report:${clientIp(request)}`, REPORT_LIMIT_PER_HOUR);
   if (retryAfter > 0) {
     return NextResponse.json(
       { error: `Too many reports. Please wait about ${Math.min(REPORT_WINDOW_HOURS * 60, retryAfter)} minutes.` },

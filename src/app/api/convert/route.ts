@@ -22,7 +22,7 @@ function json(error: string, status: number, extra?: Record<string, unknown>) {
 
 export async function GET(request: Request) {
   const ip = clientIp(request);
-  const retryAfter = rateLimit(`convert:${ip}`, RATE_LIMIT);
+  const retryAfter = await rateLimit(`convert:${ip}`, RATE_LIMIT);
   if (retryAfter > 0) {
     return NextResponse.json(
       { error: 'Too many download requests. Please wait a moment and try again.' },

@@ -278,7 +278,7 @@ function withConvertFields(info: VideoInfo, rawUrl: string, ip: string): VideoIn
 
 export async function GET(request: Request) {
   const ip = clientIp(request);
-  const retryAfter = rateLimit(`video-info:${ip}`, RATE_LIMIT);
+  const retryAfter = await rateLimit(`video-info:${ip}`, RATE_LIMIT);
   if (retryAfter > 0) {
     return NextResponse.json(
       { error: 'Too many requests. Please wait a moment and try again.' },

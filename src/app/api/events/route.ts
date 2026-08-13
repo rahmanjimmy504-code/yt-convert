@@ -18,7 +18,7 @@ const MAX_ERROR_LENGTH = 300;
  * /api/video-info and do not go through this endpoint.
  */
 export async function POST(request: Request) {
-  const retryAfter = rateLimit(clientIp(request), EVENT_LIMIT_PER_MINUTE);
+  const retryAfter = await rateLimit(`events:${clientIp(request)}`, EVENT_LIMIT_PER_MINUTE);
   if (retryAfter > 0) {
     return NextResponse.json({ error: 'Too many events.' }, { status: 429 });
   }

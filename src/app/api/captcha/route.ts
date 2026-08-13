@@ -12,13 +12,13 @@ export const runtime = 'nodejs';
 
 const CAPTCHA_RATE_LIMIT = 30;
 
-function captchaRateLimit(request: Request): number {
+function captchaRateLimit(request: Request): Promise<number> {
   return rateLimit(`captcha:${clientIp(request)}`, CAPTCHA_RATE_LIMIT);
 }
 
 /** Issue a local fallback challenge. Turnstile widgets are issued by Cloudflare. */
 export async function GET(request: Request) {
-  const retryAfter = captchaRateLimit(request);
+  const retryAfter = await captchaRateLimit(request);
   if (retryAfter > 0) {
     return NextResponse.json(
       { error: 'Too many CAPTCHA requests. Please wait a moment and try again.' },
@@ -47,7 +47,7 @@ export async function GET(request: Request) {
 
 /** Verify a local fallback answer and return a one-time proof token. */
 export async function POST(request: Request) {
-  const retryAfter = captchaRateLimit(request);
+  const retryAfter = await captchaRateLimit(request);
   if (retryAfter > 0) {
     return NextResponse.json(
       { error: 'Too many CAPTCHA attempts. Please wait a moment and try again.' },

@@ -32,7 +32,7 @@ A clean, fast multi-platform converter website built with Next.js. Paste a link 
 - **YouTube oEmbed API** + **Invidious instances** for YouTube / YT Music metadata
 - **oEmbed** endpoints for Spotify, Deezer, TikTok, SoundCloud, X, Instagram
 - **Vendored Geist Variable** font (no runtime Google Fonts dependency)
-- **API hardening**: per-IP rate limiting, in-memory response caching, upstream payload sanitizing
+- **API hardening**: per-IP fixed-window rate limiting (shared through optional Upstash Redis, in-memory by default), in-memory response caching, upstream payload sanitizing
 - **Human verification**: Cloudflare Turnstile in production, with an accessible dependency-free CAPTCHA fallback for local development — and **separate key sets for production, previews, and local dev**
 - **Converter availability checks**: every converter card shows a live "Working / Unavailable" badge (server-probed, cached 15 min, manual re-check)
 - **Broken-converter reporting**: users flag dead or unsafe converters with a flag button; reports surface on the cards and in the admin dashboard
@@ -102,7 +102,7 @@ yt-convert/
 │       ├── media-hosts.ts           # SSRF allowlist for the convert proxy
 │       ├── youtube-formats.ts       # Progressive MP4 / m4a picker
 │       ├── platforms.ts             # Platform definitions, detection, canConvertPlatform
-│       ├── rate-limit.ts            # Shared per-IP in-memory rate limiter
+│       ├── rate-limit.ts            # Per-IP limiter (optional Upstash Redis / in-memory fallback)
 │       ├── site.ts                  # Canonical site URL (custom production domain)
 │       └── stats.ts                 # Privacy-friendly analytics + error/report store
 ├── public/
@@ -165,6 +165,8 @@ The dev server runs at **http://localhost:3000** by default. Edit any file under
 | `NEXT_PUBLIC_HCAPTCHA_SITE_KEY` / `HCAPTCHA_SECRET_KEY` *(+ scoped variants)* | *(empty)* | hCaptcha (optional fallback / alternative) |
 | `CAPTCHA_SECRET` | *(random per process)* | Stable secret used to sign the local fallback's proof tokens; set it in multi-instance production deployments |
 | `CONVERT_TICKET_SECRET` | *(falls back to `CAPTCHA_SECRET`)* | HMAC secret for short-lived convert tickets issued after a CAPTCHA lookup |
+| `UPSTASH_REDIS_REST_URL` | *(empty)* | Optional Upstash Redis REST URL; set together with the token to share rate-limit counters across instances |
+| `UPSTASH_REDIS_REST_TOKEN` | *(empty)* | Server-only Upstash Redis REST token; set together with the URL |
 | `ADMIN_TOKEN` | *(empty)* | Unlocks the admin dashboard at `/status` (must be ≥ 16 chars). Without it the dashboard is disabled (404) |
 | `DISABLE_ANALYTICS` | *(empty)* | Set to `1` to turn off the privacy-friendly aggregate counters entirely |
 | `NEXT_PUBLIC_YT_COOKIES_ENABLED` | *(empty)* | Set to `1` to show the opt-in "YouTube session cookies" UI for age-gate bypass (off by default; cookies are per-request, never stored) |
@@ -177,6 +179,14 @@ The dev server runs at **http://localhost:3000** by default. Edit any file under
 | `YT_API_KEY` | *(built-in)* | Override the public, non-secret Innertube API key used by the `WEB_EMBEDDED_PLAYER` client if YouTube rotates it |
 
 Set values in a `.env.local` file (excluded from Git via `.gitignore`) or in your hosting platform's environment settings.
+
+### Shared rate limiting (optional)
+
+Vercel can serve requests from multiple short-lived instances, so an in-memory counter gives a client a separate allowance on every warm instance. Set `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` to keep the fixed-window counters in **Upstash Redis** instead. Upstash was chosen because its HTTP REST API fits serverless functions without long-lived Redis connections; this app calls that API directly, so there is no additional runtime package.
+
+The limiter uses Redis `INCR` and applies `EXPIRE` on the first hit in one atomic script, avoiding read-modify-write races. Keys are SHA-256 hashed before storage, windows expire after 60 seconds, and over-limit responses keep the existing seconds-to-wait contract. Calls have a 500 ms deadline and **fail open** on timeouts, connection failures, HTTP errors, or malformed responses, so Redis cannot take the site down.
+
+If either variable is missing, the bounded per-instance in-memory path remains active. Local development, CI, and self-hosted installs therefore need no Redis service. The shared backend is only for rate-limit counters: CAPTCHA challenges/proof-token state, aggregate analytics in `stats.ts`, and PO tokens remain in memory by design.
 
 ### YouTube extraction chain & the PO-token sidecar
 
@@ -247,7 +257,7 @@ NEXT_PUBLIC_TURNSTILE_SITE_KEY_DEV=0x4EEE...
 TURNSTILE_SECRET_KEY_DEV=0x4FFF...
 ```
 
-When Turnstile keys are not configured, local and preview builds use the built-in CAPTCHA at `/api/captcha`: a noisy character challenge with an accessible one-time math alternative. The answer is checked on the server, proof tokens are signed, short-lived, and single-use. This fallback is useful for development, but production deployments should use Turnstile for stronger bot detection. `CAPTCHA_SECRET` should be stable across instances; the fallback stores challenges in memory, consistent with the existing cache and soft rate limiter, so a shared datastore is needed if challenge state must span serverless instances.
+When Turnstile keys are not configured, local and preview builds use the built-in CAPTCHA at `/api/captcha`: a noisy character challenge with an accessible one-time math alternative. The answer is checked on the server, proof tokens are signed, short-lived, and single-use. This fallback is useful for development, but production deployments should use Turnstile for stronger bot detection. `CAPTCHA_SECRET` should be stable across instances. CAPTCHA challenge/proof-token state intentionally remains in memory even when shared rate limiting is configured, so use Turnstile when verification must work reliably across serverless instances.
 
 ### API: `/api/video-info`
 
@@ -272,7 +282,7 @@ interface VideoInfo {
 
 #### Validation rules (checked in order)
 
-0. Per-IP rate limit — 30 requests per 60 s (in-memory, fixed window); over the limit the route returns **`429` "Too many requests..."** with a `Retry-After` header
+0. Per-IP rate limit — 30 requests per 60 s (fixed window, shared through Upstash Redis when configured and otherwise per-instance); over the limit the route returns **`429` "Too many requests..."** with a `Retry-After` header
 1. `url` parameter must be present — **`400` "Missing url parameter"**
 2. `url` must be ≤ 2048 characters — **`400` "URL is too long"**
 3. `detectPlatform()` must return a known `PlatformKey` — **`400` "Unsupported URL."**
@@ -299,7 +309,7 @@ On any unhandled error during `fetchInfo()`, the route logs the error and return
 
 **Endpoint:** `GET /api/convert?url=<encoded-url>&format=mp3|mp4&ticket=<ticket>&title=<optional>`
 
-Streams a public media file to the browser. The file is not written to disk. Requires a convert ticket issued by `/api/video-info` after CAPTCHA (bound to the exact URL and client IP, 10-minute TTL). Rate-limited to **10 requests per 60 s per IP**. The proxy only fetches allowlisted media hosts (`*.googlevideo.com`, SoundCloud CDNs, TikTok CDNs, `*.twimg.com`, `*.cdninstagram.com`, `*.fbcdn.net`, and the public Piped proxy hosts such as `*.kavin.rocks`) and re-checks every redirect (SSRF).
+Streams a public media file to the browser. The file is not written to disk. Requires a convert ticket issued by `/api/video-info` after CAPTCHA (bound to the exact URL and client IP, 10-minute TTL). Rate-limited to **10 requests per 60 s per IP** (shared across instances when Upstash is configured). The proxy only fetches allowlisted media hosts (`*.googlevideo.com`, SoundCloud CDNs, TikTok CDNs, `*.twimg.com`, `*.cdninstagram.com`, `*.fbcdn.net`, and the public Piped proxy hosts such as `*.kavin.rocks`) and re-checks every redirect (SSRF).
 
 Audio is delivered in the real container (often `.m4a` / AAC). A file is never labeled `.mp3` unless it is actually MP3. Video is progressive MP4 when the platform provides one.
 
@@ -420,6 +430,7 @@ Recommended production environment variables:
 | `NEXT_PUBLIC_TURNSTILE_SITE_KEY_PREVIEW` / `TURNSTILE_SECRET_KEY_PREVIEW` | Separate Turnstile keys for previews |
 | `CAPTCHA_SECRET` | Long random string |
 | `CONVERT_TICKET_SECRET` | Long random string (or reuse `CAPTCHA_SECRET`) |
+| `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` | *(recommended on Vercel)* Share rate-limit counters across serverless instances |
 | `ADMIN_TOKEN` | Long random string (≥ 16 chars) to unlock `/status` |
 | `PO_TOKEN_SERVER_URL` / `PO_TOKEN_SERVER_AUTH` | *(optional)* Point at a deployed `po-token-server/` sidecar to unblock music-label / BotGuard videos |
 
