@@ -252,6 +252,41 @@ describe('extractMedia YouTube fallbacks', () => {
     expect(contacted.some(u => u.includes('pipedapi'))).toBe(true);
   });
 
+  it('uses the 9Convert/dlsrv farm after mirrors and before cobalt', async () => {
+    const contacted: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        contacted.push(url);
+        if (url.includes('youtubei/v1/player')) {
+          return new Response(JSON.stringify(emptyPlayer()), { headers: { 'Content-Type': 'application/json' } });
+        }
+        if (url === 'https://embed.dlsrv.online/api/info') {
+          return new Response(JSON.stringify({
+            status: 'info',
+            info: { formats: [{ type: 'video', format: 'mp4', quality: '720p' }] },
+          }), { headers: { 'Content-Type': 'application/json' } });
+        }
+        if (url === 'https://embed.dlsrv.online/api/download/mp4') {
+          return new Response(JSON.stringify({ url: 'https://media.embed.dlsrv.online/video.mp4' }), {
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        return new Response('{}', { status: 404 });
+      }),
+    );
+
+    const result = await extractMedia('youtube', 'https://www.youtube.com/watch?v=Y1Z3Q3O7IRE', 'mp4', '720');
+    expect(isExtractError(result)).toBe(false);
+    if (!isExtractError(result)) {
+      expect(result.url).toBe('https://media.embed.dlsrv.online/video.mp4');
+      expect(result.note).toMatch(/9Convert/i);
+    }
+    expect(contacted.some(url => url.includes('piped'))).toBe(true);
+    expect(contacted).toContain('https://embed.dlsrv.online/api/download/mp4');
+    expect(contacted.some(url => url.startsWith('https://cobalt.'))).toBe(false);
+  });
+
   it('returns a clear music-label / copyright error when Piped reports one', async () => {
     vi.stubGlobal(
       'fetch',
@@ -310,16 +345,18 @@ describe('isBotChallenge / playabilityMessage', () => {
     expect(isBotChallenge('AGE_VERIFICATION_REQUIRED', 'This video may be inappropriate')).toBe(false);
   });
 
-  it('reports a bot check honestly instead of "age-restricted or private"', () => {
+  it('reports a bot check honestly and sends visitors to 9Convert', () => {
     const msg = playabilityMessage('LOGIN_REQUIRED', "Sign in to confirm you're not a bot");
     expect(msg).toMatch(/bot check/i);
     expect(msg).not.toMatch(/age-restricted/i);
-    expect(msg).toMatch(/po-token server/i);
+    expect(msg).toMatch(/9Convert option below/i);
+    expect(msg).not.toMatch(/run.*po-token|po-token server/i);
   });
 
-  it('says so when a sidecar is configured but did not clear the challenge', () => {
+  it('says so when a configured token did not clear the challenge', () => {
     const msg = playabilityMessage('LOGIN_REQUIRED', "Sign in to confirm you're not a bot", true);
     expect(msg).toMatch(/did not clear it/i);
+    expect(msg).toMatch(/9Convert/i);
   });
 
   it('still reports genuine age gates as before', () => {

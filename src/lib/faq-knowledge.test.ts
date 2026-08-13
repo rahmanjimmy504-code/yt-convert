@@ -73,6 +73,7 @@ describe('previously-correct routes do not regress', () => {
     ['is there dark mode', 'dark-mode'],
     ['clipboard copy not working', 'clipboard'],
     ['why is there a captcha', 'captcha'],
+    ["YouTube says sign in to confirm you're not a bot", 'youtube-bot-check'],
     ['how do I clear my history', 'history-storage'],
     ['keyboard shortcuts?', 'shortcuts'],
     ['why is the thumbnail missing', 'thumbnail-fail'],

@@ -2,7 +2,7 @@
 
 A clean, fast multi-platform converter website built with Next.js. Paste a link from a supported platform, see the thumbnail and metadata instantly, then download here when we can — or pick a fallback converter. AUTO-SEND converters use a verified deep link or form. COPY NEEDED converters cannot be auto-filled.
 
-**We convert where we legally and technically can.** Download here extracts a public stream (YouTube / YT Music via Innertube → Invidious → Piped, SoundCloud progressive, public X / TikTok / Instagram / Facebook URLs) and **streams** it to your browser (no `blob()` buffer; `Range` / `206` resume). Files are never stored. We do **not** unlock private, DRM, deleted, members-only, or region-blocked videos, and we do not claim every YouTube upload works. See [docs/limitations.md](docs/limitations.md). Third-party converter cards (including 9convert-style public-stream sites) stay as fallback.
+**We convert where we legally and technically can.** Download here extracts a public stream (YouTube / YT Music via Music-first Innertube → public Piped/Invidious/embed mirrors → the 9Convert/dlsrv farm, SoundCloud progressive, public X / TikTok / Instagram / Facebook URLs) and **streams** it to your browser (no `blob()` buffer; `Range` / `206` resume). Files are never stored. We do **not** unlock private, DRM, deleted, members-only, or region-blocked videos, and we do not claim every YouTube upload works. See [docs/limitations.md](docs/limitations.md). Third-party converter cards stay as fallback.
 
 ## Supported Platforms
 
@@ -95,9 +95,11 @@ yt-convert/
 │       ├── embed.ts                 # Native player embed URLs (Preview toggle)
 │       ├── og-card.tsx              # Shared OG/Twitter card artwork (JSX for ImageResponse)
 │       ├── convert-ticket.ts        # HMAC convert tickets (URL + IP + expiry)
-│       ├── extract.ts               # Per-platform public-stream extractors (Innertube → Invidious → Piped)
-│       ├── invidious.ts             # Public Invidious instance list + URL builder
-│       ├── piped.ts                 # Public Piped API client (tertiary YouTube fallback)
+│       ├── extract.ts               # Public-stream chain (Music Innertube → raced mirrors → 9Convert farm)
+│       ├── invidious.ts             # Invidious JSON + local latest_version relays
+│       ├── piped.ts                 # Raced public Piped API mirrors
+│       ├── nineconvert.ts            # dlsrv JSON + legacy ajaxSearch/ajaxConvert farm
+│       ├── youtube-embed.ts          # YouTube iframe HTML player-response fallback
 │       ├── po-token.ts              # Optional external PO-token server client
 │       ├── media-hosts.ts           # SSRF allowlist for the convert proxy
 │       ├── youtube-formats.ts       # Progressive MP4 / m4a picker
@@ -171,7 +173,7 @@ The dev server runs at **http://localhost:3000** by default. Edit any file under
 | `DISABLE_ANALYTICS` | *(empty)* | Set to `1` to turn off the privacy-friendly aggregate counters entirely |
 | `NEXT_PUBLIC_YT_COOKIES_ENABLED` | *(empty)* | Set to `1` to show the opt-in "YouTube session cookies" UI for age-gate bypass (off by default; cookies are per-request, never stored) |
 | `PIPED_PROXY_HOSTS` | *(empty)* | Comma-separated extra host suffixes to allow as Piped stream proxies (self-hosted Piped instances); the well-known public proxies are already allowed |
-| `PO_TOKEN_SERVER_URL` | *(empty)* | URL of an external PO-token sidecar (see `po-token-server/`). When set together with `PO_TOKEN_SERVER_AUTH`, tokens are fetched and attached to Innertube requests for music-label / BotGuard-blocked videos |
+| `PO_TOKEN_SERVER_URL` | *(empty)* | Operator-only PO-token sidecar URL (see `po-token-server/`). It helps only when token minting, Innertube, and googlevideo share the same public egress IP; a phone sidecar plus a Vercel site does not count |
 | `PO_TOKEN_SERVER_AUTH` | *(empty)* | Bearer token for the PO-token sidecar (must match its `AUTH_TOKEN`) |
 | `COBALT_API_URL` | *(empty)* | Root URL of a **cobalt** instance used as the last-resort fallback (v11 `POST /`). Unset = disabled. The official `api.cobalt.tools` is blocked from YouTube, so self-host to get a working fallback |
 | `COBALT_API_AUTH` | *(empty)* | Cobalt API token — a bare token (sent as `Bearer …`) or an explicit scheme like `Api-Key aaaa-bbbb` |
@@ -192,9 +194,9 @@ If either variable is missing, the bounded per-instance in-memory path remains a
 
 YouTube / YT Music downloads try sources in order, stopping at the first that returns a direct, allowlisted stream:
 
-1. **Innertube clients** — `ANDROID`, `IOS`, `ANDROID_VR`, `VISIONOS`, then `WEB_EMBEDDED_PLAYER` (current version, public API key, non-YouTube `embedUrl`) and finally the `TVHTML5` TV client. The `WEB_EMBEDDED_PLAYER` client bypasses most age-gate / `LOGIN_REQUIRED` responses automatically because it presents itself as a third-party iframe embed (which has no login flow); the old `TVHTML5_SIMPLY_EMBEDDED_PLAYER` client was removed after YouTube retired it ("YouTube is no longer supported in this application or device").
-2. **Invidious instances** — public metadata/stream mirrors (secondary; often rate-limited).
-3. **Piped instances** — public NewPipeExtractor-backed mirrors that handle PO tokens / BotGuard server-side; the most reliable fallback for music-label videos. Stream URLs come from each instance's own `pipedproxy.*` host, which is why those hosts are on the media allowlist.
+1. **Innertube clients** — `ANDROID_MUSIC` then `IOS_MUSIC` first (matching the 9Convert extractor family), followed by `ANDROID`, `IOS`, `ANDROID_VR`, `VISIONOS`, `WEB_EMBEDDED_PLAYER`, and finally `TVHTML5`. Direct adaptive AAC is preferred; progressive itag 18 is the honest last-resort audio source when no adaptive audio exists.
+2. **Public mirrors, raced** — Piped `/streams`, Invidious `/latest_version?local=true`, the often-disabled Invidious JSON API, and YouTube embed HTML. Relayed Piped/`latest_version` URLs keep the googlevideo fetch on the mirror's egress IP.
+3. **9Convert/dlsrv public farm** — the current `embed.dlsrv.online/api/info` + `/api/download/{mp3|mp4}` contract, with the legacy `ajaxSearch/index` (`query` + `vt`) → `ajaxConvert/convert` (`vid` + `k`) flow retained for 9convert.org/dlsrv-compatible hosts. A 404, empty response, or dlink outside the 9Convert/dlsrv/googlevideo allowlist is non-fatal.
 4. **Cobalt instance** (optional, last resort) — if `COBALT_API_URL` is set, the URL is sent to the cobalt **v11** API (`POST /` on the instance root) and the resulting muxed mp4 / mp3 is used. See the caveat below.
 
 Alongside the chain, **External PO-token server** (optional) — if `PO_TOKEN_SERVER_URL` + `PO_TOKEN_SERVER_AUTH` are configured, a token is fetched once (cached ~30 min) and attached to the Innertube requests under `serviceIntegrityDimensions`.
@@ -203,7 +205,7 @@ The main app **never emulates BotGuard / generates PO tokens itself**. Tokens co
 
 #### Bot challenges and the one-shot PO-token retry
 
-YouTube answers a challenged datacenter IP with `LOGIN_REQUIRED` + *"Sign in to confirm you're not a bot"* — the same status it uses for genuinely age-restricted videos. The app tells them apart and reports a bot check **as a bot check** (pointing at the sidecar as the fix) rather than claiming the video is "age-restricted or private".
+YouTube answers a challenged datacenter IP with `LOGIN_REQUIRED` + *"Sign in to confirm you're not a bot"* — the same status it uses for genuinely age-restricted videos. The app tells them apart and reports a bot check **as a bot check** rather than claiming the video is "age-restricted or private". Public-facing errors point visitors to the 9Convert card; they do not tell visitors to run infrastructure.
 
 When a sidecar is configured and every client hits that wall — or the up-front token fetch failed, so the requests went out unattested — the player request is retried **exactly once** with a freshly minted token (`getPoToken(true)` bypasses the ~30 min cache, since replaying a burnt token fails identically). With no sidecar configured there is nothing to retry and the other fallbacks run as before.
 
@@ -447,9 +449,9 @@ Recommended production environment variables:
 | `CONVERT_TICKET_SECRET` | Long random string (or reuse `CAPTCHA_SECRET`) |
 | `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` | *(recommended on Vercel)* Share rate-limit counters across serverless instances |
 | `ADMIN_TOKEN` | Long random string (≥ 16 chars) to unlock `/status` |
-| `PO_TOKEN_SERVER_URL` / `PO_TOKEN_SERVER_AUTH` | *(optional)* Point at a deployed `po-token-server/` sidecar to unblock music-label / BotGuard videos |
+| `PO_TOKEN_SERVER_URL` / `PO_TOKEN_SERVER_AUTH` | *(optional, same-egress only)* Point at `po-token-server/` on the same VPS/exit as the website's YouTube and googlevideo traffic |
 
-For music-label videos that still fail after the Piped fallback, deploy the sidecar (see [`po-token-server/README.md`](po-token-server/README.md) — `docker compose up -d --build`, then expose port 4416 over HTTPS) and set `PO_TOKEN_SERVER_URL` + `PO_TOKEN_SERVER_AUTH` in Vercel. The sidecar is independent of the Vercel deployment and never sees user cookies.
+The PO-token variables are an **operator-only, same-egress** path. Do not put only the sidecar on a phone/VPS while leaving extraction and googlevideo on Vercel: that does not satisfy the IP binding. Use the root one-VPS Compose stack, run the phone as the website, or route the website through the phone with `YT_EGRESS_PROXY`. Vercel-only deployments do not need Termux for the public 9Convert/dlsrv fallback.
 
 ## License
 

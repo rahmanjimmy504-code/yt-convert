@@ -14,6 +14,8 @@ export interface PlayerFormat {
   width?: number;
   height?: number;
   itag?: number;
+  /** Innertube client that minted this URL (server-side token binding only). */
+  sourceClient?: string;
 }
 
 export function isGoogleVideoUrl(raw: string): boolean {

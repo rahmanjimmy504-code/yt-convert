@@ -147,6 +147,12 @@ describe('pipedFormats', () => {
       'https://pipedapi.kavin.rocks',
       'https://api.piped.private.coffee',
       'https://pipedapi.reallyaweso.me',
+      'https://pipedapi.nosebs.ru',
+      'https://piped-api.privacy.com.de',
+      'https://pipedapi.owo.si',
+      'https://piped-api.codespace.cz',
+      'https://pipedapi.darkness.services',
+      'https://pipedapi.orangenet.cc',
     ]);
     for (const base of PIPED_INSTANCES) {
       expect(() => new URL(base)).not.toThrow();
@@ -177,7 +183,7 @@ describe('pipedFormats', () => {
       }),
     );
     const result = await pipedFormats('Y1Z3Q3O7IRE');
-    expect(result.instances).toHaveLength(2);
+    expect(result.instances).toHaveLength(PIPED_INSTANCES.length);
     expect(result.instances[0]).toMatchObject({
       base: PIPED_INSTANCES[0],
       ok: false,
@@ -186,6 +192,9 @@ describe('pipedFormats', () => {
     expect(result.instances[0].httpStatus).toBeUndefined();
     expect(result.instances[0].error).toMatch(/network down/);
     expect(result.instances[1]).toMatchObject({ base: PIPED_INSTANCES[1], ok: true, httpStatus: 200 });
+    // Every configured instance is contacted concurrently, rather than making
+    // a dead first host consume one full timeout before starting the next.
+    expect(result.instances.slice(1).every(instance => instance.ok)).toBe(true);
   });
 
   it('marks HTTP 5xx from an instance as transient', async () => {

@@ -26,6 +26,10 @@ const FAQS: { q: string; a: string }[] = [
     a: 'Where we legally and technically can (YouTube, YT Music, SoundCloud, and public posts on X, TikTok, Instagram, or Facebook), we extract a public stream and proxy it through Download here. We do not store files. Spotify, Deezer, Apple Music and Amazon Music are DRM-protected (preview only / use a licensed downloader). Snapchat and BeReal have no public media URL we can proxy. If first-party extraction fails, use a third-party converter.',
   },
   {
+    q: 'Why does YouTube say “Sign in to confirm you’re not a bot”?',
+    a: 'That LOGIN_REQUIRED message is a BotGuard challenge on this website server’s public IP, not proof that a typical public video is private or age-restricted. Download here automatically tries public Piped/Invidious relays and the 9Convert/dlsrv farm next. If they also return no stream, use the 9Convert card below the result. This does not unlock private, DRM, members-only, deleted, or region-blocked videos.',
+  },
+  {
     q: 'Which platforms are supported?',
     a: 'YouTube, YT Music, SoundCloud, X (Twitter), Instagram, Spotify, Deezer, Apple Music, Amazon Music, TikTok, Facebook, Snapchat and BeReal. Paste a link from any of them and the platform is detected automatically.',
   },

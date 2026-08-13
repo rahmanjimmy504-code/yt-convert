@@ -1,6 +1,12 @@
 import { type FormatKey, type PlatformKey, extractYouTubeId } from './platforms';
-import { INVIDIOUS_INSTANCES, invidiousVideoUrl } from './invidious';
+import {
+  INVIDIOUS_INSTANCES,
+  invidiousLatestVersionFormats,
+  invidiousVideoUrl,
+} from './invidious';
 import { pipedFormats } from './piped';
+import { nineConvertFormats } from './nineconvert';
+import { youtubeEmbedFormats } from './youtube-embed';
 import { cobaltFormats, isCobaltConfigured } from './cobalt';
 import { getPoToken, isPoTokenServerConfigured } from './po-token';
 import { isAllowedMediaUrl } from './media-hosts';
@@ -143,15 +149,7 @@ export interface InnertubeClient {
  * exposes at least one direct URL wins.
  */
 export const INNERTUBE_CLIENTS: InnertubeClient[] = [
-  {
-    name: 'android',
-    clientName: 'ANDROID',
-    clientVersion: '21.26.364',
-    userAgent: 'com.google.android.youtube/21.26.364 (Linux; U; Android 11) gzip',
-    clientId: '3',
-    extra: { androidSdkVersion: 30, osName: 'Android', osVersion: '11' },
-  },
-  // YouTube Music clients. Label/Topic uploads such as Tobu – Hope
+  // YouTube Music clients go first. Label/Topic uploads such as Tobu – Hope
   // (Y1Z3Q3O7IRE) often return SABR-only / empty streamingData on ANDROID
   // but still hand back direct itag 18 + itag 140 here. This is the same
   // family of clients 9convert-style extractors use for music videos.
@@ -175,6 +173,14 @@ export const INNERTUBE_CLIENTS: InnertubeClient[] = [
       osName: 'iPhone',
       osVersion: '18.3.2.22D82',
     },
+  },
+  {
+    name: 'android',
+    clientName: 'ANDROID',
+    clientVersion: '21.26.364',
+    userAgent: 'com.google.android.youtube/21.26.364 (Linux; U; Android 11) gzip',
+    clientId: '3',
+    extra: { androidSdkVersion: 30, osName: 'Android', osVersion: '11' },
   },
   {
     name: 'ios',
@@ -354,9 +360,9 @@ export function isBotChallenge(status?: string, reason?: string): boolean {
 /**
  * Human-readable message for a non-OK playabilityStatus, or '' if unknown.
  *
- * `poTokenConfigured` lets the message distinguish "the operator has no
- * sidecar, here's the fix" from "a sidecar is configured but did not unlock
- * this video", which are very different things to debug.
+ * `poTokenConfigured` only changes the diagnostic wording. Public visitors
+ * get an actionable 9Convert fallback, not instructions to operate a token
+ * service that would be useless unless it shared the website's public IP.
  */
 export function playabilityMessage(
   status?: string,
@@ -367,8 +373,8 @@ export function playabilityMessage(
   // Report a bot check as exactly that — never as "age-restricted or private".
   if (isBotChallenge(status, reason)) {
     return poTokenConfigured
-      ? "YouTube served a bot check (\u201cSign in to confirm you\u2019re not a bot\u201d) for this server's IP, and the configured PO-token server did not clear it."
-      : 'YouTube served a bot check (\u201cSign in to confirm you\u2019re not a bot\u201d) for this server\u2019s IP. The operator can clear it by running a PO-token server (see po-token-server/).';
+      ? "YouTube served a bot check (\u201cSign in to confirm you\u2019re not a bot\u201d) for this server's IP, and the configured PO token did not clear it. Use the 9Convert option below."
+      : 'YouTube served a bot check (\u201cSign in to confirm you\u2019re not a bot\u201d) for this server\u2019s IP. Use the 9Convert option below.';
   }
   const base = PLAYABILITY_MESSAGES[status];
   if (base) return base;
@@ -435,7 +441,7 @@ export interface InnertubeOptions {
    * videos that otherwise return SABR-only / empty streamingData. The main
    * app NEVER generates this token itself.
    */
-  poToken?: { visitorData: string; poToken: string };
+  poToken?: { visitorData: string; poToken: string; client?: string };
 }
 
 export interface InnertubePlayerRequest {
@@ -514,7 +520,8 @@ export function buildInnertubePlayerRequest(
     racyCheckOk: true,
     context,
   };
-  if (options.poToken?.poToken && !client.skipPoToken) {
+  const tokenMatchesClient = !options.poToken?.client || options.poToken.client === client.clientName;
+  if (options.poToken?.poToken && tokenMatchesClient && !client.skipPoToken) {
     body.serviceIntegrityDimensions = { poToken: options.poToken.poToken };
   }
 
@@ -560,7 +567,10 @@ export async function innertubeFormats(
       // Only accept a client whose response actually contains a playable,
       // direct URL. A client can answer OK and still return nothing but
       // signatureCipher entries or a SABR-only manifest.
-      const formats = collectPlayerFormats(data);
+      const formats = collectPlayerFormats(data).map(playerFormat => ({
+        ...playerFormat,
+        sourceClient: client.clientName,
+      }));
       if (formats.length === 0) continue;
 
       collected.push(...formats);
@@ -608,21 +618,24 @@ function fromInvidious(data: Record<string, unknown>): PlayerFormat[] {
 }
 
 export async function invidiousFormats(videoId: string): Promise<PlayerFormat[]> {
-  for (const base of INVIDIOUS_INSTANCES) {
-    try {
-      const response = await fetch(invidiousVideoUrl(base, videoId), {
-        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; YTConvert/1.0)' },
-        signal: AbortSignal.timeout(PLAYER_TIMEOUT_MS),
-      });
-      if (!response.ok) continue;
-      const data = (await response.json()) as Record<string, unknown>;
-      const formats = fromInvidious(data).filter(hasDirectUrl);
-      if (formats.length > 0) return formats;
-    } catch {
-      // next instance
-    }
-  }
-  return [];
+  const attempts = await Promise.all(
+    INVIDIOUS_INSTANCES.map(async base => {
+      try {
+        const response = await fetch(invidiousVideoUrl(base, videoId), {
+          headers: { 'User-Agent': 'Mozilla/5.0 (compatible; YTConvert/1.0)' },
+          signal: AbortSignal.timeout(PLAYER_TIMEOUT_MS),
+        });
+        if (!response.ok) return [];
+        const data = (await response.json()) as Record<string, unknown>;
+        return fromInvidious(data).filter(
+          playerFormat => hasDirectUrl(playerFormat) && isAllowedMediaUrl(playerFormat.url!),
+        );
+      } catch {
+        return [];
+      }
+    }),
+  );
+  return attempts.find(formats => formats.length > 0) || [];
 }
 
 export interface ExtractOptions {
@@ -690,7 +703,7 @@ async function extractYouTube(
   ) {
     const freshToken = await getPoToken({
       context: 'player',
-      client: 'ANDROID',
+      client: tokenClient,
       videoId: id,
       visitorData: sessionToken?.visitorData,
       forceRefresh: true,
@@ -707,19 +720,45 @@ async function extractYouTube(
   }
 
   let formats = innertube.formats;
-  // Secondary only: public Invidious instances are frequently rate-limited or
-  // have playback disabled, so they must never be the primary path.
-  if (!formats.length) formats = await invidiousFormats(id);
-  // Tertiary: public Piped instances. Piped runs NewPipeExtractor server-side
-  // where maintainers keep up with PO tokens / BotGuard, so it is the most
-  // reliable fallback for music-label and otherwise-throttled videos. Only
-  // reached after every direct client and Invidious instance came up empty.
+  let source: 'innertube' | 'piped' | 'invidious-latest' | 'invidious-api' | 'youtube-embed' | '9convert' | 'cobalt' = 'innertube';
   let pipedError: string | undefined;
+
   if (!formats.length) {
-    const piped = await pipedFormats(id);
-    formats = piped.formats;
+    // Mirror paths are independent and public instances disappear often. Race
+    // them so a dead first host cannot multiply 10–12 second timeouts. Prefer
+    // relayed Piped/latest_version streams, because googlevideo URLs are bound
+    // to the public IP that extracted them; those relays preserve that egress.
+    const [piped, latest, invidious, embed] = await Promise.all([
+      pipedFormats(id),
+      invidiousLatestVersionFormats(id),
+      invidiousFormats(id),
+      youtubeEmbedFormats(id),
+    ]);
     pipedError = piped.error;
+    if (piped.formats.length) {
+      formats = piped.formats;
+      source = 'piped';
+    } else if (latest.length) {
+      formats = latest;
+      source = 'invidious-latest';
+    } else if (invidious.length) {
+      formats = invidious;
+      source = 'invidious-api';
+    } else if (embed.length) {
+      formats = embed;
+      source = 'youtube-embed';
+    }
   }
+
+  // Public 9Convert family farm. It performs extraction/conversion on its own
+  // egress IP and returns a completed allowlisted dlink, which is why it can
+  // survive a BotGuard wall on this Vercel host. Empty/404 farm hops are
+  // explicitly non-fatal and fall through to cobalt/the honest error below.
+  if (!formats.length) {
+    formats = await nineConvertFormats(id, format === 'mp4' ? 'mp4' : 'mp3', quality);
+    if (formats.length) source = '9convert';
+  }
+
   // Last resort: an operator-configured cobalt instance. Disabled unless
   // COBALT_API_URL is set, and it returns a finished muxed file rather than a
   // format list, so it runs only when everything else produced nothing.
@@ -727,7 +766,8 @@ async function extractYouTube(
   if (!formats.length && isCobaltConfigured()) {
     const cobalt = await cobaltFormats(pageUrl, format === 'mp4' ? 'video' : 'audio');
     formats = cobalt.formats.filter(f => f.url && isAllowedMediaUrl(f.url));
-    if (!formats.length) cobaltError = cobalt.error;
+    if (formats.length) source = 'cobalt';
+    else cobaltError = cobalt.error;
   }
 
   if (!formats.length) {
@@ -768,14 +808,29 @@ async function extractYouTube(
   }
 
   const mimeType = picked.mimeType || (kind === 'video' ? 'video/mp4' : 'audio/mp4');
-  const mediaUrl = attachMediaUrlToken(picked.url, gvsToken?.poToken);
-  const viaPiped = !/googlevideo\.com/i.test(new URL(mediaUrl, 'https://x').hostname);
+  // GVS tokens are IP/visitor/client-bound. Attach one only to an Innertube
+  // URL minted by that same client on this app's egress, never to a URL from
+  // another client, embed page, mirror, or farm.
+  const gvsMatchesPickedClient = source === 'innertube'
+    && Boolean(gvsToken?.client)
+    && gvsToken?.client === picked.sourceClient;
+  const mediaUrl = gvsMatchesPickedClient
+    ? attachMediaUrlToken(picked.url, gvsToken?.poToken)
+    : picked.url;
+  const notes: Partial<Record<typeof source, string>> = {
+    piped: 'Piped fallback stream',
+    'invidious-latest': 'Invidious relayed stream',
+    'invidious-api': 'Invidious fallback stream',
+    'youtube-embed': 'YouTube embed fallback stream',
+    '9convert': '9Convert farm fallback',
+    cobalt: 'Cobalt fallback stream',
+  };
   return ok({
     url: mediaUrl,
     mimeType,
     extension: extensionForMime(mimeType, kind === 'video' ? 'mp4' : 'm4a'),
     qualityLabel: picked.qualityLabel,
-    note: viaPiped ? 'Piped fallback stream' : undefined,
+    note: notes[source],
   });
 }
 

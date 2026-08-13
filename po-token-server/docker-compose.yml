@@ -3,13 +3,14 @@
 # Quick start:
 #   1. cp .env.example .env  and set AUTH_TOKEN to a long random value
 #   2. docker compose up -d --build
-#   3. Expose port 4416 to the public yt-convert deployment (via a reverse
-#      proxy / tunnel / security group), then set in the main app's Vercel env:
-#         PO_TOKEN_SERVER_URL=https://your-public-host
+#   3. Run the yt-convert website on this same host/egress and set:
+#         PO_TOKEN_SERVER_URL=http://127.0.0.1:4416
 #         PO_TOKEN_SERVER_AUTH=<the same AUTH_TOKEN>
+#      Prefer the repository-root Compose stack, which keeps this port private.
+#      A sidecar here plus the website on Vercel does not satisfy YouTube's
+#      same-public-IP binding and will not clear that Vercel IP's bot wall.
 #
-# The container never needs to see the main app's secrets or users' cookies;
-# it only mints tokens from YouTube.
+# The container never needs users' cookies; it only mints tokens from YouTube.
 
 services:
   po-token:
