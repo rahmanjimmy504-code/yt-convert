@@ -336,6 +336,8 @@ export interface InnertubeResult {
   /** Populated when every client failed for an explainable reason. */
   status?: string;
   reason?: string;
+  /** True when at least one client encountered a BotGuard challenge. */
+  botChallenged?: boolean;
 }
 
 /**
@@ -542,6 +544,7 @@ export async function innertubeFormats(
 ): Promise<InnertubeResult> {
   let lastStatus: string | undefined;
   let lastReason: string | undefined;
+  let botChallenged = false;
   const collected: PlayerFormat[] = [];
   const cookieHeader = options?.cookies ? sanitizeYouTubeCookies(options.cookies) : null;
 
@@ -560,6 +563,9 @@ export async function innertubeFormats(
       if (!response.ok) continue;
       const data = (await response.json()) as Record<string, unknown>;
       const playability = (data.playabilityStatus || {}) as { status?: string; reason?: string };
+      if (isBotChallenge(playability.status, playability.reason)) {
+        botChallenged = true;
+      }
       if (playability.status && playability.status !== 'OK') {
         lastStatus = playability.status;
         lastReason = playability.reason;
@@ -578,14 +584,29 @@ export async function innertubeFormats(
       // Return as soon as we can serve both mp3 and mp4; otherwise keep going
       // so a client offering only one progressive stream cannot cap quality
       // or break audio-only downloads.
-      if (hasAudioAndVideo(collected)) return { formats: dedupeByItag(collected) };
+      if (hasAudioAndVideo(collected)) {
+        return {
+          formats: dedupeByItag(collected),
+          botChallenged: botChallenged || undefined,
+        };
+      }
     } catch {
       // try the next client
     }
   }
 
-  if (collected.length > 0) return { formats: dedupeByItag(collected) };
-  return { formats: [], status: lastStatus, reason: lastReason };
+  if (collected.length > 0) {
+    return {
+      formats: dedupeByItag(collected),
+      botChallenged: botChallenged || undefined,
+    };
+  }
+  return {
+    formats: [],
+    status: lastStatus,
+    reason: lastReason,
+    botChallenged: botChallenged || isBotChallenge(lastStatus, lastReason) || undefined,
+  };
 }
 
 function fromInvidious(data: Record<string, unknown>): PlayerFormat[] {
@@ -700,7 +721,7 @@ async function extractYouTube(
   if (
     poTokenConfigured &&
     !innertube.formats.length &&
-    (isBotChallenge(innertube.status, innertube.reason) || !playerPo)
+    (innertube.botChallenged || isBotChallenge(innertube.status, innertube.reason) || !playerPo)
   ) {
     const freshToken = await getPoToken({
       context: 'player',
@@ -720,13 +741,19 @@ async function extractYouTube(
     }
   }
 
-  let formats = innertube.formats;
+  // When YouTube issues a bot challenge on this server's egress IP, any
+  // googlevideo media URL fetched from this host will serve an HTML challenge
+  // page rather than actual media bytes. Discard direct Innertube streams,
+  // skip the Piped/Invidious mirror race (same egress IP / same wall), and go
+  // straight to 9Convert then cobalt.
+  const ipBotBlocked = Boolean(innertube.botChallenged || isBotChallenge(innertube.status, innertube.reason));
+  let formats = ipBotBlocked ? [] : innertube.formats;
   let source: 'innertube' | 'piped' | 'invidious-latest' | 'invidious-api' | 'youtube-embed' | '9convert' | 'cobalt' = 'innertube';
   let pipedError: string | undefined;
 
   const want = format === 'mp4' ? 'video' : 'audio';
 
-  if (!formats.length) {
+  if (!formats.length && !ipBotBlocked) {
     // Mirror paths are independent and public instances disappear often. Race
     // them so a dead first host cannot multiply 10–12 second timeouts. Prefer
     // relayed Piped/latest_version streams, because googlevideo URLs are bound
@@ -768,15 +795,15 @@ async function extractYouTube(
   // survive a BotGuard wall on this Vercel host. Empty/404 farm hops are
   // explicitly non-fatal and fall through to cobalt/the honest error below.
   let cobaltError: string | undefined;
+  let cobaltTried = false;
   if (!formats.length) {
     const farmFormats = await nineConvertFormats(id, format === 'mp4' ? 'mp4' : 'mp3', quality);
     if (farmFormats.length) {
       formats = farmFormats;
       source = '9convert';
-    } else if (needTranscodedMp3 && isCobaltConfigured()) {
-      // MP3 specifically needs a transcode; the direct clients didn't have
-      // one, the farm didn't answer. Try cobalt before giving up.
-      const cobalt = await cobaltFormats(pageUrl, 'audio');
+    } else if (isCobaltConfigured()) {
+      cobaltTried = true;
+      const cobalt = await cobaltFormats(pageUrl, format === 'mp4' ? 'video' : 'audio');
       const cobaltUrls = cobalt.formats.filter(f => f.url && isAllowedMediaUrl(f.url));
       if (cobaltUrls.length) {
         formats = cobaltUrls;
@@ -790,7 +817,7 @@ async function extractYouTube(
   // Last resort: an operator-configured cobalt instance. Disabled unless
   // COBALT_API_URL is set, and it returns a finished muxed file rather than a
   // format list, so it runs only when everything else produced nothing.
-  if (!formats.length && isCobaltConfigured()) {
+  if (!formats.length && !cobaltTried && isCobaltConfigured()) {
     const cobalt = await cobaltFormats(pageUrl, format === 'mp4' ? 'video' : 'audio');
     formats = cobalt.formats.filter(f => f.url && isAllowedMediaUrl(f.url));
     if (formats.length) source = 'cobalt';
@@ -800,7 +827,9 @@ async function extractYouTube(
   if (!formats.length) {
     // Prefer an honest, specific reason over the generic message when YouTube
     // told us why (age-gate, private, region-lock, removed...).
-    const explained = playabilityMessage(innertube.status, innertube.reason, poTokenConfigured);
+    const statusToExplain = innertube.status || (innertube.botChallenged ? 'LOGIN_REQUIRED' : undefined);
+    const reasonToExplain = innertube.reason || (innertube.botChallenged ? "Sign in to confirm you're not a bot" : undefined);
+    const explained = playabilityMessage(statusToExplain, reasonToExplain, poTokenConfigured);
     if (explained) return fail(`${explained} Try a converter below.`);
     // Piped sometimes returns a descriptive reason ("Video unavailable",
     // "This video is age-restricted", "region-locked") when Innertube gave us

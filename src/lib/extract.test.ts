@@ -340,6 +340,63 @@ describe('extractMedia YouTube fallbacks', () => {
     expect(contacted.some(url => url.startsWith('https://cobalt.'))).toBe(false);
   });
 
+  it('skips direct googlevideo URLs and Piped/Invidious when the IP is bot-challenged, falls through to 9Convert', async () => {
+    const contacted: string[] = [];
+    let callCount = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: RequestInit) => {
+        contacted.push(url);
+        const method = (init?.method || 'GET').toUpperCase();
+        if (url.includes('youtubei/v1/player')) {
+          callCount += 1;
+          if (callCount === 1) {
+            return new Response(
+              JSON.stringify({
+                playabilityStatus: {
+                  status: 'LOGIN_REQUIRED',
+                  reason: "Sign in to confirm you're not a bot",
+                },
+              }),
+              { headers: { 'Content-Type': 'application/json' } },
+            );
+          }
+          return new Response(JSON.stringify(playerOk(GV_VIDEO, GV_AUDIO)), {
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        if (url === 'https://embed.dlsrv.online/api/info' && method === 'POST') {
+          return new Response(
+            JSON.stringify({
+              status: 'info',
+              info: { formats: [{ type: 'video', format: 'mp4', quality: '720p' }] },
+            }),
+            { headers: { 'Content-Type': 'application/json' } },
+          );
+        }
+        if (url === 'https://embed.dlsrv.online/api/download/mp4' && method === 'POST') {
+          return new Response(JSON.stringify({ url: 'https://media.embed.dlsrv.online/video.mp4' }), {
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        if (url === 'https://media.embed.dlsrv.online/video.mp4' && method === 'GET') {
+          return streamingMp4Response();
+        }
+        return new Response('{}', { status: 404 });
+      }),
+    );
+
+    const result = await extractMedia('youtube', 'https://www.youtube.com/watch?v=Y1Z3Q3O7IRE', 'mp4', '720');
+    expect(isExtractError(result)).toBe(false);
+    if (!isExtractError(result)) {
+      expect(result.url).toBe('https://media.embed.dlsrv.online/video.mp4');
+      expect(result.note).toMatch(/9Convert/i);
+    }
+    expect(contacted.some(url => url.includes('piped'))).toBe(false);
+    expect(contacted.some(url => url.includes('/api/v1/videos/'))).toBe(false);
+    expect(contacted).toContain('https://embed.dlsrv.online/api/download/mp4');
+  });
+
   it('returns a clear music-label / copyright error when Piped reports one', async () => {
     vi.stubGlobal(
       'fetch',
