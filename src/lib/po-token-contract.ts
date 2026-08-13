@@ -10,11 +10,14 @@ export type TokenContext = (typeof TOKEN_CONTEXTS)[number];
 
 export const INNERTUBE_CLIENTS = [
   'ANDROID',
+  'ANDROID_MUSIC',
   'IOS',
+  'IOS_MUSIC',
   'ANDROID_VR',
   'VISIONOS',
   'WEB_EMBEDDED_PLAYER',
   'WEB',
+  'WEB_REMIX',
   'TVHTML5',
   'MWEB',
 ] as const;

@@ -16,11 +16,14 @@ export const TOKEN_CONTEXTS = Object.freeze(['session', 'player', 'gvs']);
 
 export const INNERTUBE_CLIENTS = Object.freeze([
   'ANDROID',
+  'ANDROID_MUSIC',
   'IOS',
+  'IOS_MUSIC',
   'ANDROID_VR',
   'VISIONOS',
   'WEB_EMBEDDED_PLAYER',
   'WEB',
+  'WEB_REMIX',
   'TVHTML5',
   'MWEB',
 ]);

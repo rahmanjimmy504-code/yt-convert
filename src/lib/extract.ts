@@ -150,6 +150,31 @@ export const INNERTUBE_CLIENTS: InnertubeClient[] = [
     clientId: '3',
     extra: { androidSdkVersion: 30, osName: 'Android', osVersion: '11' },
   },
+  // YouTube Music clients. Label/Topic uploads such as Tobu – Hope
+  // (Y1Z3Q3O7IRE) often return SABR-only / empty streamingData on ANDROID
+  // but still hand back direct itag 18 + itag 140 here. This is the same
+  // family of clients 9convert-style extractors use for music videos.
+  {
+    name: 'android_music',
+    clientName: 'ANDROID_MUSIC',
+    clientVersion: '7.27.52',
+    userAgent: 'com.google.android.apps.youtube.music/7.27.52 (Linux; U; Android 11) gzip',
+    clientId: '21',
+    extra: { androidSdkVersion: 30, osName: 'Android', osVersion: '11' },
+  },
+  {
+    name: 'ios_music',
+    clientName: 'IOS_MUSIC',
+    clientVersion: '7.27.0',
+    userAgent: 'com.google.ios.youtubemusic/7.27.0 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)',
+    clientId: '26',
+    extra: {
+      deviceMake: 'Apple',
+      deviceModel: 'iPhone16,2',
+      osName: 'iPhone',
+      osVersion: '18.3.2.22D82',
+    },
+  },
   {
     name: 'ios',
     clientName: 'IOS',
@@ -619,11 +644,15 @@ async function extractYouTube(
   const poTokenConfigured = isPoTokenServerConfigured();
   // Session token first (visitorData + session-bound WebPO). Player tokens
   // are content-bound to this video id. GVS tokens go on media URLs.
-  const sessionToken = await getPoToken({ context: 'session', client: 'ANDROID' }).catch(() => null);
+  // Bind tokens to ANDROID_MUSIC for typical label/Topic tracks (Tobu – Hope)
+  // as well as ANDROID for everything else. One player token is reused across
+  // the client table; visitorData must stay the same.
+  const tokenClient = 'ANDROID_MUSIC';
+  const sessionToken = await getPoToken({ context: 'session', client: tokenClient }).catch(() => null);
   const playerToken = sessionToken
     ? await getPoToken({
         context: 'player',
-        client: 'ANDROID',
+        client: tokenClient,
         videoId: id,
         visitorData: sessionToken.visitorData,
       }).catch(() => null)
@@ -631,7 +660,7 @@ async function extractYouTube(
   const gvsToken = sessionToken
     ? await getPoToken({
         context: 'gvs',
-        client: 'ANDROID',
+        client: tokenClient,
         visitorData: sessionToken.visitorData,
       }).catch(() => null)
     : null;
@@ -733,7 +762,7 @@ async function extractYouTube(
     return fail(
       kind === 'video'
         ? 'No progressive MP4 with audio is available for this video. Higher resolutions may need a converter that combines separate video and audio tracks — try one below.'
-        : 'No audio-only stream is available for this video. Try a converter below.',
+        : 'No audio stream is available for this video. Try a converter below.',
     );
   }
 

@@ -28,6 +28,8 @@ describe('Innertube client table', () => {
     const names = INNERTUBE_CLIENTS.map(c => c.clientName);
     expect(names).toEqual([
       'ANDROID',
+      'ANDROID_MUSIC',
+      'IOS_MUSIC',
       'IOS',
       'ANDROID_VR',
       'VISIONOS',
@@ -41,12 +43,23 @@ describe('Innertube client table', () => {
     const ids = Object.fromEntries(INNERTUBE_CLIENTS.map(c => [c.clientName, c.clientId]));
     expect(ids).toMatchObject({
       ANDROID: '3',
+      ANDROID_MUSIC: '21',
+      IOS_MUSIC: '26',
       IOS: '5',
       ANDROID_VR: '28',
       VISIONOS: '101',
       WEB_EMBEDDED_PLAYER: '56',
       TVHTML5: '7',
     });
+  });
+
+  it('tries YouTube Music clients before generic iOS (label/Topic tracks)', () => {
+    const names = INNERTUBE_CLIENTS.map(c => c.clientName);
+    expect(names.indexOf('ANDROID_MUSIC')).toBeLessThan(names.indexOf('IOS'));
+    expect(names.indexOf('IOS_MUSIC')).toBeLessThan(names.indexOf('ANDROID_VR'));
+    const music = INNERTUBE_CLIENTS.find(c => c.clientName === 'ANDROID_MUSIC')!;
+    expect(music.userAgent).toContain('youtube.music');
+    expect(music.clientVersion).toMatch(/^7\./);
   });
 
   it('does not include the retired ANDROID_TESTSUITE client', () => {
@@ -303,7 +316,7 @@ describe('innertubeFormats', () => {
         const body = JSON.parse(String(init.body));
         const client = body.context.client.clientName;
         calls.push(client);
-        if (client === 'ANDROID') {
+        if (client === 'ANDROID' || client === 'ANDROID_MUSIC' || client === 'IOS_MUSIC') {
           return jsonResponse({
             playabilityStatus: { status: 'OK' },
             streamingData: {
@@ -419,7 +432,8 @@ describe('innertubeFormats', () => {
     // Degrades gracefully: mp4 still works even though mp3 has no source.
     expect(result.formats.length).toBeGreaterThan(0);
     expect(pickYouTubeFormat(result.formats, 'video', 'best')?.itag).toBe(18);
-    expect(pickYouTubeFormat(result.formats, 'audio', 'best')).toBeNull();
+    // Progressive itag 18 is a last-resort audio source (Tobu – Hope / label).
+    expect(pickYouTubeFormat(result.formats, 'audio', 'best')?.itag).toBe(18);
   });
 
   it('falls through to the web embedded client when regular clients return LOGIN_REQUIRED (age-gate bypass)', async () => {

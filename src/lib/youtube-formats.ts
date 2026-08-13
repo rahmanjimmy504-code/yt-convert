@@ -151,7 +151,13 @@ export function pickYouTubeFormat(
   const audio = usable.filter(isAudioOnly);
   const preferred = audio.filter(isM4a);
   const pool = preferred.length > 0 ? preferred : audio;
-  if (pool.length === 0) return null;
+  // Music-label videos (e.g. Tobu – Hope) often expose only a progressive
+  // itag 18 and no adaptive audio. 9convert still converts those by taking
+  // the muxed file. We do the same as a last resort — the container stays
+  // honest (usually .mp4 / .m4a), never relabelled as MP3.
+  if (pool.length === 0) {
+    return pickProgressiveForQuality(usable.filter(isProgressiveMp4), 'best');
+  }
   if (quality === 'best' || !/^\d+$/.test(quality)) {
     pool.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
     return pool[0];

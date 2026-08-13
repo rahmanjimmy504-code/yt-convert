@@ -117,6 +117,13 @@ describe('pickYouTubeFormat', () => {
     expect(picked?.itag).toBe(251);
   });
 
+  it('falls back to a progressive MP4 when no audio-only track exists (Tobu – Hope)', () => {
+    const progressiveOnly = formats.filter(f => f.itag === 18);
+    const picked = pickYouTubeFormat(progressiveOnly, 'audio', 'best');
+    expect(picked?.itag).toBe(18);
+    expect(picked?.mimeType).toMatch(/video\/mp4/);
+  });
+
   it('returns null when nothing usable remains', () => {
     expect(pickYouTubeFormat([], 'video')).toBeNull();
     expect(
