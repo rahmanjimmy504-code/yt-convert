@@ -16,6 +16,28 @@ import { assertTokenPair } from './contract.js';
 
 const REQUEST_KEY = 'O43z0dpjhgX20SCx4KAo';
 
+let proxyAgent = null;
+
+function egressProxy() {
+  const raw = (process.env.YT_EGRESS_PROXY || '').trim();
+  if (!raw) return null;
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+}
+
+async function mintFetch(input, init) {
+  const proxy = egressProxy();
+  if (!proxy) return fetch(input, init);
+  const { ProxyAgent, fetch: undiciFetch } = await import('undici');
+  if (!proxyAgent) proxyAgent = new ProxyAgent(proxy);
+  return undiciFetch(input, { ...init, dispatcher: proxyAgent });
+}
+
 function installDom() {
   if (globalThis.window && globalThis.document) return;
   const dom = new JSDOM('<!DOCTYPE html><html><head></head><body></body></html>', {
@@ -34,6 +56,7 @@ async function visitorFromInnertube() {
     user_agent: USER_AGENT,
     cache: new UniversalCache(false),
     retrieve_player: false,
+    fetch: mintFetch,
   });
   const visitorData = innertube.session.context.client.visitorData || '';
   if (!visitorData) throw new Error('Innertube did not return visitorData');
@@ -50,7 +73,7 @@ export async function mintPoToken({ identifier, visitorData: providedVisitor }) 
   const contentBinding = identifier || visitorData;
 
   const bgConfig = {
-    fetch: (input, init) => fetch(input, init),
+    fetch: mintFetch,
     globalObj: globalThis,
     identifier: contentBinding,
     requestKey: REQUEST_KEY,

@@ -24,8 +24,10 @@ answers SABR-only / empty `streamingData`. 9convert’s `embed.dlsrv.online`
 farm uses YouTube **Music** clients (`ANDROID_MUSIC` / `IOS_MUSIC`), takes
 progressive itag 18 when no adaptive AAC exists, and mints PO tokens on the
 **same IP** that fetches googlevideo. We now do the first two of those. The
-third still requires the Compose stack on one VPS — tokens minted on a
-sidecar and spent from Vercel will not clear the bot wall.
+third still requires the same public IP. A free Android phone can be that
+IP (Termux HTTP proxy or Tailscale exit node) — see
+[docs/android-egress.md](android-egress.md). Tokens minted on the phone
+and spent from Vercel still fail.
 
 ## What we do not do
 

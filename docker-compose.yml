@@ -29,6 +29,7 @@ services:
       COBALT_API_AUTH: ${COBALT_API_AUTH:-}
       COBALT_PROXY_HOSTS: ${COBALT_PROXY_HOSTS:-}
       PIPED_PROXY_HOSTS: ${PIPED_PROXY_HOSTS:-}
+      YT_EGRESS_PROXY: ${YT_EGRESS_PROXY:-}
     depends_on:
       po-token:
         condition: service_healthy
@@ -48,6 +49,7 @@ services:
       HOST: "0.0.0.0"
       AUTH_TOKEN: ${AUTH_TOKEN:?set AUTH_TOKEN in .env}
       TOKEN_TTL_MS: ${TOKEN_TTL_MS:-1800000}
+      YT_EGRESS_PROXY: ${YT_EGRESS_PROXY:-}
     networks:
       - internal
     expose:

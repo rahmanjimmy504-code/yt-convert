@@ -3,6 +3,8 @@
  * HTTPS media CDNs. Redirect hops must be re-checked with the same rules.
  */
 
+import { youtubeAwareFetch } from './youtube-egress';
+
 const ALLOWED_SUFFIXES = [
   'googlevideo.com',
   'sndcdn.com',
@@ -129,7 +131,7 @@ export async function fetchAllowedMedia(url: string, init: RequestInit = {}, hop
   // clear the timer so a long progressive download is not aborted mid-stream.
   let response: Response;
   if (init.signal) {
-    response = await fetch(url, {
+    response = await youtubeAwareFetch(url, {
       ...init,
       headers,
       redirect: 'manual',
@@ -139,7 +141,7 @@ export async function fetchAllowedMedia(url: string, init: RequestInit = {}, hop
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), CONNECT_TIMEOUT_MS);
     try {
-      response = await fetch(url, {
+      response = await youtubeAwareFetch(url, {
         ...init,
         headers,
         redirect: 'manual',

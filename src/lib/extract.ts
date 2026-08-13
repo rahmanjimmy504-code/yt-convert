@@ -4,6 +4,7 @@ import { pipedFormats } from './piped';
 import { cobaltFormats, isCobaltConfigured } from './cobalt';
 import { getPoToken, isPoTokenServerConfigured } from './po-token';
 import { isAllowedMediaUrl } from './media-hosts';
+import { youtubeAwareFetch } from './youtube-egress';
 import {
   extensionForMime,
   pickYouTubeFormat,
@@ -542,7 +543,7 @@ export async function innertubeFormats(
         ...(cookieHeader ? { cookies: cookieHeader } : {}),
         poToken: options?.poToken,
       });
-      const response = await fetch(endpoint, {
+      const response = await youtubeAwareFetch(endpoint, {
         method: 'POST',
         headers,
         body: JSON.stringify(body),

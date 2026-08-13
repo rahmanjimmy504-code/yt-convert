@@ -430,6 +430,10 @@ Caddy terminates TLS and proxies to the Next.js app. The PO-token sidecar is
 reachable only on the internal network as `http://po-token:4416`. Do not
 publish port 4416.
 
+To use a **free Android phone** as the YouTube egress IP (same-egress PO
+tokens without a paid proxy), set `YT_EGRESS_PROXY` and follow
+[docs/android-egress.md](docs/android-egress.md).
+
 To deploy under a **custom production domain**, see [Custom production domain](#custom-production-domain) above: add the domain in Vercel project settings and set `NEXT_PUBLIC_SITE_URL` for the Production environment.
 
 Recommended production environment variables:
