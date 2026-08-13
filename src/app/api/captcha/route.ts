@@ -6,43 +6,19 @@ import {
   type LocalCaptchaMode,
   type LocalCaptchaVerifyResult,
 } from '@/lib/captcha';
+import { clientIp, rateLimit } from '@/lib/rate-limit';
 
 export const runtime = 'nodejs';
 
 const CAPTCHA_RATE_LIMIT = 30;
-const CAPTCHA_RATE_WINDOW_MS = 60_000;
-const rateMap = new Map<string, { count: number; start: number }>();
 
-function clientIp(request: Request): string {
-  return (
-    (request.headers.get('x-forwarded-for') || '').split(',')[0].trim() ||
-    request.headers.get('x-real-ip') ||
-    'unknown'
-  );
-}
-
-function rateLimited(ip: string): number {
-  const now = Date.now();
-  const entry = rateMap.get(ip);
-  if (!entry || now - entry.start >= CAPTCHA_RATE_WINDOW_MS) {
-    rateMap.set(ip, { count: 1, start: now });
-    if (rateMap.size > 1000) {
-      for (const [key, value] of rateMap) {
-        if (now - value.start >= CAPTCHA_RATE_WINDOW_MS) rateMap.delete(key);
-      }
-    }
-    return 0;
-  }
-
-  entry.count += 1;
-  return entry.count > CAPTCHA_RATE_LIMIT
-    ? Math.ceil((entry.start + CAPTCHA_RATE_WINDOW_MS - now) / 1000)
-    : 0;
+function captchaRateLimit(request: Request): number {
+  return rateLimit(`captcha:${clientIp(request)}`, CAPTCHA_RATE_LIMIT);
 }
 
 /** Issue a local fallback challenge. Turnstile widgets are issued by Cloudflare. */
 export async function GET(request: Request) {
-  const retryAfter = rateLimited(clientIp(request));
+  const retryAfter = captchaRateLimit(request);
   if (retryAfter > 0) {
     return NextResponse.json(
       { error: 'Too many CAPTCHA requests. Please wait a moment and try again.' },
@@ -71,7 +47,7 @@ export async function GET(request: Request) {
 
 /** Verify a local fallback answer and return a one-time proof token. */
 export async function POST(request: Request) {
-  const retryAfter = rateLimited(clientIp(request));
+  const retryAfter = captchaRateLimit(request);
   if (retryAfter > 0) {
     return NextResponse.json(
       { error: 'Too many CAPTCHA attempts. Please wait a moment and try again.' },

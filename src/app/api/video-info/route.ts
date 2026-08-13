@@ -10,7 +10,7 @@ import { verifyCaptchaToken } from '@/lib/captcha';
 import { issueConvertTicket } from '@/lib/convert-ticket';
 import { innertubeFormats, sanitizeYouTubeCookies } from '@/lib/extract';
 import { INVIDIOUS_INSTANCES, invidiousVideoUrl } from '@/lib/invidious';
-import { clientIp } from '@/lib/rate-limit';
+import { clientIp, rateLimit } from '@/lib/rate-limit';
 import { recordEvent } from '@/lib/stats';
 import { videoQualityPlans, type VideoQualityPlan } from '@/lib/youtube-formats';
 
@@ -76,13 +76,8 @@ function cacheSet(key: string, body: VideoInfo) {
   cache.set(key, { at: Date.now(), body });
 }
 
-// Simple fixed-window rate limiter per client IP so a single heavy user
-// can't hammer the upstream oEmbed/Invidious APIs through this endpoint.
-// In-memory like the cache: per-serverless-instance, which is fine for a
-// soft abuse guard. (Add Redis/Upstash here if a hard global limit is needed.)
 const RATE_LIMIT = 30; // requests per window per IP
-const RATE_WINDOW_MS = 60_000;
-const rateMap = new Map<string, { count: number; start: number }>();
+
 // Proof tokens are single-use on this server instance as an additional guard
 // for the local fallback. Cloudflare Turnstile tokens are also single-use at
 // its Siteverify endpoint.
@@ -100,22 +95,6 @@ function captchaTokenAlreadyUsed(token: string): boolean {
   }
   usedCaptchaTokens.set(token, now + 10 * 60 * 1000);
   return false;
-}
-
-/** Returns the number of seconds the client must wait when limited, else 0. */
-function rateLimited(ip: string): number {
-  const now = Date.now();
-  const e = rateMap.get(ip);
-  if (!e || now - e.start >= RATE_WINDOW_MS) {
-    rateMap.set(ip, { count: 1, start: now });
-    // Keep the map bounded on untrusted hosts.
-    if (rateMap.size > 1000) {
-      for (const [k, v] of rateMap) if (now - v.start >= RATE_WINDOW_MS) rateMap.delete(k);
-    }
-    return 0;
-  }
-  e.count += 1;
-  return e.count > RATE_LIMIT ? Math.ceil((e.start + RATE_WINDOW_MS - now) / 1000) : 0;
 }
 
 function formatDuration(totalSeconds: number): string {
@@ -299,7 +278,7 @@ function withConvertFields(info: VideoInfo, rawUrl: string, ip: string): VideoIn
 
 export async function GET(request: Request) {
   const ip = clientIp(request);
-  const retryAfter = rateLimited(ip);
+  const retryAfter = rateLimit(`video-info:${ip}`, RATE_LIMIT);
   if (retryAfter > 0) {
     return NextResponse.json(
       { error: 'Too many requests. Please wait a moment and try again.' },
