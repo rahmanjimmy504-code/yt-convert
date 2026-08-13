@@ -7,6 +7,46 @@ Next.js app still talks to YouTube from Vercel does **not** count.
 Yes, this can be done **for free on a phone**. The phone must stay on, and
 downloads use **its** mobile data.
 
+## Termux was reset
+
+A reset wipes packages, `tinyproxy`, SSH keys, and the tunnel. The VPS
+compose file is unchanged — only the phone side is gone.
+
+1. Install [Termux](https://f-droid.org/en/packages/com.termux/) from F-Droid
+   (Play Store Termux is stale). Optional: Termux:API for a wake lock.
+2. Open Termux and paste:
+
+```bash
+pkg update && pkg install -y curl openssh
+# Pull the bootstrap from this repo (or copy scripts/termux-egress.sh by hand).
+curl -fsSL https://raw.githubusercontent.com/rahmanjimmy504-code/yt-convert/arena/019ffc0a-yt-convert/scripts/termux-egress.sh -o ~/termux-egress.sh
+chmod +x ~/termux-egress.sh
+
+# Your VPS login — the same host that runs docker compose.
+export EGRESS_SSH=ubuntu@YOUR_VPS_IP
+bash ~/termux-egress.sh
+```
+
+3. First run will ask to trust the host key and may ask for the VPS
+   password. To skip passwords next time, on the phone:
+
+```bash
+ssh-keygen -t ed25519 -N "" -f ~/.ssh/id_ed25519
+ssh-copy-id -p 22 "$EGRESS_SSH"
+```
+
+4. Leave that Termux session open. On the VPS `.env` you still need:
+
+```env
+YT_EGRESS_PROXY=http://172.17.0.1:8888
+```
+
+then `docker compose up -d` (or restart `web` and `po-token` if they were
+already running).
+
+If SSH says `remote port forwarding failed`, something else is bound to
+8888 on the VPS — `ss -lntp | grep 8888` and stop the leftover tunnel.
+
 ## What does not work
 
 | Setup | Why it fails |
