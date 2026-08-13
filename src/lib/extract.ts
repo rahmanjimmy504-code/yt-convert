@@ -4,6 +4,7 @@ import { pipedFormats } from './piped';
 import { cobaltFormats, isCobaltConfigured } from './cobalt';
 import { getPoToken, isPoTokenServerConfigured } from './po-token';
 import { isAllowedMediaUrl } from './media-hosts';
+import { youtubeAwareFetch } from './youtube-egress';
 import {
   extensionForMime,
   pickYouTubeFormat,
@@ -150,6 +151,31 @@ export const INNERTUBE_CLIENTS: InnertubeClient[] = [
     clientId: '3',
     extra: { androidSdkVersion: 30, osName: 'Android', osVersion: '11' },
   },
+  // YouTube Music clients. Label/Topic uploads such as Tobu – Hope
+  // (Y1Z3Q3O7IRE) often return SABR-only / empty streamingData on ANDROID
+  // but still hand back direct itag 18 + itag 140 here. This is the same
+  // family of clients 9convert-style extractors use for music videos.
+  {
+    name: 'android_music',
+    clientName: 'ANDROID_MUSIC',
+    clientVersion: '7.27.52',
+    userAgent: 'com.google.android.apps.youtube.music/7.27.52 (Linux; U; Android 11) gzip',
+    clientId: '21',
+    extra: { androidSdkVersion: 30, osName: 'Android', osVersion: '11' },
+  },
+  {
+    name: 'ios_music',
+    clientName: 'IOS_MUSIC',
+    clientVersion: '7.27.0',
+    userAgent: 'com.google.ios.youtubemusic/7.27.0 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)',
+    clientId: '26',
+    extra: {
+      deviceMake: 'Apple',
+      deviceModel: 'iPhone16,2',
+      osName: 'iPhone',
+      osVersion: '18.3.2.22D82',
+    },
+  },
   {
     name: 'ios',
     clientName: 'IOS',
@@ -267,6 +293,25 @@ export function collectPlayerFormats(data: Record<string, unknown>): PlayerForma
   };
   const all = [...(streaming.formats || []), ...(streaming.adaptiveFormats || [])];
   return all.filter(hasDirectUrl);
+}
+
+/**
+ * Attach a GVS / media-URL PO token to googlevideo playback URLs.
+ * YouTube requires this token on the CDN request independently of the
+ * player-request token. Invalid tokens are ignored (never appended).
+ */
+export function attachMediaUrlToken(url: string, pot: string | undefined | null): string {
+  if (!pot || !url) return url;
+  try {
+    const parsed = new URL(url);
+    if (!/googlevideo\.com$/i.test(parsed.hostname)) return url;
+    if (parsed.searchParams.has('pot')) return url;
+    parsed.searchParams.set('pot', pot);
+    parsed.searchParams.set('potc', '1');
+    return parsed.toString();
+  } catch {
+    return url;
+  }
 }
 
 /** Playability states we can explain to the user instead of a generic failure. */
@@ -498,7 +543,7 @@ export async function innertubeFormats(
         ...(cookieHeader ? { cookies: cookieHeader } : {}),
         poToken: options?.poToken,
       });
-      const response = await fetch(endpoint, {
+      const response = await youtubeAwareFetch(endpoint, {
         method: 'POST',
         headers,
         body: JSON.stringify(body),
@@ -598,12 +643,35 @@ async function extractYouTube(
   // it can be attached to the Innertube player requests. A failure here is
   // non-fatal: we proceed without it and the downstream fallbacks run.
   const poTokenConfigured = isPoTokenServerConfigured();
-  const poToken = await getPoToken().catch(() => null);
+  // Session token first (visitorData + session-bound WebPO). Player tokens
+  // are content-bound to this video id. GVS tokens go on media URLs.
+  // Bind tokens to ANDROID_MUSIC for typical label/Topic tracks (Tobu – Hope)
+  // as well as ANDROID for everything else. One player token is reused across
+  // the client table; visitorData must stay the same.
+  const tokenClient = 'ANDROID_MUSIC';
+  const sessionToken = await getPoToken({ context: 'session', client: tokenClient }).catch(() => null);
+  const playerToken = sessionToken
+    ? await getPoToken({
+        context: 'player',
+        client: tokenClient,
+        videoId: id,
+        visitorData: sessionToken.visitorData,
+      }).catch(() => null)
+    : null;
+  const gvsToken = sessionToken
+    ? await getPoToken({
+        context: 'gvs',
+        client: tokenClient,
+        visitorData: sessionToken.visitorData,
+      }).catch(() => null)
+    : null;
+
+  const playerPo = playerToken || sessionToken;
 
   // Primary: Innertube clients that return direct googlevideo URLs.
   let innertube = await innertubeFormats(id, {
     cookies: options?.youTubeCookies,
-    poToken: poToken ?? undefined,
+    poToken: playerPo ?? undefined,
   });
 
   // Durable fix for the bot wall: when every client was refused with a
@@ -618,10 +686,16 @@ async function extractYouTube(
   if (
     poTokenConfigured &&
     !innertube.formats.length &&
-    (isBotChallenge(innertube.status, innertube.reason) || !poToken)
+    (isBotChallenge(innertube.status, innertube.reason) || !playerPo)
   ) {
-    const freshToken = await getPoToken(true).catch(() => null);
-    if (freshToken && freshToken.poToken !== poToken?.poToken) {
+    const freshToken = await getPoToken({
+      context: 'player',
+      client: 'ANDROID',
+      videoId: id,
+      visitorData: sessionToken?.visitorData,
+      forceRefresh: true,
+    }).catch(() => null);
+    if (freshToken && freshToken.poToken !== playerPo?.poToken) {
       const retried = await innertubeFormats(id, {
         cookies: options?.youTubeCookies,
         poToken: freshToken,
@@ -689,14 +763,15 @@ async function extractYouTube(
     return fail(
       kind === 'video'
         ? 'No progressive MP4 with audio is available for this video. Higher resolutions may need a converter that combines separate video and audio tracks — try one below.'
-        : 'No audio-only stream is available for this video. Try a converter below.',
+        : 'No audio stream is available for this video. Try a converter below.',
     );
   }
 
   const mimeType = picked.mimeType || (kind === 'video' ? 'video/mp4' : 'audio/mp4');
-  const viaPiped = !/googlevideo\.com/i.test(new URL(picked.url, 'https://x').hostname);
+  const mediaUrl = attachMediaUrlToken(picked.url, gvsToken?.poToken);
+  const viaPiped = !/googlevideo\.com/i.test(new URL(mediaUrl, 'https://x').hostname);
   return ok({
-    url: picked.url,
+    url: mediaUrl,
     mimeType,
     extension: extensionForMime(mimeType, kind === 'video' ? 'mp4' : 'm4a'),
     qualityLabel: picked.qualityLabel,

@@ -1,0 +1,8 @@
+{
+	email {$CADDY_EMAIL:admin@example.com}
+}
+
+{$SITE_ADDRESS:localhost} {
+	encode gzip zstd
+	reverse_proxy web:3000
+}

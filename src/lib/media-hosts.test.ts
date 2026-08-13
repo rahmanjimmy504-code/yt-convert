@@ -85,6 +85,21 @@ describe('fetchAllowedMedia', () => {
     expect(fetchMock.mock.calls[0][1].redirect).toBe('manual');
   });
 
+  it('forwards a Range header and leaves the body stream to the caller', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      status: 206,
+      ok: false,
+      headers: { get: (n: string) => (n === 'content-range' ? 'bytes 0-1/10' : null) },
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const res = await fetchAllowedMedia('https://rr1---sn-test.googlevideo.com/videoplayback?id=1', {
+      headers: { Range: 'bytes=0-1' },
+    });
+    expect(res.status).toBe(206);
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    expect(new Headers(init.headers as HeadersInit).get('range')).toBe('bytes=0-1');
+  });
+
   it('refuses a redirect onto a private or unknown host', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       status: 302,

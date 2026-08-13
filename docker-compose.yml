@@ -1,0 +1,88 @@
+# One-VPS stack: Next.js app + BgUtils PO-token sidecar + Caddy.
+#
+# The sidecar is NOT published to the internet. It lives on the private
+# Docker network so the app and the generator share an egress IP (the
+# Android same-egress experiment: PO tokens only clear BotGuard when mint
+# and Innertube extraction come from the same address).
+#
+#   cp .env.example .env   # set AUTH_TOKEN, CONVERT_TICKET_SECRET, SITE_ADDRESS
+#   docker compose up -d --build
+
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: yt-convert-web:latest
+    restart: unless-stopped
+    environment:
+      PORT: "3000"
+      HOSTNAME: "0.0.0.0"
+      PO_TOKEN_SERVER_URL: http://po-token:4416
+      PO_TOKEN_SERVER_AUTH: ${AUTH_TOKEN}
+      CONVERT_TICKET_SECRET: ${CONVERT_TICKET_SECRET:-${CAPTCHA_SECRET:-change-me}}
+      CAPTCHA_SECRET: ${CAPTCHA_SECRET:-change-me}
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-}
+      NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL:-http://localhost}
+      YT_API_KEY: ${YT_API_KEY:-}
+      COBALT_API_URL: ${COBALT_API_URL:-}
+      COBALT_API_AUTH: ${COBALT_API_AUTH:-}
+      COBALT_PROXY_HOSTS: ${COBALT_PROXY_HOSTS:-}
+      PIPED_PROXY_HOSTS: ${PIPED_PROXY_HOSTS:-}
+      YT_EGRESS_PROXY: ${YT_EGRESS_PROXY:-}
+    depends_on:
+      po-token:
+        condition: service_healthy
+    networks:
+      - internal
+    expose:
+      - "3000"
+
+  po-token:
+    build:
+      context: ./po-token-server
+      dockerfile: Dockerfile
+    image: yt-convert-po-token-server:latest
+    restart: unless-stopped
+    environment:
+      PORT: "4416"
+      HOST: "0.0.0.0"
+      AUTH_TOKEN: ${AUTH_TOKEN:?set AUTH_TOKEN in .env}
+      TOKEN_TTL_MS: ${TOKEN_TTL_MS:-1800000}
+      YT_EGRESS_PROXY: ${YT_EGRESS_PROXY:-}
+    networks:
+      - internal
+    expose:
+      - "4416"
+    healthcheck:
+      test: ["CMD", "node", "scripts/healthcheck.js"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:-localhost}
+      CADDY_EMAIL: ${CADDY_EMAIL:-admin@example.com}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - web
+    networks:
+      - internal
+
+networks:
+  internal:
+    driver: bridge
+
+volumes:
+  caddy_data:
+  caddy_config:

@@ -40,6 +40,8 @@ if (
 const nextConfig: NextConfig = {
   // Keep builds honest: type errors and lint failures should surface at build time.
   reactStrictMode: true,
+  // Required for the slim production Docker image (see Dockerfile).
+  output: 'standalone',
   // Resolve per-environment CAPTCHA site keys at build time so previews and
   // production can use separate widgets without code changes.
   env: resolvePublicCaptchaKeys(),

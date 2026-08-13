@@ -509,20 +509,16 @@ export default function Home() {
         setConvertError(data.error || 'Could not convert this link. Try a converter below.');
         return;
       }
-      const blob = await response.blob();
-      const dispo = response.headers.get('content-disposition') || '';
-      const star = dispo.match(/filename\*=UTF-8''([^;]+)/i);
-      const quoted = dispo.match(/filename="([^"]+)"/i);
-      const name = decodeURIComponent((star?.[1] || quoted?.[1] || 'download').replace(/["']/g, ''));
-      const objectUrl = URL.createObjectURL(blob);
+      // Do not buffer response.blob(). Cancel this probe fetch and let the
+      // browser stream the same URL natively (Range / resume supported).
+      await response.body?.cancel().catch(() => undefined);
       const link = document.createElement('a');
-      link.href = objectUrl;
-      link.download = name;
+      link.href = href;
       link.rel = 'noopener';
+      link.setAttribute('download', '');
       document.body.appendChild(link);
       link.click();
       link.remove();
-      setTimeout(() => URL.revokeObjectURL(objectUrl), 30_000);
     } catch {
       setConvertError('Could not convert this link. Try a converter below.');
     } finally {
