@@ -220,7 +220,7 @@ async function callAnthropic(question: string, systemPrompt: string): Promise<st
 export async function POST(req: NextRequest) {
   // rate limit
   const ip = clientIp(req as unknown as Request);
-  const retry = rateLimit(`faq-assistant:${ip}`, RATE_LIMIT_PER_MIN);
+  const retry = await rateLimit(`faq-assistant:${ip}`, RATE_LIMIT_PER_MIN);
   if (retry > 0) {
     return NextResponse.json(
       { error: `Too many questions — retry in ${retry}s` },
