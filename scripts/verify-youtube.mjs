@@ -63,6 +63,8 @@ import {
   playabilityMessage,
 } from '../src/lib/extract.ts';
 import { pipedFormats } from '../src/lib/piped.ts';
+import { cobaltFormats, cobaltConfigFromEnv, isCobaltConfigured } from '../src/lib/cobalt.ts';
+import { isPoTokenServerConfigured } from '../src/lib/po-token.ts';
 import { extensionForMime, isUsableFormatUrl, pickYouTubeFormat, planVideoDownload } from '../src/lib/youtube-formats.ts';
 import { isAllowedMediaUrl } from '../src/lib/media-hosts.ts';
 import { extractYouTubeId } from '../src/lib/platforms.ts';
@@ -120,7 +122,22 @@ function isPipedTransient(result) {
 
 console.log(`\n=== Live YouTube extraction check ===`);
 console.log(`Video: ${target}  (id ${videoId})`);
-console.log(`Clients: ${INNERTUBE_CLIENTS.map(c => `${c.clientName} ${c.clientVersion}`).join(', ')}\n`);
+console.log(`Clients: ${INNERTUBE_CLIENTS.map(c => `${c.clientName} ${c.clientVersion}`).join(', ')}`);
+
+/* -- 0. Configuration of the optional unblockers, printed UP FRONT so the
+   rest of the log can be read correctly. Without a PO-token sidecar, a
+   BotGuard challenge on this IP is expected rather than a regression. -- */
+const poTokenOn = isPoTokenServerConfigured();
+const cobaltCfg = cobaltConfigFromEnv();
+console.log(
+  `PO-token server: ${poTokenOn ? 'CONFIGURED' : 'not configured'}` +
+    (poTokenOn
+      ? ' (bot challenges will be retried once with a fresh token)'
+      : ' — PO_TOKEN_SERVER_URL/PO_TOKEN_SERVER_AUTH unset; a "not a bot" refusal on this IP is EXPECTED, not a regression'),
+);
+console.log(
+  `Cobalt fallback: ${cobaltCfg ? `CONFIGURED (${cobaltCfg.url}${cobaltCfg.auth ? ', authenticated' : ''})` : 'not configured — COBALT_API_URL unset'}\n`,
+);
 
 /* -- 1. Per-client raw probe, so a failure says exactly which client broke -- */
 console.log('--- per-client player probe ---');
@@ -203,8 +220,34 @@ if (!formats.length) {
   check(formats.length > 0, 'pipedFormats() fallback returned formats', piped.error || `${formats.length} formats`);
 }
 
+/* -- Last resort: cobalt. Probed even when unconfigured, so the log states
+   plainly why it did nothing. -- */
 if (!formats.length) {
-  console.log('\n✗ No formats from any source (Innertube, Invidious, or Piped) — extraction is broken for this video.');
+  if (!isCobaltConfigured()) {
+    console.log('  → cobalt fallback skipped: COBALT_API_URL is not set.');
+    console.log('    NOTE: the official api.cobalt.tools is blocked from YouTube and gated behind bot');
+    console.log('    protection — the cobalt docs tell operators to self-host for a working fallback.');
+  } else {
+    console.log(`  → falling back to cobalt (${cobaltCfg.url})…`);
+    const cobalt = await cobaltFormats(target, 'video');
+    const usable = cobalt.formats.filter(f => f.url && isAllowedMediaUrl(f.url));
+    if (usable.length) {
+      formats = usable;
+      via = 'cobalt';
+    }
+    console.log(
+      `    ${cobaltCfg.url.padEnd(38)} → ${
+        usable.length ? 'OK' : cobalt.error ? `refused (${cobalt.error})` : 'no usable URL'
+      }`,
+    );
+    if (cobalt.formats.length && !usable.length) {
+      console.log('    (cobalt returned a URL that is NOT on the media allowlist — set COBALT_PROXY_HOSTS)');
+    }
+  }
+}
+
+if (!formats.length) {
+  console.log('\n✗ No formats from any source (Innertube, Invidious, Piped, or cobalt) — extraction is broken for this video.');
   console.log('  If every Innertube client says "Sign in to confirm you\'re not a bot", the runner IP is');
   console.log('  being BotGuard-challenged — the durable fix is deploying the po-token-server sidecar');
   console.log('  (see po-token-server/README.md and the PO_TOKEN_SERVER_URL/PO_TOKEN_SERVER_AUTH env vars).');

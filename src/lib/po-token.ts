@@ -122,11 +122,21 @@ async function fetchPoToken(): Promise<PoToken | null> {
  * Return a usable PO token, fetching and caching one when necessary. Multiple
  * concurrent callers share a single in-flight request so a cold cache doesn't
  * stampede the sidecar.
+ *
+ * Pass `forceRefresh` to bypass the cache and mint a brand-new token. This is
+ * what the bot-challenge retry in ./extract.ts uses: when YouTube answers
+ * "Sign in to confirm you're not a bot" the cached token has been burnt (or
+ * was never bound to this session), so reusing it would fail identically.
  */
-export async function getPoToken(): Promise<PoToken | null> {
+export async function getPoToken(forceRefresh = false): Promise<PoToken | null> {
   if (!isPoTokenServerConfigured()) return null;
 
-  if (cachedToken && Date.now() - cachedToken.fetchedAt < DEFAULT_TTL_MS) {
+  if (forceRefresh) {
+    // Drop the burnt token and any in-flight fetch that would resolve to it,
+    // so the retry genuinely re-attests instead of replaying the same value.
+    cachedToken = null;
+    pending = null;
+  } else if (cachedToken && Date.now() - cachedToken.fetchedAt < DEFAULT_TTL_MS) {
     return cachedToken;
   }
 

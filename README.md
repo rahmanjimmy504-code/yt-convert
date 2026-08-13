@@ -171,6 +171,9 @@ The dev server runs at **http://localhost:3000** by default. Edit any file under
 | `PIPED_PROXY_HOSTS` | *(empty)* | Comma-separated extra host suffixes to allow as Piped stream proxies (self-hosted Piped instances); the well-known public proxies are already allowed |
 | `PO_TOKEN_SERVER_URL` | *(empty)* | URL of an external PO-token sidecar (see `po-token-server/`). When set together with `PO_TOKEN_SERVER_AUTH`, tokens are fetched and attached to Innertube requests for music-label / BotGuard-blocked videos |
 | `PO_TOKEN_SERVER_AUTH` | *(empty)* | Bearer token for the PO-token sidecar (must match its `AUTH_TOKEN`) |
+| `COBALT_API_URL` | *(empty)* | Root URL of a **cobalt** instance used as the last-resort fallback (v11 `POST /`). Unset = disabled. The official `api.cobalt.tools` is blocked from YouTube, so self-host to get a working fallback |
+| `COBALT_API_AUTH` | *(empty)* | Cobalt API token — a bare token (sent as `Bearer …`) or an explicit scheme like `Api-Key aaaa-bbbb` |
+| `COBALT_PROXY_HOSTS` | *(empty)* | Comma-separated extra host suffixes to allow as cobalt tunnel hosts (self-hosted instances); `*.cobalt.tools` is already allowed |
 | `YT_API_KEY` | *(built-in)* | Override the public, non-secret Innertube API key used by the `WEB_EMBEDDED_PLAYER` client if YouTube rotates it |
 
 Set values in a `.env.local` file (excluded from Git via `.gitignore`) or in your hosting platform's environment settings.
@@ -182,9 +185,23 @@ YouTube / YT Music downloads try sources in order, stopping at the first that re
 1. **Innertube clients** — `ANDROID`, `IOS`, `ANDROID_VR`, `VISIONOS`, then `WEB_EMBEDDED_PLAYER` (current version, public API key, non-YouTube `embedUrl`) and finally the `TVHTML5` TV client. The `WEB_EMBEDDED_PLAYER` client bypasses most age-gate / `LOGIN_REQUIRED` responses automatically because it presents itself as a third-party iframe embed (which has no login flow); the old `TVHTML5_SIMPLY_EMBEDDED_PLAYER` client was removed after YouTube retired it ("YouTube is no longer supported in this application or device").
 2. **Invidious instances** — public metadata/stream mirrors (secondary; often rate-limited).
 3. **Piped instances** — public NewPipeExtractor-backed mirrors that handle PO tokens / BotGuard server-side; the most reliable fallback for music-label videos. Stream URLs come from each instance's own `pipedproxy.*` host, which is why those hosts are on the media allowlist.
-4. **External PO-token server** (optional) — if `PO_TOKEN_SERVER_URL` + `PO_TOKEN_SERVER_AUTH` are configured, a token is fetched once (cached ~30 min) and attached to the Innertube requests under `serviceIntegrityDimensions`.
+4. **Cobalt instance** (optional, last resort) — if `COBALT_API_URL` is set, the URL is sent to the cobalt **v11** API (`POST /` on the instance root) and the resulting muxed mp4 / mp3 is used. See the caveat below.
+
+Alongside the chain, **External PO-token server** (optional) — if `PO_TOKEN_SERVER_URL` + `PO_TOKEN_SERVER_AUTH` are configured, a token is fetched once (cached ~30 min) and attached to the Innertube requests under `serviceIntegrityDimensions`.
 
 The main app **never emulates BotGuard / generates PO tokens itself**. If you need tokens, run the small authenticated sidecar in [`po-token-server/`](po-token-server/README.md) (Docker, uses `jsdom` — no system browser) on any host and point `PO_TOKEN_SERVER_URL` at it over HTTPS. It is fully optional: with neither variable set, extraction behaves exactly as before, falling through Innertube → Invidious → Piped.
+
+#### Bot challenges and the one-shot PO-token retry
+
+YouTube answers a challenged datacenter IP with `LOGIN_REQUIRED` + *"Sign in to confirm you're not a bot"* — the same status it uses for genuinely age-restricted videos. The app tells them apart and reports a bot check **as a bot check** (pointing at the sidecar as the fix) rather than claiming the video is "age-restricted or private".
+
+When a sidecar is configured and every client hits that wall — or the up-front token fetch failed, so the requests went out unattested — the player request is retried **exactly once** with a freshly minted token (`getPoToken(true)` bypasses the ~30 min cache, since replaying a burnt token fails identically). With no sidecar configured there is nothing to retry and the other fallbacks run as before.
+
+#### Cobalt fallback caveat
+
+Cobalt v10 removed the old `POST /api/json` endpoint (shut down Nov 2024); this client uses the current **v11** contract — `POST /` on the instance root with `Accept` and `Content-Type: application/json` — and handles the `redirect`, `tunnel`, `picker`, `local-processing`, and `error` (including the nested `error.code`) statuses.
+
+The catch: the official `api.cobalt.tools` has been **blocked from YouTube since mid-2025**, and its bot protection puts it off-limits to third-party apps regardless — the cobalt docs direct operators to [host their own instance](https://github.com/imputnet/cobalt/blob/main/docs/run-an-instance.md). So this fallback is inert until you point `COBALT_API_URL` at an instance you run, and every URL it returns is re-checked against the media allowlist (add your instance to `COBALT_PROXY_HOSTS`) before the convert proxy will fetch it.
 
 ### Custom production domain
 

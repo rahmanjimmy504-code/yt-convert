@@ -95,3 +95,34 @@ describe('fetchAllowedMedia', () => {
     await expect(fetchAllowedMedia('https://cf-media.sndcdn.com/a.mp3')).rejects.toThrow(/non-allowlisted/);
   });
 });
+
+describe('cobalt fallback hosts', () => {
+  const SAVED = { ...process.env };
+  afterEach(() => {
+    process.env = { ...SAVED };
+  });
+
+  it('allows the official cobalt instance tunnel host', () => {
+    expect(isAllowedMediaUrl('https://api.cobalt.tools/tunnel?id=1')).toBe(true);
+    expect(isAllowedMediaUrl('https://cobalt.tools/tunnel?id=1')).toBe(true);
+  });
+
+  it('rejects cobalt lookalikes', () => {
+    expect(isAllowedMediaUrl('https://cobalt.tools.evil.example/x')).toBe(false);
+    expect(isAllowedMediaUrl('https://evilcobalt.tools/x')).toBe(false);
+  });
+
+  it('allows operator-approved self-hosted cobalt hosts via COBALT_PROXY_HOSTS', () => {
+    expect(isAllowedMediaUrl('https://cobalt.example.com/tunnel?id=1')).toBe(false);
+    process.env.COBALT_PROXY_HOSTS = 'cobalt.example.com';
+    expect(isAllowedMediaUrl('https://cobalt.example.com/tunnel?id=1')).toBe(true);
+    expect(isAllowedMediaUrl('https://tunnel.cobalt.example.com/x')).toBe(true);
+  });
+
+  it('sanitises junk COBALT_PROXY_HOSTS entries', () => {
+    process.env.COBALT_PROXY_HOSTS = 'com, *, /evil, .example.org.';
+    expect(isAllowedMediaUrl('https://anything.com/x')).toBe(false);
+    expect(isAllowedMediaUrl('https://evil.example/x')).toBe(false);
+    expect(isAllowedMediaUrl('https://a.example.org/x')).toBe(true);
+  });
+});

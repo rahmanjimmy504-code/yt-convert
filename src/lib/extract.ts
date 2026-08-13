@@ -1,7 +1,8 @@
 import { type FormatKey, type PlatformKey, extractYouTubeId } from './platforms';
 import { INVIDIOUS_INSTANCES, invidiousVideoUrl } from './invidious';
 import { pipedFormats } from './piped';
-import { getPoToken } from './po-token';
+import { cobaltFormats, isCobaltConfigured } from './cobalt';
+import { getPoToken, isPoTokenServerConfigured } from './po-token';
 import { isAllowedMediaUrl } from './media-hosts';
 import {
   extensionForMime,
@@ -285,9 +286,45 @@ export interface InnertubeResult {
   reason?: string;
 }
 
-/** Human-readable message for a non-OK playabilityStatus, or '' if unknown. */
-export function playabilityMessage(status?: string, reason?: string): string {
+/**
+ * True when YouTube's refusal is a BotGuard / "prove you're human" challenge
+ * rather than a genuine age-gate or privacy restriction.
+ *
+ * YouTube returns LOGIN_REQUIRED for both cases, but the reason text differs:
+ * a datacenter IP that has been challenged gets "Sign in to confirm you're
+ * not a bot". Conflating the two produced a misleading error ("age-restricted
+ * or private") for videos that are perfectly public — the real fix is an
+ * attested PO token from the sidecar, not a signed-in account.
+ */
+export function isBotChallenge(status?: string, reason?: string): boolean {
+  if (!reason) return false;
+  if (status && status !== 'LOGIN_REQUIRED' && status !== 'ERROR' && status !== 'UNPLAYABLE') {
+    return false;
+  }
+  return /confirm\s+you(?:'|’)?re\s+not\s+a\s+bot|not\s+a\s+bot|unusual\s+traffic|suspicious\s+activity/i.test(
+    reason,
+  );
+}
+
+/**
+ * Human-readable message for a non-OK playabilityStatus, or '' if unknown.
+ *
+ * `poTokenConfigured` lets the message distinguish "the operator has no
+ * sidecar, here's the fix" from "a sidecar is configured but did not unlock
+ * this video", which are very different things to debug.
+ */
+export function playabilityMessage(
+  status?: string,
+  reason?: string,
+  poTokenConfigured = false,
+): string {
   if (!status || status === 'OK') return '';
+  // Report a bot check as exactly that — never as "age-restricted or private".
+  if (isBotChallenge(status, reason)) {
+    return poTokenConfigured
+      ? "YouTube served a bot check (\u201cSign in to confirm you\u2019re not a bot\u201d) for this server's IP, and the configured PO-token server did not clear it."
+      : 'YouTube served a bot check (\u201cSign in to confirm you\u2019re not a bot\u201d) for this server\u2019s IP. The operator can clear it by running a PO-token server (see po-token-server/).';
+  }
   const base = PLAYABILITY_MESSAGES[status];
   if (base) return base;
   return reason
@@ -560,13 +597,41 @@ async function extractYouTube(
   // If an external PO-token server is configured, fetch a token up front so
   // it can be attached to the Innertube player requests. A failure here is
   // non-fatal: we proceed without it and the downstream fallbacks run.
+  const poTokenConfigured = isPoTokenServerConfigured();
   const poToken = await getPoToken().catch(() => null);
 
   // Primary: Innertube clients that return direct googlevideo URLs.
-  const innertube = await innertubeFormats(id, {
+  let innertube = await innertubeFormats(id, {
     cookies: options?.youTubeCookies,
     poToken: poToken ?? undefined,
   });
+
+  // Durable fix for the bot wall: when every client was refused with a
+  // BotGuard IP challenge — or when the up-front token fetch failed and so the
+  // request went out unattested — mint a FRESH token and retry the player
+  // request exactly once. A burnt or missing token fails identically on
+  // replay, so only a forced refresh can change the outcome.
+  //
+  // HARD BOUNDARY: the app still never emulates BotGuard itself. This only
+  // re-asks the operator's sidecar; with no sidecar configured there is
+  // nothing to retry and we fall through to the other extractors.
+  if (
+    poTokenConfigured &&
+    !innertube.formats.length &&
+    (isBotChallenge(innertube.status, innertube.reason) || !poToken)
+  ) {
+    const freshToken = await getPoToken(true).catch(() => null);
+    if (freshToken && freshToken.poToken !== poToken?.poToken) {
+      const retried = await innertubeFormats(id, {
+        cookies: options?.youTubeCookies,
+        poToken: freshToken,
+      });
+      // Keep the retry only when it actually improved things, so a flakier
+      // second answer cannot mask the first, more specific refusal.
+      if (retried.formats.length || !innertube.status) innertube = retried;
+    }
+  }
+
   let formats = innertube.formats;
   // Secondary only: public Invidious instances are frequently rate-limited or
   // have playback disabled, so they must never be the primary path.
@@ -581,15 +646,34 @@ async function extractYouTube(
     formats = piped.formats;
     pipedError = piped.error;
   }
+  // Last resort: an operator-configured cobalt instance. Disabled unless
+  // COBALT_API_URL is set, and it returns a finished muxed file rather than a
+  // format list, so it runs only when everything else produced nothing.
+  let cobaltError: string | undefined;
+  if (!formats.length && isCobaltConfigured()) {
+    const cobalt = await cobaltFormats(pageUrl, format === 'mp4' ? 'video' : 'audio');
+    formats = cobalt.formats.filter(f => f.url && isAllowedMediaUrl(f.url));
+    if (!formats.length) cobaltError = cobalt.error;
+  }
 
   if (!formats.length) {
     // Prefer an honest, specific reason over the generic message when YouTube
     // told us why (age-gate, private, region-lock, removed...).
-    const explained = playabilityMessage(innertube.status, innertube.reason);
+    const explained = playabilityMessage(innertube.status, innertube.reason, poTokenConfigured);
     if (explained) return fail(`${explained} Try a converter below.`);
     // Piped sometimes returns a descriptive reason ("Video unavailable",
     // "This video is age-restricted", "region-locked") when Innertube gave us
     // nothing actionable. Surface it so the error isn't a vague "try again".
+    // A bare transport failure ("HTTP 404", "fetch failed") says nothing about
+    // the video, so it must not mask a later source's real verdict.
+    const pipedIsDescriptive = Boolean(pipedError) && !/^(HTTP \d+|fetch failed)$/i.test(pipedError!.trim());
+    if (pipedIsDescriptive) {
+      const friendly = friendlyPipedError(pipedError!);
+      return fail(`${friendly} Try a converter below.`);
+    }
+    if (cobaltError) {
+      return fail(`The configured cobalt instance refused this video (${cobaltError}). Try a converter below.`);
+    }
     if (pipedError) {
       const friendly = friendlyPipedError(pipedError);
       return fail(`${friendly} Try a converter below.`);

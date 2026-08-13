@@ -26,16 +26,19 @@ const ALLOWED_SUFFIXES = [
   'kavin.rocks',
   'private.coffee',
   'reallyaweso.me',
+  // Cobalt last-resort fallback — tunnel/redirect URLs are served from the
+  // instance's own host. The official instance is allowlisted by default;
+  // self-hosted instances (the only ones that actually work for YouTube) are
+  // approved by the operator via COBALT_PROXY_HOSTS.
+  'cobalt.tools',
 ] as const;
 
 /**
- * Parse the optional PIPED_PROXY_HOSTS allowlist. Each entry is a host suffix
- * matched like the built-in list (exact host or any sub-host). Entries are
- * sanitised so an operator cannot accidentally widen the allowlist to a
- * bare TLD or inject a wildcard.
+ * Parse a comma-separated host-suffix allowlist from an environment variable.
+ * Entries are sanitised so an operator cannot accidentally widen the
+ * allowlist to a bare TLD or inject a wildcard.
  */
-function extraPipedSuffixes(): string[] {
-  const raw = process.env.PIPED_PROXY_HOSTS || '';
+function parseSuffixEnv(raw: string): string[] {
   if (!raw) return [];
   const out: string[] = [];
   for (const part of raw.split(',')) {
@@ -47,10 +50,29 @@ function extraPipedSuffixes(): string[] {
   return out;
 }
 
+/**
+ * Parse the optional PIPED_PROXY_HOSTS allowlist. Each entry is a host suffix
+ * matched like the built-in list (exact host or any sub-host). Entries are
+ * sanitised so an operator cannot accidentally widen the allowlist to a
+ * bare TLD or inject a wildcard.
+ */
+function extraPipedSuffixes(): string[] {
+  return parseSuffixEnv(process.env.PIPED_PROXY_HOSTS || '');
+}
+
+/**
+ * Parse the optional COBALT_PROXY_HOSTS allowlist — the tunnel hosts of a
+ * self-hosted cobalt instance, which is the only kind that serves YouTube.
+ */
+function extraCobaltSuffixes(): string[] {
+  return parseSuffixEnv(process.env.COBALT_PROXY_HOSTS || '');
+}
+
 function isAllowedHost(host: string): boolean {
   const h = host.toLowerCase();
   if (ALLOWED_SUFFIXES.some(suffix => h === suffix || h.endsWith(`.${suffix}`))) return true;
-  return extraPipedSuffixes().some(suffix => h === suffix || h.endsWith(`.${suffix}`));
+  const extras = [...extraPipedSuffixes(), ...extraCobaltSuffixes()];
+  return extras.some(suffix => h === suffix || h.endsWith(`.${suffix}`));
 }
 
 function isIpLiteral(host: string): boolean {
