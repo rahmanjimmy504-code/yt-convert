@@ -12,6 +12,11 @@
  * first and retain the old ajax contract as a non-fatal compatibility path.
  * Every returned media URL is checked by the same narrow allowlist used by
  * /api/convert; arbitrary farm redirects never become an SSRF primitive.
+ *
+ * Cookies: per-request in-memory jar, scoped to the requesting host, never
+ * forwarded cross-host, never returned to the browser. When the API sets a
+ * Set-Cookie (often Cloudflare/anti-bot short-lived cookies), the matching
+ * Cookie header is propagated to the follow-up dlink request only.
  */
 
 import { isAllowedMediaUrl } from './media-hosts';
@@ -154,31 +159,320 @@ function toPlayerFormat(url: string, kind: NineConvertKind, quality: string): Pl
   };
 }
 
-function farmHeaders(base: string, videoId: string, json = false): Record<string, string> {
-  return {
+/* --------------------------- Per-request cookie jar ---------------------- */
+
+interface CookieJar {
+  /** host (lowercase) -> "name=value; name2=value2" */
+  byHost: Map<string, string>;
+}
+
+function newJar(): CookieJar {
+  return { byHost: new Map() };
+}
+
+function hostOf(raw: string): string {
+  try { return new URL(raw).hostname.toLowerCase(); } catch { return ''; }
+}
+
+function rememberSetCookie(jar: CookieJar, url: string, headers: Headers): void {
+  const host = hostOf(url);
+  if (!host) return;
+  const setCookies: string[] = [];
+  headers.forEach((v, k) => {
+    if (k.toLowerCase() === 'set-cookie') setCookies.push(v);
+  });
+  if (!setCookies.length) return;
+  const existing = jar.byHost.get(host) || '';
+  const existingMap = new Map<string, string>();
+  for (const part of existing.split(';')) {
+    const eq = part.indexOf('=');
+    if (eq <= 0) continue;
+    existingMap.set(part.slice(0, eq).trim(), part.slice(eq + 1).trim());
+  }
+  for (const sc of setCookies) {
+    const first = sc.split(';')[0] || '';
+    const eq = first.indexOf('=');
+    if (eq <= 0) continue;
+    const name = first.slice(0, eq).trim();
+    const value = first.slice(eq + 1).trim();
+    if (!name) continue;
+    existingMap.set(name, value);
+  }
+  const cookieHeader = [...existingMap.entries()].map(([n, v]) => `${n}=${v}`).join('; ');
+  jar.byHost.set(host, cookieHeader);
+}
+
+function farmHeaders(base: string, jar: CookieJar, videoId: string, json = false): Record<string, string> {
+  const headers: Record<string, string> = {
     Accept: 'application/json, text/plain, */*',
     'Content-Type': json ? 'application/json' : 'application/x-www-form-urlencoded; charset=UTF-8',
     Origin: base,
+    // Use the /v2/full?videoId= Referer that the live embed UI carries. This
+    // is the exact same-site Referer fetchAllowedMedia will re-apply when
+    // the returned dlink is fetched later.
     Referer: `${base}/v2/full?videoId=${encodeURIComponent(videoId)}`,
     'User-Agent': FARM_UA,
   };
+  const cookie = jar.byHost.get(hostOf(base));
+  if (cookie) headers.Cookie = cookie;
+  return headers;
 }
 
-async function postJson(url: string, body: string, headers: Record<string, string>): Promise<JsonRecord | null> {
+/* ---------------------------- Fetch helpers ----------------------------- */
+
+async function farmFetch(
+  jar: CookieJar,
+  url: string,
+  init: RequestInit,
+): Promise<Response | null> {
   try {
     const response = await fetch(url, {
-      method: 'POST',
-      headers,
-      body,
+      ...init,
       redirect: 'manual',
-      signal: AbortSignal.timeout(FARM_TIMEOUT_MS),
+      signal: init.signal ?? AbortSignal.timeout(FARM_TIMEOUT_MS),
     });
-    // A dead endpoint, Cloudflare page, or empty body is just one failed hop.
-    if (!response.ok) return null;
-    return record(await response.json().catch(() => null));
+    rememberSetCookie(jar, url, response.headers);
+    // Follow one allowlisted redirect hop (with cookies) if the farm issues
+    // a 302 to its own CDN.
+    if (response.status >= 300 && response.status < 400) {
+      const loc = response.headers.get('location');
+      if (!loc) return null;
+      const next = new URL(loc, url).toString();
+      if (!isAllowedNineConvertUrl(next)) return null;
+      const hdrs = new Headers(init.headers as HeadersInit);
+      const cookie = jar.byHost.get(hostOf(next));
+      if (cookie) hdrs.set('cookie', cookie);
+      try { await response.arrayBuffer(); } catch { /* drain */ }
+      const redir = await fetch(next, {
+        method: 'GET',
+        headers: hdrs,
+        redirect: 'manual',
+        signal: init.signal ?? AbortSignal.timeout(FARM_TIMEOUT_MS),
+      });
+      rememberSetCookie(jar, next, redir.headers);
+      return redir;
+    }
+    return response;
   } catch {
     return null;
   }
+}
+
+async function postJson(
+  jar: CookieJar,
+  url: string,
+  body: string,
+  headers: Record<string, string>,
+): Promise<JsonRecord | null> {
+  const response = await farmFetch(jar, url, {
+    method: 'POST',
+    headers,
+    body,
+  });
+  if (!response || !response.ok) return null;
+  // Challenge pages often return text/html. Reject anything that isn't JSON.
+  const ct = (response.headers.get('content-type') || '').toLowerCase();
+  if (!/json/i.test(ct) && !/text\/plain/i.test(ct)) {
+    try { await response.arrayBuffer(); } catch { /* drain */ }
+    return null;
+  }
+  let parsed: unknown = null;
+  try {
+    // Read text so the body is fully consumed — response.json() can leave a
+    // locked stream in some environments.
+    const text = await response.text();
+    parsed = text ? JSON.parse(text) : null;
+  } catch {
+    return null;
+  }
+  return record(parsed);
+}
+
+/* ----------------------- dlink probing / validation --------------------- */
+
+const FARM_PROBE_BYTES = 2048;
+
+// Minimal HTML / MP3 / MP4 byte checks mirrored from media-content.ts so we
+// don't have to import the route-time validation here. We only need enough
+// to reject obvious CAPTCHA/HTML pages and WebM-as-MP4 before accepting a
+// candidate dlink.
+function looksLikeHtml(bytes: Uint8Array): boolean {
+  if (!bytes.length) return false;
+  const ascii = bytes.slice();
+  for (let i = 0; i < ascii.length; i += 1) {
+    const b = ascii[i];
+    if (b >= 0x61 && b <= 0x7a) ascii[i] = b - 0x20;
+  }
+  const enc = new TextDecoder('ascii', { fatal: false });
+  const head = enc.decode(ascii);
+  return (
+    /<!DOCTYPE HTML|<HTML|<HEAD|<BODY|<SCRIPT|<!--/i.test(head)
+  );
+}
+
+function startsWithBytes(haystack: Uint8Array, needle: Uint8Array, offset = 0): boolean {
+  if (haystack.length - offset < needle.length) return false;
+  for (let i = 0; i < needle.length; i += 1) {
+    if (haystack[offset + i] !== needle[i]) return false;
+  }
+  return true;
+}
+
+function hasMpegSync(bytes: Uint8Array): boolean {
+  const limit = Math.min(bytes.length - 1, 1024);
+  for (let i = 0; i < limit; i += 1) {
+    if (bytes[i] !== 0xff) continue;
+    const second = bytes[i + 1];
+    if ((second & 0xe0) !== 0xe0) continue;
+    const version = (second >> 3) & 0x03;
+    const layer = (second >> 1) & 0x03;
+    if (version === 0x01 || layer === 0x00) continue;
+    return true;
+  }
+  return false;
+}
+
+function hasFtyp(bytes: Uint8Array, brands: string[]): boolean {
+  if (bytes.length < 12) return false;
+  const ftyp = new TextEncoder().encode('ftyp');
+  if (!startsWithBytes(bytes, ftyp, 4)) return false;
+  let brand = '';
+  try {
+    brand = new TextDecoder('ascii', { fatal: false }).decode(bytes.subarray(8, 12));
+  } catch {
+    return false;
+  }
+  return brands.includes(brand);
+}
+
+const MP4_BRANDS = ['isom', 'iso2', 'mp41', 'mp42', 'avc1', 'qt  ', 'dash', 'M4A ', 'M4V '];
+const ID3 = new TextEncoder().encode('ID3');
+const EBML = new Uint8Array([0x1a, 0x45, 0xdf, 0xa3]);
+const OGGS = new TextEncoder().encode('OggS');
+
+function sniffProbe(kind: NineConvertKind, bytes: Uint8Array): boolean {
+  if (bytes.length === 0) return false;
+  if (looksLikeHtml(bytes)) return false;
+  if (kind === 'mp3') {
+    if (startsWithBytes(bytes, ID3)) return true;
+    if (hasMpegSync(bytes)) return true;
+    return false;
+  }
+  // mp4
+  if (startsWithBytes(bytes, EBML) || startsWithBytes(bytes, OGGS)) return false; // webm/ogg
+  if (hasFtyp(bytes, MP4_BRANDS)) return true;
+  return false;
+}
+
+/**
+ * Small Range=0- probe against the candidate dlink, using the same per-host
+ * cookies + farm Referer. If the response isn't a real MP3/MP4 (or is HTML),
+ * the candidate is discarded and the next farm route is tried.
+ */
+async function probeCandidateDlink(jar: CookieJar, url: string, kind: NineConvertKind, videoId: string = ''): Promise<boolean> {
+  if (!isAllowedNineConvertUrl(url)) return false;
+  const host = hostOf(url);
+  if (!host) return false;
+  const refererBase = host === 'embed.dlsrv.online' || host.endsWith('.dlsrv.online')
+    ? 'https://embed.dlsrv.online'
+    : host.endsWith('.9convert.org') || host === '9convert.org'
+      ? 'https://9convert.org'
+      : host.endsWith('.9convert.com') || host === '9convert.com'
+        ? 'https://9convert.com'
+        : `https://${host}`;
+  const headers: Record<string, string> = {
+    Accept: '*/*',
+    // Do not send a hard Range: some test/undici combinations throw
+    // "offset is out of bounds" when the upstream body is shorter than the
+    // requested window. We only read the first ~2KB from the body in userland
+    // and cancel, which is equivalent for detection purposes.
+    Referer: `${refererBase}/v2/full?videoId=${encodeURIComponent(videoId)}`,
+    'User-Agent': FARM_UA,
+  };
+  // For googlevideo dlinks minted by the farm we do not attach farm cookies
+  // (they wouldn't apply and would leak cross-host).
+  const cookie = jar.byHost.get(host);
+  if (cookie) headers.Cookie = cookie;
+  let response: Response | null = null;
+  try {
+    response = await fetch(url, {
+      method: 'GET',
+      headers,
+      redirect: 'manual',
+      signal: AbortSignal.timeout(FARM_TIMEOUT_MS),
+    });
+    if (response.status >= 300 && response.status < 400) {
+      const loc = response.headers.get('location');
+      try { await response.arrayBuffer(); } catch { /* drain */ }
+      if (!loc) return false;
+      const next = new URL(loc, url).toString();
+      if (!isAllowedNineConvertUrl(next)) return false;
+      response = await fetch(next, {
+        method: 'GET',
+        headers,
+        redirect: 'manual',
+        signal: AbortSignal.timeout(FARM_TIMEOUT_MS),
+      });
+    }
+  } catch {
+    return false;
+  }
+  if (!response || (!response.ok && response.status !== 206)) {
+    try { if (response) await response.arrayBuffer(); } catch { /* drain */ }
+    return false;
+  }
+  const ct = (response.headers.get('content-type') || '').toLowerCase();
+  if (/text\/html|application\/xhtml|application\/xml|text\/xml/i.test(ct)) {
+    try { await response.arrayBuffer(); } catch { /* drain */ }
+    return false;
+  }
+  // For MP3 requests, reject obviously wrong containers even if the mime lied.
+  if (kind === 'mp3' && /audio\/mp4|audio\/aac|video\//i.test(ct)) {
+    try { await response.arrayBuffer(); } catch { /* drain */ }
+    return false;
+  }
+  if (kind === 'mp4' && /video\/webm|audio\//i.test(ct)) {
+    try { await response.arrayBuffer(); } catch { /* drain */ }
+    return false;
+  }
+  // Read only the first ~2KB via arrayBuffer + slice. undici's ReadableStream
+  // reader can throw "offset is out of bounds" on short bodies in some test
+  // environments; reading a bounded buffer and slicing is equivalent for
+  // sniffing purposes. We cancel any remainder by not continuing to read.
+  let buf: Uint8Array;
+  try {
+    const full = await response.arrayBuffer();
+    const len = Math.min(full.byteLength, FARM_PROBE_BYTES);
+    buf = new Uint8Array(full, 0, len);
+  } catch {
+    return false;
+  }
+  const ok = sniffProbe(kind, buf);
+  return ok;
+}
+
+/* ----------------------- Conversion-pending polling ---------------------- */
+
+const FARM_POLL_TOTAL_MS = 55_000; // stay within the route's 60s limit
+const FARM_POLL_INTERVAL_MS = 1_200;
+
+function isPending(payload: JsonRecord | null): { pending: boolean; sleep?: number; dlink?: string } {
+  if (!payload) return { pending: false };
+  const status = text(payload.status)
+    || text(payload.message)
+    || text((record(payload.data) || {})?.status as string);
+  const dlink = mediaUrl(payload);
+  if (dlink) return { pending: false, dlink };
+  const isProc = /processing|pending|converting|in.?progress|wait/i.test(status || text(payload.text));
+  // Some responses use `success: false` with c_status: processing / e_status.
+  const any = JSON.stringify(payload).toLowerCase();
+  if (!isProc && !/processing|pending|converting|wait/.test(any)) return { pending: false };
+  // Explicit sleep/eta field if present (seconds or ms).
+  let sleepMs = FARM_POLL_INTERVAL_MS;
+  const sleepSec = Number((payload as unknown as Record<string, unknown>).sleep)
+    || Number((record(payload.data) || {})?.sleep);
+  if (sleepSec > 0) sleepMs = Math.min(Math.max(sleepSec * (sleepSec < 60 ? 1000 : 1), 500), 4000);
+  return { pending: true, sleep: sleepMs };
 }
 
 function defaultDlsrvQuality(kind: NineConvertKind, quality?: string): string {
@@ -198,35 +492,60 @@ function currentDlsrvQualities(payload: JsonRecord | null, kind: NineConvertKind
     const value = text(item.quality) || format;
     if (numericQuality(value)) values.push(value);
   }
-  // MP3 bitrates are generated by the service and are not always repeated in
-  // /api/info (the UI offers this fixed set).
   if (kind === 'mp3') values.push('320', '256', '128', '96', '64');
   return [...new Set(values)];
 }
 
-/** Current embed.dlsrv.online JSON contract (the old ajax routes now 404). */
+/** Current embed.dlsrv.online JSON contract with bounded polling. */
 async function currentDlsrvFormats(
   videoId: string,
   kind: NineConvertKind,
   quality?: string,
 ): Promise<PlayerFormat[]> {
   const origin = 'https://embed.dlsrv.online';
-  const headers = farmHeaders(origin, videoId, true);
+  const jar = newJar();
+  const infoHeaders = farmHeaders(origin, jar, videoId, true);
   const info = await postJson(
+    jar,
     `${DLSRV_CURRENT_BASE}/info`,
     JSON.stringify({ videoId }),
-    headers,
+    infoHeaders,
   );
   const available = currentDlsrvQualities(info, kind);
   const selected = chooseByQuality(available, quality, value => value)
     || defaultDlsrvQuality(kind, quality);
-  const payload = await postJson(
-    `${DLSRV_CURRENT_BASE}/download/${kind}`,
-    JSON.stringify({ videoId, format: kind, quality: String(numericQuality(selected) || selected) }),
-    headers,
-  );
-  const url = mediaUrl(payload);
-  return url ? [toPlayerFormat(url, kind, selected)] : [];
+
+  const dlHeaders = farmHeaders(origin, jar, videoId, true);
+  const deadline = Date.now() + FARM_POLL_TOTAL_MS;
+  let lastUrl = '';
+  let lastPayload: JsonRecord | null = null;
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    const payload = await postJson(
+      jar,
+      `${DLSRV_CURRENT_BASE}/download/${kind}`,
+      JSON.stringify({ videoId, format: kind, quality: String(numericQuality(selected) || selected) }),
+      dlHeaders,
+    );
+    lastPayload = payload;
+    const decision = isPending(payload);
+    if (decision.dlink) { lastUrl = decision.dlink; break; }
+    if (!decision.pending) { lastUrl = mediaUrl(payload); break; }
+    if (Date.now() >= deadline) break;
+    await new Promise(r => setTimeout(r, decision.sleep || FARM_POLL_INTERVAL_MS));
+  }
+  if (!lastUrl) {
+    return [];
+  }
+  let probeOk = false;
+  try {
+    probeOk = await probeCandidateDlink(jar, lastUrl, kind, videoId);
+  } catch {
+    probeOk = false;
+  }
+  if (!probeOk) {
+    return [];
+  }
+  return [toPlayerFormat(lastUrl, kind, selected)];
 }
 
 async function legacyAjaxFormats(
@@ -237,9 +556,11 @@ async function legacyAjaxFormats(
   quality?: string,
 ): Promise<PlayerFormat[]> {
   const root = base.replace(/\/$/, '');
-  const headers = farmHeaders(root, videoId);
+  const jar = newJar();
+  const headers = farmHeaders(root, jar, videoId);
   const watchUrl = `https://www.youtube.com/watch?v=${videoId}`;
   const search = await postJson(
+    jar,
     `${root}${apiPrefix}/ajaxSearch/index`,
     new URLSearchParams({ query: watchUrl, vt: kind }).toString(),
     headers,
@@ -248,13 +569,27 @@ async function legacyAjaxFormats(
   const selected = chooseByQuality(farmChoices(search, kind), quality, item => item.quality);
   if (!selected) return [];
   const vid = text(search.vid) || text(record(search.data)?.vid) || videoId;
-  const converted = await postJson(
-    `${root}${apiPrefix}/ajaxConvert/convert`,
-    new URLSearchParams({ vid, k: selected.key }).toString(),
-    headers,
-  );
-  const url = mediaUrl(converted);
-  return url ? [toPlayerFormat(url, kind, selected.quality)] : [];
+
+  const deadline = Date.now() + FARM_POLL_TOTAL_MS;
+  let lastUrl = '';
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    const converted = await postJson(
+      jar,
+      `${root}${apiPrefix}/ajaxConvert/convert`,
+      new URLSearchParams({ vid, k: selected.key }).toString(),
+      headers,
+    );
+    const decision = isPending(converted);
+    if (decision.dlink) { lastUrl = decision.dlink; break; }
+    if (!decision.pending) { lastUrl = mediaUrl(converted); break; }
+    if (Date.now() >= deadline) break;
+    await new Promise(r => setTimeout(r, decision.sleep || FARM_POLL_INTERVAL_MS));
+  }
+  if (!lastUrl) return [];
+  let probeOk = false;
+  try { probeOk = await probeCandidateDlink(jar, lastUrl, kind, videoId); } catch { probeOk = false; }
+  if (!probeOk) return [];
+  return [toPlayerFormat(lastUrl, kind, selected.quality)];
 }
 
 async function firstNonEmpty(attempts: Array<Promise<PlayerFormat[]>>): Promise<PlayerFormat[]> {
@@ -275,8 +610,9 @@ async function firstNonEmpty(attempts: Array<Promise<PlayerFormat[]>>): Promise<
  * Ask the public 9Convert family for a completed media URL.
  *
  * This is intentionally best-effort: 404, empty JSON, schema drift, timeout,
- * and an unapproved dlink all return `[]`, allowing cobalt/the final honest
- * error to run instead of turning one dead farm host into a hard failure.
+ * CAPTCHA/HTML responses, WebM-as-MP4, and unapproved dlinks all return `[]`,
+ * allowing cobalt/the final honest error to run instead of turning one dead
+ * farm host into a hard failure.
  */
 export async function nineConvertFormats(
   videoId: string,
@@ -288,8 +624,7 @@ export async function nineConvertFormats(
   const current = await currentDlsrvFormats(videoId, kind, quality);
   if (current.length) return current;
 
-  // Try both route layouts concurrently. Historical 9convert used /api;
-  // clones have also mounted the same controllers at the domain root.
+  // Bad current dlsrv candidate falls through to the legacy farm attempt.
   return firstNonEmpty(
     NINECONVERT_BASES.flatMap(base => [
       legacyAjaxFormats(base, '/api', videoId, kind, quality),

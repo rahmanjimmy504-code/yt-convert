@@ -14,6 +14,55 @@ import {
 } from './extract';
 import { __resetPoTokenCacheForTests } from './po-token';
 
+/** Minimal 24-byte MP4 (ftyp=isom) for probes. */
+function fakeMp4Body(): Uint8Array {
+  // 32-byte minimal ISO-BMFF ftyp box.
+  const bytes = new Uint8Array(32);
+  const dv = new DataView(bytes.buffer);
+  dv.setUint32(0, 0x20);
+  bytes.set(new TextEncoder().encode('ftyp'), 4);
+  bytes.set(new TextEncoder().encode('isom'), 8);
+  dv.setUint32(12, 0x200);
+  bytes.set(new TextEncoder().encode('isomavc1mp41dash'), 16);
+  return bytes;
+}
+
+function streamingMp4Response(headers: Record<string, string> = {}): Response {
+  const body = fakeMp4Body();
+  return new Response(body as BodyInit, {
+    status: 200,
+    headers: {
+      'Content-Type': 'video/mp4',
+      'Content-Length': String(body.length),
+      ...headers,
+    },
+  });
+}
+
+/** Minimal MP3 body: ID3 header then a valid MPEG frame sync. */
+function fakeMp3Body(): Uint8Array {
+  const bytes = new Uint8Array(256);
+  bytes.set(new TextEncoder().encode('ID3'), 0);
+  bytes[3] = 0x03; bytes[4] = 0x00; // ID3v2.3, no flags
+  // zero size
+  // MPEG1 Layer III frame sync at offset 10
+  bytes[10] = 0xff;
+  bytes[11] = 0xfb; // sync + MPEG1 + LayerIII + no CRC
+  return bytes;
+}
+
+function streamingMp3Response(headers: Record<string, string> = {}): Response {
+  const body = fakeMp3Body();
+  return new Response(body as BodyInit, {
+    status: 200,
+    headers: {
+      'Content-Type': 'audio/mpeg',
+      'Content-Length': String(body.length),
+      ...headers,
+    },
+  });
+}
+
 describe('attachMediaUrlToken', () => {
   it('appends pot to googlevideo URLs only', () => {
     const pot = 'Mmjb9zC7RXJtz9vL00XCYxJie5NonEefv5jAsItnbjBeUCwwgD4MpibO3o6lDesALHIKU7WgElG';
@@ -256,21 +305,25 @@ describe('extractMedia YouTube fallbacks', () => {
     const contacted: string[] = [];
     vi.stubGlobal(
       'fetch',
-      vi.fn(async (url: string) => {
+      vi.fn(async (url: string, init?: RequestInit) => {
         contacted.push(url);
+        const method = (init?.method || 'GET').toUpperCase();
         if (url.includes('youtubei/v1/player')) {
           return new Response(JSON.stringify(emptyPlayer()), { headers: { 'Content-Type': 'application/json' } });
         }
-        if (url === 'https://embed.dlsrv.online/api/info') {
+        if (url === 'https://embed.dlsrv.online/api/info' && method === 'POST') {
           return new Response(JSON.stringify({
             status: 'info',
             info: { formats: [{ type: 'video', format: 'mp4', quality: '720p' }] },
           }), { headers: { 'Content-Type': 'application/json' } });
         }
-        if (url === 'https://embed.dlsrv.online/api/download/mp4') {
+        if (url === 'https://embed.dlsrv.online/api/download/mp4' && method === 'POST') {
           return new Response(JSON.stringify({ url: 'https://media.embed.dlsrv.online/video.mp4' }), {
             headers: { 'Content-Type': 'application/json' },
           });
+        }
+        if (url === 'https://media.embed.dlsrv.online/video.mp4' && method === 'GET') {
+          return streamingMp4Response();
         }
         return new Response('{}', { status: 404 });
       }),
