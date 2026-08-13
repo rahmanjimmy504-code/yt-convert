@@ -1,29 +1,21 @@
 /**
- * PO-token sidecar for yt-convert.
+ * PO-token sidecar for yt-convert (BgUtils-compatible).
  *
- * This microservice performs YouTube's BotGuard / proof-of-origin attestation
- * (via the `youtube-po-token-generator` library, which runs YouTube's VM in
- * jsdom) and hands the resulting { visitorData, poToken } to the main app
- * over an authenticated HTTP endpoint.
- *
- * The main yt-convert app NEVER generates these tokens itself — that is the
- * whole reason this sidecar exists. Keeping the attestation logic in a
- * separate, optionally-deployed process means the public site has no BotGuard
- * code at all, and an operator can run the sidecar on a different host/IP
- * (e.g. a cheap always-free ARM VM) from the web deployment.
+ * Mints YouTube WebPO tokens via bgutils-js + jsdom and returns them to the
+ * main app over an authenticated HTTP API. The public Next.js app never
+ * executes BotGuard itself.
  *
  * Endpoints:
- *   GET /healthz      -> 200 { ok: true } (unauthenticated, for load balancers)
- *   GET /api/token    -> 200 { visitorData, poToken } (requires Bearer auth)
+ *   GET  /healthz      unauthenticated liveness
+ *   GET  /api/token    session token (query: videoId, client, context, bypassCache)
+ *   POST /api/token    JSON body with the same fields
  *
- * Configuration (environment):
- *   PORT            listen port (default 4416)
- *   AUTH_TOKEN      required bearer token; requests without it get 401
- *   TOKEN_TTL_MS    how long a minted token is reused (default 1800000 = 30m)
- *   HOST            bind address (default 0.0.0.0)
+ * Contract: see contract.js
  */
 
 import { createServer } from 'node:http';
+import { parseTokenRequest, assertTokenPair } from './contract.js';
+import { mintPoToken } from './mint.js';
 
 const PORT = parseInt(process.env.PORT || '4416', 10);
 const HOST = process.env.HOST || '0.0.0.0';
@@ -35,37 +27,56 @@ if (!AUTH_TOKEN) {
   process.exit(1);
 }
 
-/** @type {{ visitorData: string, poToken: string, at: number } | null} */
-let cached = null;
-let inFlight = null;
+/** @type {Map<string, { visitorData: string, poToken: string, at: number, context: string, videoId: string | null, client: string }>} */
+const cache = new Map();
+/** @type {Map<string, Promise<any>>} */
+const inFlight = new Map();
 
-/**
- * Generate a fresh token pair. The library is imported lazily so a failed/
- * slow attestation never blocks startup (the /healthz endpoint stays up and
- * /api/token surfaces the error with a 502 instead of crashing the process).
- */
-async function mint() {
-  const { generate } = await import('youtube-po-token-generator');
-  const { visitorData, poToken } = await generate();
-  if (!visitorData || !poToken) {
-    throw new Error('Generator returned an incomplete token pair');
-  }
-  return { visitorData, poToken, at: Date.now() };
+function cacheKey(req) {
+  return `${req.context}:${req.client}:${req.videoId || ''}:${req.visitorData || ''}`;
 }
 
-async function getToken() {
-  if (cached && Date.now() - cached.at < TOKEN_TTL_MS) return cached;
-  if (inFlight) return inFlight;
-  inFlight = mint()
+async function mint(req) {
+  const identifier = req.context === 'player' ? req.videoId : req.visitorData || undefined;
+  const minted = await mintPoToken({
+    identifier,
+    visitorData: req.visitorData || undefined,
+  });
+  assertTokenPair(minted.visitorData, minted.poToken);
+  return {
+    visitorData: minted.visitorData,
+    poToken: minted.poToken,
+    context: req.context,
+    videoId: req.videoId,
+    client: req.client,
+    contentBinding: minted.contentBinding,
+    at: Date.now(),
+  };
+}
+
+async function getToken(req) {
+  const key = cacheKey(req);
+  if (!req.bypassCache) {
+    const cached = cache.get(key);
+    if (cached && Date.now() - cached.at < TOKEN_TTL_MS) return cached;
+    const pending = inFlight.get(key);
+    if (pending) return pending;
+  }
+
+  const job = mint(req)
     .then(token => {
-      cached = token;
-      console.log(`[po-token-server] minted a fresh token (visitorData length ${token.visitorData.length})`);
+      cache.set(key, token);
+      console.log(
+        `[po-token-server] minted ${token.context} token for client=${token.client}` +
+          (token.videoId ? ` video=${token.videoId}` : ''),
+      );
       return token;
     })
     .finally(() => {
-      inFlight = null;
+      inFlight.delete(key);
     });
-  return inFlight;
+  inFlight.set(key, job);
+  return job;
 }
 
 function send(res, status, body) {
@@ -78,35 +89,78 @@ function send(res, status, body) {
   res.end(payload);
 }
 
+function authorize(req) {
+  const auth = (req.headers['authorization'] || '').toString();
+  const expected = `Bearer ${AUTH_TOKEN}`;
+  let ok = auth.length === expected.length;
+  for (let i = 0; i < auth.length && i < expected.length; i++) {
+    if (auth.charCodeAt(i) !== expected.charCodeAt(i)) ok = false;
+  }
+  return ok;
+}
+
+async function readJson(req) {
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of req) {
+    size += chunk.length;
+    if (size > 16_384) throw new Error('body too large');
+    chunks.push(chunk);
+  }
+  if (chunks.length === 0) return {};
+  return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+}
+
+function handleToken(req, res, fields) {
+  if (!authorize(req)) {
+    send(res, 401, { error: 'unauthorized' });
+    return;
+  }
+  const parsed = parseTokenRequest(fields);
+  if (!parsed.ok) {
+    send(res, 400, { error: parsed.error });
+    return;
+  }
+  getToken(parsed.request)
+    .then(token =>
+      send(res, 200, {
+        visitorData: token.visitorData,
+        poToken: token.poToken,
+        context: token.context,
+        videoId: token.videoId,
+        client: token.client,
+        contentBinding: token.contentBinding,
+      }),
+    )
+    .catch(err => {
+      console.error('[po-token-server] token mint failed:', err?.message || err);
+      send(res, 502, { error: 'token generation failed' });
+    });
+}
+
 const server = createServer((req, res) => {
   const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
 
   if (req.method === 'GET' && url.pathname === '/healthz') {
-    send(res, 200, { ok: true, cached: Boolean(cached) });
+    send(res, 200, { ok: true, cached: cache.size > 0, provider: 'bgutils-js' });
     return;
   }
 
   if (req.method === 'GET' && url.pathname === '/api/token') {
-    // Constant-time-ish bearer check. The token is a shared secret, not a
-    // password, but comparing without short-circuiting avoids leaking length
-    // via timing.
-    const auth = (req.headers['authorization'] || '').toString();
-    const expected = `Bearer ${AUTH_TOKEN}`;
-    let ok = auth.length === expected.length;
-    for (let i = 0; i < auth.length && i < expected.length; i++) {
-      if (auth.charCodeAt(i) !== expected.charCodeAt(i)) ok = false;
-    }
-    if (!ok) {
-      send(res, 401, { error: 'unauthorized' });
-      return;
-    }
+    handleToken(req, res, {
+      videoId: url.searchParams.get('videoId') || '',
+      client: url.searchParams.get('client') || '',
+      context: url.searchParams.get('context') || '',
+      visitorData: url.searchParams.get('visitorData') || '',
+      bypassCache: url.searchParams.get('bypassCache') || '',
+    });
+    return;
+  }
 
-    getToken()
-      .then(token => send(res, 200, { visitorData: token.visitorData, poToken: token.poToken }))
-      .catch(err => {
-        console.error('[po-token-server] token mint failed:', err?.message || err);
-        send(res, 502, { error: 'token generation failed' });
-      });
+  if (req.method === 'POST' && url.pathname === '/api/token') {
+    readJson(req)
+      .then(body => handleToken(req, res, body && typeof body === 'object' ? body : {}))
+      .catch(() => send(res, 400, { error: 'invalid json' }));
     return;
   }
 
@@ -115,10 +169,9 @@ const server = createServer((req, res) => {
 
 server.listen(PORT, HOST, () => {
   console.log(`[po-token-server] listening on http://${HOST}:${PORT}`);
-  console.log('[po-token-server] endpoints: GET /healthz, GET /api/token (Bearer auth)');
+  console.log('[po-token-server] provider: bgutils-js  endpoints: GET /healthz, GET|POST /api/token');
 });
 
-// Graceful shutdown so `docker stop` doesn't kill an in-flight attestation.
 for (const signal of ['SIGINT', 'SIGTERM']) {
   process.on(signal, () => {
     console.log(`[po-token-server] ${signal} received, shutting down`);

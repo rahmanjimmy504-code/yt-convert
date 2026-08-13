@@ -16,7 +16,7 @@ COPY package.json package-lock.json* ./
 RUN npm install --omit=dev --no-audit --no-fund
 
 # Copy the server source.
-COPY server.js ./
+COPY server.js mint.js contract.js ./
 COPY scripts/ ./scripts/
 
 # Drop privileges: the server doesn't need root after binding to a high port.

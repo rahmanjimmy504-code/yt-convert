@@ -76,9 +76,6 @@ export async function GET(request: Request) {
     });
   }
 
-  // Optional: user-supplied YouTube session cookies for age-gate bypass.
-  // These are never logged or cached; they are forwarded only to the
-  // Innertube player endpoint for this single request.
   const rawCookies = request.headers.get('x-youtube-cookies') || '';
   const youTubeCookies = sanitizeYouTubeCookies(rawCookies) ?? undefined;
 
@@ -90,15 +87,21 @@ export async function GET(request: Request) {
     }
 
     const filename = sanitizeDownloadFilename(title || 'download', extracted.extension);
+    const range = request.headers.get('range');
+    const upstreamHeaders: Record<string, string> = {
+      Accept: '*/*',
+      Referer: parsed.origin + '/',
+      'User-Agent': 'Mozilla/5.0 (compatible; YTConvert/1.0)',
+    };
+    if (range && /^bytes=/i.test(range) && range.length < 128) {
+      upstreamHeaders.Range = range;
+    }
+
     const upstream = await fetchAllowedMedia(extracted.url, {
-      headers: {
-        Accept: '*/*',
-        Referer: parsed.origin + '/',
-        'User-Agent': 'Mozilla/5.0 (compatible; YTConvert/1.0)',
-      },
+      headers: upstreamHeaders,
     });
 
-    if (!upstream.ok || !upstream.body) {
+    if ((!upstream.ok && upstream.status !== 206) || !upstream.body) {
       recordEvent({ type: 'lookup', platform, ok: false, error: 'convert upstream' });
       return json('The media host refused the stream. Try a converter below.', 502);
     }
@@ -110,12 +113,15 @@ export async function GET(request: Request) {
       'Content-Disposition': `attachment; filename="${filename.replace(/"/g, '')}"; filename*=UTF-8''${encodedName}`,
       'Cache-Control': 'no-store',
       'X-Content-Type-Options': 'nosniff',
+      'Accept-Ranges': 'bytes',
     });
     const length = upstream.headers.get('content-length');
     if (length) headers.set('Content-Length', length);
+    const contentRange = upstream.headers.get('content-range');
+    if (contentRange) headers.set('Content-Range', contentRange);
 
     recordEvent({ type: 'lookup', platform, ok: true });
-    return new Response(upstream.body, { status: 200, headers });
+    return new Response(upstream.body, { status: upstream.status === 206 ? 206 : 200, headers });
   } catch (err) {
     if (err instanceof MediaHostError) {
       recordEvent({ type: 'lookup', platform, ok: false, error: 'convert ssrf' });

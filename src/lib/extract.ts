@@ -269,6 +269,25 @@ export function collectPlayerFormats(data: Record<string, unknown>): PlayerForma
   return all.filter(hasDirectUrl);
 }
 
+/**
+ * Attach a GVS / media-URL PO token to googlevideo playback URLs.
+ * YouTube requires this token on the CDN request independently of the
+ * player-request token. Invalid tokens are ignored (never appended).
+ */
+export function attachMediaUrlToken(url: string, pot: string | undefined | null): string {
+  if (!pot || !url) return url;
+  try {
+    const parsed = new URL(url);
+    if (!/googlevideo\.com$/i.test(parsed.hostname)) return url;
+    if (parsed.searchParams.has('pot')) return url;
+    parsed.searchParams.set('pot', pot);
+    parsed.searchParams.set('potc', '1');
+    return parsed.toString();
+  } catch {
+    return url;
+  }
+}
+
 /** Playability states we can explain to the user instead of a generic failure. */
 const PLAYABILITY_MESSAGES: Record<string, string> = {
   LOGIN_REQUIRED: 'This video is age-restricted or private, so YouTube requires a signed-in account.',
@@ -598,12 +617,31 @@ async function extractYouTube(
   // it can be attached to the Innertube player requests. A failure here is
   // non-fatal: we proceed without it and the downstream fallbacks run.
   const poTokenConfigured = isPoTokenServerConfigured();
-  const poToken = await getPoToken().catch(() => null);
+  // Session token first (visitorData + session-bound WebPO). Player tokens
+  // are content-bound to this video id. GVS tokens go on media URLs.
+  const sessionToken = await getPoToken({ context: 'session', client: 'ANDROID' }).catch(() => null);
+  const playerToken = sessionToken
+    ? await getPoToken({
+        context: 'player',
+        client: 'ANDROID',
+        videoId: id,
+        visitorData: sessionToken.visitorData,
+      }).catch(() => null)
+    : null;
+  const gvsToken = sessionToken
+    ? await getPoToken({
+        context: 'gvs',
+        client: 'ANDROID',
+        visitorData: sessionToken.visitorData,
+      }).catch(() => null)
+    : null;
+
+  const playerPo = playerToken || sessionToken;
 
   // Primary: Innertube clients that return direct googlevideo URLs.
   let innertube = await innertubeFormats(id, {
     cookies: options?.youTubeCookies,
-    poToken: poToken ?? undefined,
+    poToken: playerPo ?? undefined,
   });
 
   // Durable fix for the bot wall: when every client was refused with a
@@ -618,10 +656,16 @@ async function extractYouTube(
   if (
     poTokenConfigured &&
     !innertube.formats.length &&
-    (isBotChallenge(innertube.status, innertube.reason) || !poToken)
+    (isBotChallenge(innertube.status, innertube.reason) || !playerPo)
   ) {
-    const freshToken = await getPoToken(true).catch(() => null);
-    if (freshToken && freshToken.poToken !== poToken?.poToken) {
+    const freshToken = await getPoToken({
+      context: 'player',
+      client: 'ANDROID',
+      videoId: id,
+      visitorData: sessionToken?.visitorData,
+      forceRefresh: true,
+    }).catch(() => null);
+    if (freshToken && freshToken.poToken !== playerPo?.poToken) {
       const retried = await innertubeFormats(id, {
         cookies: options?.youTubeCookies,
         poToken: freshToken,
@@ -694,9 +738,10 @@ async function extractYouTube(
   }
 
   const mimeType = picked.mimeType || (kind === 'video' ? 'video/mp4' : 'audio/mp4');
-  const viaPiped = !/googlevideo\.com/i.test(new URL(picked.url, 'https://x').hostname);
+  const mediaUrl = attachMediaUrlToken(picked.url, gvsToken?.poToken);
+  const viaPiped = !/googlevideo\.com/i.test(new URL(mediaUrl, 'https://x').hostname);
   return ok({
-    url: picked.url,
+    url: mediaUrl,
     mimeType,
     extension: extensionForMime(mimeType, kind === 'video' ? 'mp4' : 'm4a'),
     qualityLabel: picked.qualityLabel,

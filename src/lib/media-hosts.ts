@@ -105,7 +105,8 @@ export function isAllowedMediaUrl(raw: string): boolean {
 }
 
 const MAX_REDIRECTS = 4;
-const FETCH_TIMEOUT_MS = 20_000;
+/** Only waits for upstream headers. Cleared before the body is streamed. */
+const CONNECT_TIMEOUT_MS = 20_000;
 
 export class MediaHostError extends Error {
   constructor(message: string) {
@@ -124,12 +125,30 @@ export async function fetchAllowedMedia(url: string, init: RequestInit = {}, hop
     headers.set('User-Agent', 'Mozilla/5.0 (compatible; YTConvert/1.0)');
   }
 
-  const response = await fetch(url, {
-    ...init,
-    headers,
-    redirect: 'manual',
-    signal: init.signal ?? AbortSignal.timeout(FETCH_TIMEOUT_MS),
-  });
+  // Time out only the connection / headers phase. Once headers arrive we
+  // clear the timer so a long progressive download is not aborted mid-stream.
+  let response: Response;
+  if (init.signal) {
+    response = await fetch(url, {
+      ...init,
+      headers,
+      redirect: 'manual',
+      signal: init.signal,
+    });
+  } else {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), CONNECT_TIMEOUT_MS);
+    try {
+      response = await fetch(url, {
+        ...init,
+        headers,
+        redirect: 'manual',
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+  }
 
   if (response.status >= 300 && response.status < 400) {
     const location = response.headers.get('location');

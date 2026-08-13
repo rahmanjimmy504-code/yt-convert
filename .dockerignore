@@ -1,0 +1,9 @@
+node_modules
+.next
+.git
+.env
+.env*.local
+coverage
+*.md
+!README.md
+po-token-server/node_modules

@@ -2,7 +2,7 @@
 
 A clean, fast multi-platform converter website built with Next.js. Paste a link from a supported platform, see the thumbnail and metadata instantly, then download here when we can — or pick a fallback converter. AUTO-SEND converters use a verified deep link or form. COPY NEEDED converters cannot be auto-filled.
 
-**We convert where we legally and technically can.** Download here extracts a public stream (YouTube / YT Music via Innertube → Invidious → Piped, SoundCloud progressive, public X / TikTok / Instagram / Facebook URLs) and proxies it to your browser. Files are never stored. DRM catalogs (Spotify, Deezer, Apple Music, Amazon Music) are not ripped. Snapchat and BeReal have no public media URL we can proxy. Third-party converter cards stay as fallback when extraction fails.
+**We convert where we legally and technically can.** Download here extracts a public stream (YouTube / YT Music via Innertube → Invidious → Piped, SoundCloud progressive, public X / TikTok / Instagram / Facebook URLs) and **streams** it to your browser (no `blob()` buffer; `Range` / `206` resume). Files are never stored. We do **not** unlock private, DRM, deleted, members-only, or region-blocked videos, and we do not claim every YouTube upload works. See [docs/limitations.md](docs/limitations.md). Third-party converter cards (including 9convert-style public-stream sites) stay as fallback.
 
 ## Supported Platforms
 
@@ -199,7 +199,7 @@ YouTube / YT Music downloads try sources in order, stopping at the first that re
 
 Alongside the chain, **External PO-token server** (optional) — if `PO_TOKEN_SERVER_URL` + `PO_TOKEN_SERVER_AUTH` are configured, a token is fetched once (cached ~30 min) and attached to the Innertube requests under `serviceIntegrityDimensions`.
 
-The main app **never emulates BotGuard / generates PO tokens itself**. If you need tokens, run the small authenticated sidecar in [`po-token-server/`](po-token-server/README.md) (Docker, uses `jsdom` — no system browser) on any host and point `PO_TOKEN_SERVER_URL` at it over HTTPS. It is fully optional: with neither variable set, extraction behaves exactly as before, falling through Innertube → Invidious → Piped.
+The main app **never emulates BotGuard / generates PO tokens itself**. Tokens come from the BgUtils sidecar in [`po-token-server/`](po-token-server/README.md) (`bgutils-js` + `jsdom`). **Mint and extract must share an egress IP** — that is what cleared Vercel’s bot check in the Android same-egress experiment. On one VPS use the root `docker-compose.yml` (Next.js + sidecar + Caddy on a private Docker network). The contract sends `videoId`, Innertube `client`, and `context` (`session` | `player` | `gvs`) so content-bound player tokens and media-URL (GVS) tokens can be minted separately. Invalid token shapes are rejected; there is no arbitrary-length workaround.
 
 #### Bot challenges and the one-shot PO-token retry
 
@@ -418,6 +418,17 @@ On Android: Chrome menu → "Install app" / "Add to Home screen". On iOS: Share 
 The project is designed for **Vercel** (zero-config Next.js hosting). Push to your repository and import it in the Vercel dashboard — `next build` and `next start` are already wired up.
 
 The default live site is at **https://yt-convert-xi.vercel.app/**.
+
+### One-VPS Docker (recommended for YouTube)
+
+```bash
+cp .env.example .env   # set AUTH_TOKEN, CONVERT_TICKET_SECRET, SITE_ADDRESS
+docker compose up -d --build
+```
+
+Caddy terminates TLS and proxies to the Next.js app. The PO-token sidecar is
+reachable only on the internal network as `http://po-token:4416`. Do not
+publish port 4416.
 
 To deploy under a **custom production domain**, see [Custom production domain](#custom-production-domain) above: add the domain in Vercel project settings and set `NEXT_PUBLIC_SITE_URL` for the Production environment.
 

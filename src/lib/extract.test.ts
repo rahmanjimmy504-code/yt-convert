@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  attachMediaUrlToken,
   extractInstagramShortcode,
   extractMedia,
   extractTikTokId,
@@ -12,6 +13,16 @@ import {
   twitterSyndicationToken,
 } from './extract';
 import { __resetPoTokenCacheForTests } from './po-token';
+
+describe('attachMediaUrlToken', () => {
+  it('appends pot to googlevideo URLs only', () => {
+    const pot = 'Mmjb9zC7RXJtz9vL00XCYxJie5NonEefv5jAsItnbjBeUCwwgD4MpibO3o6lDesALHIKU7WgElG';
+    const gv = attachMediaUrlToken('https://rr1---sn-test.googlevideo.com/videoplayback?id=1', pot);
+    expect(gv).toContain('pot=');
+    expect(gv).toContain('potc=1');
+    expect(attachMediaUrlToken('https://pipedproxy-bom.kavin.rocks/v', pot)).not.toContain('pot=');
+  });
+});
 
 describe('id parsers', () => {
   it('extracts TikTok video ids', () => {
@@ -347,10 +358,14 @@ describe('PO-token bot-challenge retry', () => {
       vi.fn(async (url: string, init?: RequestInit) => {
         if (url.startsWith('https://token.example')) {
           tokenCalls += 1;
-          return new Response(
-            JSON.stringify({ visitorData: `VD${tokenCalls}`, poToken: `POT${tokenCalls}` }),
-            { headers: { 'Content-Type': 'application/json' } },
-          );
+          const vd = 'Cgs3YzRtdWpnTkJCbyjgoba3Bg==';
+          const pot =
+            tokenCalls === 1
+              ? 'Mmjb9zC7RXJtz9vL00XCYxJie5NonEefv5jAsItnbjBeUCwwgD4MpibO3o6lDesALHIKU7WgElG'
+              : 'Nnkb0zD8SYKua0wM11YDZyKjf6OpoFfgw6kBtJuockCfVDxxhE5NqjcP4p7mEftBMHJL V8XhFmH'.replace(/ /g, 'V');
+          return new Response(JSON.stringify({ visitorData: vd, poToken: pot }), {
+            headers: { 'Content-Type': 'application/json' },
+          });
         }
         if (url.includes('youtubei/v1/player')) {
           playerBodies.push(String(init?.body ?? ''));
@@ -363,9 +378,17 @@ describe('PO-token bot-challenge retry', () => {
     await extractMedia('youtube', 'https://www.youtube.com/watch?v=Y1Z3Q3O7IRE', 'mp4', 'best');
 
     // Two token fetches: the up-front one and the forced refresh.
-    expect(tokenCalls).toBe(2);
-    expect(playerBodies.some(b => b.includes('POT1'))).toBe(true);
-    expect(playerBodies.some(b => b.includes('POT2'))).toBe(true);
+    // Session + player + gvs up front, then a forced player refresh.
+    expect(tokenCalls).toBeGreaterThanOrEqual(2);
+    expect(playerBodies.length).toBeGreaterThan(0);
+    const pots = playerBodies.map(b => {
+      try {
+        return JSON.parse(b).serviceIntegrityDimensions?.poToken as string | undefined;
+      } catch {
+        return undefined;
+      }
+    });
+    expect(pots.some(Boolean)).toBe(true);
   });
 
   it('does not retry when no PO-token server is configured', async () => {

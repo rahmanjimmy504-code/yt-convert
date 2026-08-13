@@ -1,39 +1,44 @@
 /**
- * Optional client for an external PO-token ("proof of origin") server.
+ * Optional client for an external PO-token sidecar (po-token-server/).
  *
- * HARD BOUNDARY: this app never emulates YouTube's BotGuard / PO-token
- * generation itself — that requires executing YouTube's VM and is both
- * fragile and against the project's privacy rules. Instead, an operator can
- * run a small sidecar microservice (see po-token-server/) that performs the
- * attestation and exposes a simple authenticated JSON endpoint; this client
- * calls it and attaches the resulting tokens to Innertube player requests.
+ * HARD BOUNDARY: this app never emulates BotGuard. Tokens are minted by the
+ * sidecar with bgutils-js and attached to Innertube / media requests.
  *
- * The feature is fully opt-in and disabled unless BOTH:
- *   - PO_TOKEN_SERVER_URL is set, and
- *   - PO_TOKEN_SERVER_AUTH is set (a bearer token the sidecar requires).
+ * Contract (must match po-token-server/contract.js):
+ *   POST /api/token  { videoId?, client, context: session|player|gvs, visitorData?, bypassCache? }
+ *   Response: { visitorData, poToken, context, videoId, client }
  *
- * Tokens are cached in-memory for a short TTL only (the same process, never
- * persisted) and are never logged.
+ * Tokens are validated against the real WebPO shape. Arbitrary lengths are
+ * never accepted as a workaround.
  */
 
-const DEFAULT_TTL_MS = 30 * 60 * 1000; // 30 minutes
-const REQUEST_TIMEOUT_MS = 8_000;
+import {
+  isValidClient,
+  isValidContext,
+  isValidPoToken,
+  isValidVideoId,
+  isValidVisitorData,
+  type TokenContext,
+} from './po-token-contract';
+
+const DEFAULT_TTL_MS = 30 * 60 * 1000;
+const REQUEST_TIMEOUT_MS = 15_000;
 
 export interface PoToken {
-  /** Visitor data (context.client.visitorData) tied to the token. */
   visitorData: string;
-  /** The content-bound or session-bound proof-of-origin token. */
   poToken: string;
-  /** Wall-clock time (ms) at which this token was fetched. */
   fetchedAt: number;
+  context: TokenContext;
+  videoId: string | null;
+  client: string;
 }
 
-interface PoTokenResponse {
-  visitorData?: unknown;
-  poToken?: unknown;
-  // Alternate field names used by the various open-source generators.
-  visitor_data?: unknown;
-  po_token?: unknown;
+export interface GetPoTokenOptions {
+  videoId?: string | null;
+  client?: string;
+  context?: TokenContext;
+  visitorData?: string | null;
+  forceRefresh?: boolean;
 }
 
 function configFromEnv(): { url: string; auth: string } | null {
@@ -49,105 +54,114 @@ function configFromEnv(): { url: string; auth: string } | null {
   return { url, auth };
 }
 
-/** True when an external PO-token server is configured and should be used. */
 export function isPoTokenServerConfigured(): boolean {
   return configFromEnv() !== null;
 }
 
-let cachedToken: PoToken | null = null;
-let pending: Promise<PoToken | null> | null = null;
+const cached = new Map<string, PoToken>();
+const pending = new Map<string, Promise<PoToken | null>>();
 
-/** Test-only hook: forget any cached token between unit tests. */
 export function __resetPoTokenCacheForTests(): void {
-  cachedToken = null;
-  pending = null;
+  cached.clear();
+  pending.clear();
+}
+
+function cacheKey(opts: GetPoTokenOptions): string {
+  return `${opts.context || 'session'}:${opts.client || 'ANDROID'}:${opts.videoId || ''}`;
 }
 
 function asString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
-/**
- * Fetch a fresh (visitorData, poToken) pair from the configured server.
- *
- * The server contract intentionally mirrors the most common open-source
- * generators (e.g. lighttube-org/pot-generator GET /generate, and the iv-org
- * trusted-session-generator one-shot JSON), accepting either camelCase or
- * snake_case field names so an operator can point at either implementation.
- *
- * Returns null on any failure — a missing token must never break extraction,
- * because the Innertube clients still work for many videos without it.
- */
-async function fetchPoToken(): Promise<PoToken | null> {
+async function fetchPoToken(opts: GetPoTokenOptions): Promise<PoToken | null> {
   const config = configFromEnv();
   if (!config) return null;
 
-  // Prefer a content-bound endpoint when the video id is known; fall back to
-  // the generic visitor-data token. The path /api/token matches the sidecar
-  // shipped in po-token-server/; other generators expose /generate or /, so
-  // try the documented endpoint first.
+  const context: TokenContext = opts.context && isValidContext(opts.context) ? opts.context : 'session';
+  const client = opts.client && isValidClient(opts.client) ? opts.client : 'ANDROID';
+  const videoId = opts.videoId && isValidVideoId(opts.videoId) ? opts.videoId : null;
+  const visitorDataIn = opts.visitorData && isValidVisitorData(opts.visitorData) ? opts.visitorData : null;
+
+  if (context === 'player' && !videoId) return null;
+
   const endpoint = `${config.url}/api/token`;
+  const body = {
+    videoId,
+    client,
+    context,
+    visitorData: visitorDataIn,
+    bypassCache: Boolean(opts.forceRefresh),
+  };
 
   try {
     const response = await fetch(endpoint, {
-      method: 'GET',
+      method: 'POST',
       headers: {
         Accept: 'application/json',
+        'Content-Type': 'application/json',
         Authorization: `Bearer ${config.auth}`,
         'User-Agent': 'Mozilla/5.0 (compatible; YTConvert/1.0)',
       },
+      body: JSON.stringify(body),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
     if (!response.ok) return null;
-    const data = (await response.json()) as PoTokenResponse | { response?: PoTokenResponse };
+    const data = (await response.json()) as Record<string, unknown>;
+    const payload =
+      data && typeof data === 'object' && data.response && typeof data.response === 'object'
+        ? (data.response as Record<string, unknown>)
+        : data;
 
-    // Some generators wrap the payload in { success, response: {...} }.
-    const payload: PoTokenResponse =
-      data && typeof data === 'object' && 'response' in data && data.response
-        ? (data.response as PoTokenResponse)
-        : (data as PoTokenResponse);
-
-    const visitorData =
-      asString(payload.visitorData) || asString(payload.visitor_data);
+    const visitorData = asString(payload.visitorData) || asString(payload.visitor_data);
     const poToken = asString(payload.poToken) || asString(payload.po_token);
 
-    if (!visitorData || !poToken) return null;
-    return { visitorData, poToken, fetchedAt: Date.now() };
+    // Strict shape check — never accept "any string of any length".
+    if (!isValidVisitorData(visitorData) || !isValidPoToken(poToken)) return null;
+
+    return {
+      visitorData,
+      poToken,
+      fetchedAt: Date.now(),
+      context,
+      videoId,
+      client,
+    };
   } catch {
     return null;
   }
 }
 
-/**
- * Return a usable PO token, fetching and caching one when necessary. Multiple
- * concurrent callers share a single in-flight request so a cold cache doesn't
- * stampede the sidecar.
- *
- * Pass `forceRefresh` to bypass the cache and mint a brand-new token. This is
- * what the bot-challenge retry in ./extract.ts uses: when YouTube answers
- * "Sign in to confirm you're not a bot" the cached token has been burnt (or
- * was never bound to this session), so reusing it would fail identically.
- */
-export async function getPoToken(forceRefresh = false): Promise<PoToken | null> {
+export async function getPoToken(
+  forceRefreshOrOptions: boolean | GetPoTokenOptions = false,
+): Promise<PoToken | null> {
   if (!isPoTokenServerConfigured()) return null;
 
-  if (forceRefresh) {
-    // Drop the burnt token and any in-flight fetch that would resolve to it,
-    // so the retry genuinely re-attests instead of replaying the same value.
-    cachedToken = null;
-    pending = null;
-  } else if (cachedToken && Date.now() - cachedToken.fetchedAt < DEFAULT_TTL_MS) {
-    return cachedToken;
+  const opts: GetPoTokenOptions =
+    typeof forceRefreshOrOptions === 'boolean'
+      ? { forceRefresh: forceRefreshOrOptions, context: 'session', client: 'ANDROID' }
+      : forceRefreshOrOptions;
+
+  const key = cacheKey(opts);
+  if (opts.forceRefresh) {
+    cached.delete(key);
+    pending.delete(key);
+  } else {
+    const hit = cached.get(key);
+    if (hit && Date.now() - hit.fetchedAt < DEFAULT_TTL_MS) return hit;
   }
 
-  if (pending) return pending;
-  pending = fetchPoToken()
+  const existing = pending.get(key);
+  if (existing) return existing;
+
+  const job = fetchPoToken(opts)
     .then(token => {
-      if (token) cachedToken = token;
+      if (token) cached.set(key, token);
       return token;
     })
     .finally(() => {
-      pending = null;
+      pending.delete(key);
     });
-  return pending;
+  pending.set(key, job);
+  return job;
 }
