@@ -1,53 +1,65 @@
-# Free same-egress on Android
+# Free same-egress on Android (no VPS)
 
-PO tokens only work when **BotGuard and googlevideo share a public IP**.
-That is what the Android experiment proved. Minting on a phone while the
-Next.js app still talks to YouTube from Vercel does **not** count.
+You do **not** need a VPS. The phone can *be* the website. Sidecar, Next.js,
+and googlevideo then all leave from the same mobile/Wi‑Fi IP — that is
+item 3 (same-egress) done for free.
 
-Yes, this can be done **for free on a phone**. The phone must stay on, and
-downloads use **its** mobile data.
+## Termux-only website (what you want)
 
-## Termux was reset
-
-A reset wipes packages, `tinyproxy`, SSH keys, and the tunnel. The VPS
-compose file is unchanged — only the phone side is gone.
-
-1. Install [Termux](https://f-droid.org/en/packages/com.termux/) from F-Droid
-   (Play Store Termux is stale). Optional: Termux:API for a wake lock.
-2. Open Termux and paste:
+1. Install [Termux from F-Droid](https://f-droid.org/en/packages/com.termux/)
+   (not the Play Store build). Optional: Termux:API for a wake lock.
+2. Paste this in Termux:
 
 ```bash
-pkg update && pkg install -y curl openssh
-# Pull the bootstrap from this repo (or copy scripts/termux-egress.sh by hand).
-curl -fsSL https://raw.githubusercontent.com/rahmanjimmy504-code/yt-convert/arena/019ffc0a-yt-convert/scripts/termux-egress.sh -o ~/termux-egress.sh
-chmod +x ~/termux-egress.sh
-
-# Your VPS login — the same host that runs docker compose.
-export EGRESS_SSH=ubuntu@YOUR_VPS_IP
-bash ~/termux-egress.sh
+pkg update && pkg install -y curl
+curl -fsSL https://raw.githubusercontent.com/rahmanjimmy504-code/yt-convert/arena/019ffc0a-yt-convert/scripts/termux-site.sh -o ~/termux-site.sh
+chmod +x ~/termux-site.sh
+bash ~/termux-site.sh
 ```
 
-3. First run will ask to trust the host key and may ask for the VPS
-   password. To skip passwords next time, on the phone:
+3. Wait for npm install / build (10–20 min the first time). If the phone
+   runs out of RAM the script falls back to `next dev`.
+4. `cloudflared` prints a line like:
 
-```bash
-ssh-keygen -t ed25519 -N "" -f ~/.ssh/id_ed25519
-ssh-copy-id -p 22 "$EGRESS_SSH"
-```
+   `https://random-words-1234.trycloudflare.com`
 
-4. Leave that Termux session open. On the VPS `.env` you still need:
+   That **is** the website. Open it on any device. It is free and needs no
+   Cloudflare account. The hostname **changes every time you restart** the
+   script.
 
-```env
-YT_EGRESS_PROXY=http://172.17.0.1:8888
-```
+5. Leave Termux in the foreground (or use a wake lock). If the phone sleeps
+   or the process dies, the site and the tokens die with it.
 
-then `docker compose up -d` (or restart `web` and `po-token` if they were
-already running).
+After a Termux reset, run the same two `curl` + `bash` lines again. Secrets
+live in `~/.yt-convert-termux.env` — a reset deletes that file and mints
+new ones, which is fine.
 
-If SSH says `remote port forwarding failed`, something else is bound to
-8888 on the VPS — `ss -lntp | grep 8888` and stop the leftover tunnel.
+Do **not** set `YT_EGRESS_PROXY` in this mode. Everything is already on the
+phone.
 
 ## What does not work
+
+| Setup | Why it fails |
+|---|---|
+| Sidecar in Termux, site on Vercel | Innertube/CDN still leave from Vercel |
+| Orbot / Tor SOCKS | YouTube blocks most Tor exits |
+| VPN only in the phone browser | The Node server never uses that VPN |
+| Closing Termux / letting Android kill it | No process, no site, no token |
+
+## Optional: VPS + phone as exit
+
+Only if you later want a stable domain and the phone merely provides the IP.
+See `scripts/termux-egress.sh`. Not required for the website path above.
+
+## Honest limits
+
+- First build can OOM on 3 GB phones. The script then uses `next dev`.
+- The trycloudflare URL is public; anyone who has it can hit your rate limits.
+- Downloads use **the phone’s** data.
+- A flagged mobile IP can still see a bot check.
+- This does not unlock private, DRM, members-only, deleted, or region-blocked videos.
+- YouTube’s Terms of Service still apply.
+
 
 | Setup | Why it fails |
 |---|---|
