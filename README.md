@@ -448,10 +448,11 @@ The default live site is at **https://yt-convert-xi.vercel.app/**.
 > **No budget, or no credit card?** [docs/setup-free.md](docs/setup-free.md)
 > compares the £0 routes. The simplest is Render's free plan — no card, no
 > terminal, permanent `*.onrender.com` address; `render.yaml` in the repo root
-> makes it a one-click blueprint deploy. Like any datacenter host it will be
-> bot-blocked for direct extraction, but the 9Convert farm and converter
-> handoffs still work, so the site stays useful. Only the Termux route has a
-> consumer IP that clears the bot check outright.
+> makes it a one-click blueprint deploy. Like any datacenter host it can be
+> bot-blocked for direct extraction. The farm is best effort (the 2026-08-14
+> live checks returned no MP3 or MP4), and converter cards provide browser
+> handoffs rather than guaranteed third-party conversions. Only the Termux
+> route has a consumer IP that usually clears the bot check outright.
 
 ```bash
 cp .env.example .env   # set AUTH_TOKEN, CONVERT_TICKET_SECRET, SITE_ADDRESS

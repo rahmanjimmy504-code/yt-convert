@@ -7,7 +7,9 @@ COPY . .
 # Render exposes non-secret service env vars to Docker builds as build args.
 # Next inlines this public canonical URL; secrets intentionally stay runtime-only.
 ARG NEXT_PUBLIC_SITE_URL
-ENV NEXT_PUBLIC_SITE_URL=$NEXT_PUBLIC_SITE_URL
+ARG RENDER_EXTERNAL_URL
+ENV NEXT_PUBLIC_SITE_URL=$NEXT_PUBLIC_SITE_URL \
+    RENDER_EXTERNAL_URL=$RENDER_EXTERNAL_URL
 # Bound each Node heap and enable Next's low-memory Webpack mode (configured in
 # next.config.ts) to reduce hosted-builder pressure without skipping type checks
 # or static generation.

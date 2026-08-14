@@ -89,7 +89,10 @@ already own the source repository.
 - Render reads `render.yaml` from the repository and fills everything in:
   - **Runtime:** Docker
   - **Plan:** Free
-  - Three secrets generated automatically
+  - Three one-time secret fields
+- For each secret field, use Render's value generator or a password manager to
+  create a long random value. Do not reuse a password and do not post the
+  values anywhere.
 - Review the changes, then press **Deploy Blueprint**
 
 First build takes 5–15 minutes. When it finishes you get:
@@ -180,6 +183,6 @@ only free option with enough RAM to also run cobalt.
 |---|---|
 | Render build fails | Check the build log. Almost always a missing env var — `render.yaml` should set them; re-sync the blueprint. |
 | First visit takes a minute | Free-plan sleep. Expected. |
-| "Download ticket is invalid" | `CONVERT_TICKET_SECRET` changed between deploys. It's `generateValue: true`, so it should stay stable — check it isn't overridden. |
+| "Download ticket is invalid" | `CONVERT_TICKET_SECRET` changed between deploys. Re-sync the Blueprint: it declares the key `sync: false`, so Render keeps the value you entered during initial setup. Do not regenerate it during redeploys. |
 | Direct downloads fail, converter cards work | The bot wall. Expected on any free host — see the top of this guide. |
 | Phone URL keeps changing | Expected with quick tunnels. Use Render for a fixed address. |

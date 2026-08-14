@@ -16,5 +16,9 @@ export const DEFAULT_SITE_URL = 'https://yt-convert-xi.vercel.app';
 
 /** Canonical production origin (no trailing slash). */
 export function getSiteUrl(): string {
-  return (process.env.NEXT_PUBLIC_SITE_URL || DEFAULT_SITE_URL).replace(/\/+$/, '');
+  return (
+    process.env.NEXT_PUBLIC_SITE_URL ||
+    process.env.RENDER_EXTERNAL_URL ||
+    DEFAULT_SITE_URL
+  ).replace(/\/+$/, '');
 }
