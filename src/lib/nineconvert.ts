@@ -112,27 +112,32 @@ export function isAllowedNineConvertUrl(raw: string): boolean {
 }
 
 function mediaUrl(payload: unknown): string {
-  const body = record(payload);
-  if (!body) return '';
-  const data = record(body.data);
-  const result = record(body.result);
-  const candidates = [
-    body.dlink,
-    body.url,
-    body.downloadUrl,
-    data?.dlink,
-    data?.url,
-    data?.downloadUrl,
-    result?.dlink,
-    result?.url,
-    result?.downloadUrl,
-  ];
-  for (const candidate of candidates) {
-    const url = text(candidate)
-      .replace(/&amp;/g, '&')
-      .replace(/\\u0026/g, '&')
-      .replace(/\\\//g, '/');
-    if (/^https:\/\//i.test(url) && isAllowedNineConvertUrl(url)) return url;
+  // Current and legacy farms wrap completed links in several combinations of
+  // data/result/download/file. Walk only those known envelope keys, and only
+  // accept URL-bearing keys, so a thumbnail or arbitrary JSON URL cannot be
+  // mistaken for downloadable media.
+  const envelopes = new Set(['data', 'result', 'download', 'file', 'response', 'output']);
+  const urlKeys = new Set(['dlink', 'url', 'downloadurl', 'download_url', 'fileurl', 'file_url', 'link']);
+  const queue: Array<{ value: unknown; depth: number }> = [{ value: payload, depth: 0 }];
+  const seen = new Set<object>();
+  while (queue.length) {
+    const { value, depth } = queue.shift()!;
+    const body = record(value);
+    if (!body || seen.has(body)) continue;
+    seen.add(body);
+    for (const [key, candidate] of Object.entries(body)) {
+      const lower = key.toLowerCase();
+      if (urlKeys.has(lower)) {
+        const url = text(candidate)
+          .replace(/&amp;/g, '&')
+          .replace(/\\u0026/g, '&')
+          .replace(/\\\//g, '/');
+        if (/^https:\/\//i.test(url) && isAllowedNineConvertUrl(url)) return url;
+      }
+      if (depth < 4 && envelopes.has(lower) && record(candidate)) {
+        queue.push({ value: candidate, depth: depth + 1 });
+      }
+    }
   }
   return '';
 }
@@ -212,6 +217,7 @@ function farmHeaders(base: string, jar: CookieJar, videoId: string, json = false
     // the returned dlink is fetched later.
     Referer: `${base}/v2/full?videoId=${encodeURIComponent(videoId)}`,
     'User-Agent': FARM_UA,
+    'X-Requested-With': 'XMLHttpRequest',
   };
   const cookie = jar.byHost.get(hostOf(base));
   if (cookie) headers.Cookie = cookie;
@@ -240,6 +246,8 @@ async function farmFetch(
       const next = new URL(loc, url).toString();
       if (!isAllowedNineConvertUrl(next)) return null;
       const hdrs = new Headers(init.headers as HeadersInit);
+      // Never retain the original host's Cookie on a cross-host CDN hop.
+      hdrs.delete('cookie');
       const cookie = jar.byHost.get(hostOf(next));
       if (cookie) hdrs.set('cookie', cookie);
       try { await response.arrayBuffer(); } catch { /* drain */ }
@@ -369,10 +377,36 @@ function sniffProbe(kind: NineConvertKind, bytes: Uint8Array): boolean {
  * cookies + farm Referer. If the response isn't a real MP3/MP4 (or is HTML),
  * the candidate is discarded and the next farm route is tried.
  */
-async function probeCandidateDlink(jar: CookieJar, url: string, kind: NineConvertKind, videoId: string = ''): Promise<boolean> {
-  if (!isAllowedNineConvertUrl(url)) return false;
+async function readProbeBytes(response: Response): Promise<Uint8Array> {
+  if (!response.body) return new Uint8Array();
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let length = 0;
+  try {
+    while (length < FARM_PROBE_BYTES) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value?.length) continue;
+      const take = value.subarray(0, Math.min(value.length, FARM_PROBE_BYTES - length));
+      chunks.push(take);
+      length += take.length;
+    }
+  } finally {
+    // A server may ignore Range and start streaming a multi-GB file. Never
+    // buffer the rest merely to validate its first bytes.
+    try { await reader.cancel(); } catch { /* already closed */ }
+  }
+  const out = new Uint8Array(length);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return out;
+}
+
+function dlinkHeaders(jar: CookieJar, url: string, videoId: string): Record<string, string> {
   const host = hostOf(url);
-  if (!host) return false;
   const refererBase = host === 'embed.dlsrv.online' || host.endsWith('.dlsrv.online')
     ? 'https://embed.dlsrv.online'
     : host.endsWith('.9convert.org') || host === '9convert.org'
@@ -382,73 +416,69 @@ async function probeCandidateDlink(jar: CookieJar, url: string, kind: NineConver
         : `https://${host}`;
   const headers: Record<string, string> = {
     Accept: '*/*',
-    // Do not send a hard Range: some test/undici combinations throw
-    // "offset is out of bounds" when the upstream body is shorter than the
-    // requested window. We only read the first ~2KB from the body in userland
-    // and cancel, which is equivalent for detection purposes.
+    Range: `bytes=0-${FARM_PROBE_BYTES - 1}`,
     Referer: `${refererBase}/v2/full?videoId=${encodeURIComponent(videoId)}`,
     'User-Agent': FARM_UA,
   };
-  // For googlevideo dlinks minted by the farm we do not attach farm cookies
-  // (they wouldn't apply and would leak cross-host).
+  // Cookies are exact-host scoped. Rebuilding headers at every redirect also
+  // prevents a farm cookie leaking to googlevideo or another approved CDN.
   const cookie = jar.byHost.get(host);
   if (cookie) headers.Cookie = cookie;
+  return headers;
+}
+
+/**
+ * Bounded Range probe against a candidate dlink. Up to three allowlisted CDN
+ * redirects are followed; every hop is revalidated and gets host-scoped
+ * cookies/referer headers. Servers that ignore Range are still safe because
+ * only the first 2 KB are read before the stream is cancelled.
+ */
+async function probeCandidateDlink(jar: CookieJar, initialUrl: string, kind: NineConvertKind, videoId = ''): Promise<boolean> {
+  if (!isAllowedNineConvertUrl(initialUrl)) return false;
+  let url = initialUrl;
   let response: Response | null = null;
-  try {
-    response = await fetch(url, {
-      method: 'GET',
-      headers,
-      redirect: 'manual',
-      signal: AbortSignal.timeout(FARM_TIMEOUT_MS),
-    });
-    if (response.status >= 300 && response.status < 400) {
-      const loc = response.headers.get('location');
-      try { await response.arrayBuffer(); } catch { /* drain */ }
-      if (!loc) return false;
-      const next = new URL(loc, url).toString();
-      if (!isAllowedNineConvertUrl(next)) return false;
-      response = await fetch(next, {
+  for (let hop = 0; hop <= 3; hop += 1) {
+    try {
+      response = await fetch(url, {
         method: 'GET',
-        headers,
+        headers: dlinkHeaders(jar, url, videoId),
         redirect: 'manual',
         signal: AbortSignal.timeout(FARM_TIMEOUT_MS),
       });
+      rememberSetCookie(jar, url, response.headers);
+    } catch {
+      return false;
     }
-  } catch {
-    return false;
+    if (response.status < 300 || response.status >= 400) break;
+    const loc = response.headers.get('location');
+    try { await response.body?.cancel(); } catch { /* drain */ }
+    if (!loc || hop === 3) return false;
+    const next = new URL(loc, url).toString();
+    if (!isAllowedNineConvertUrl(next)) return false;
+    url = next;
   }
   if (!response || (!response.ok && response.status !== 206)) {
-    try { if (response) await response.arrayBuffer(); } catch { /* drain */ }
+    try { await response?.body?.cancel(); } catch { /* drain */ }
     return false;
   }
   const ct = (response.headers.get('content-type') || '').toLowerCase();
   if (/text\/html|application\/xhtml|application\/xml|text\/xml/i.test(ct)) {
-    try { await response.arrayBuffer(); } catch { /* drain */ }
+    try { await response.body?.cancel(); } catch { /* drain */ }
     return false;
   }
-  // For MP3 requests, reject obviously wrong containers even if the mime lied.
-  if (kind === 'mp3' && /audio\/mp4|audio\/aac|video\//i.test(ct)) {
-    try { await response.arrayBuffer(); } catch { /* drain */ }
+  if (kind === 'mp3' && /audio\/(?:mp4|aac)|video\//i.test(ct)) {
+    try { await response.body?.cancel(); } catch { /* drain */ }
     return false;
   }
   if (kind === 'mp4' && /video\/webm|audio\//i.test(ct)) {
-    try { await response.arrayBuffer(); } catch { /* drain */ }
+    try { await response.body?.cancel(); } catch { /* drain */ }
     return false;
   }
-  // Read only the first ~2KB via arrayBuffer + slice. undici's ReadableStream
-  // reader can throw "offset is out of bounds" on short bodies in some test
-  // environments; reading a bounded buffer and slicing is equivalent for
-  // sniffing purposes. We cancel any remainder by not continuing to read.
-  let buf: Uint8Array;
   try {
-    const full = await response.arrayBuffer();
-    const len = Math.min(full.byteLength, FARM_PROBE_BYTES);
-    buf = new Uint8Array(full, 0, len);
+    return sniffProbe(kind, await readProbeBytes(response));
   } catch {
     return false;
   }
-  const ok = sniffProbe(kind, buf);
-  return ok;
 }
 
 /* ----------------------- Conversion-pending polling ---------------------- */
@@ -458,20 +488,34 @@ const FARM_POLL_INTERVAL_MS = 1_200;
 
 function isPending(payload: JsonRecord | null): { pending: boolean; sleep?: number; dlink?: string } {
   if (!payload) return { pending: false };
-  const status = text(payload.status)
-    || text(payload.message)
-    || text((record(payload.data) || {})?.status as string);
+  const data = record(payload.data);
+  const result = record(payload.result);
+  const statusValues = [
+    payload.status, payload.message, payload.text, payload.c_status, payload.e_status,
+    payload.state, data?.status, data?.state, result?.status, result?.state,
+  ].map(text).filter(Boolean);
   const dlink = mediaUrl(payload);
   if (dlink) return { pending: false, dlink };
-  const isProc = /processing|pending|converting|in.?progress|wait/i.test(status || text(payload.text));
-  // Some responses use `success: false` with c_status: processing / e_status.
-  const any = JSON.stringify(payload).toLowerCase();
-  if (!isProc && !/processing|pending|converting|wait/.test(any)) return { pending: false };
-  // Explicit sleep/eta field if present (seconds or ms).
+
+  const status = statusValues.join(' ');
+  const explicitPending = /processing|pending|converting|transcod|queued?|starting|in[ _-]?progress|please wait/i.test(status);
+  const progress = Number(payload.progress ?? data?.progress ?? result?.progress);
+  const code = Number(payload.code ?? data?.code ?? result?.code);
+  const booleanPending = payload.pending === true || data?.pending === true || result?.pending === true;
+  // 0..99 progress and HTTP-like 102/202 status codes are common while an MP3
+  // transcode job is queued, even when there is no textual status.
+  if (!explicitPending && !booleanPending && !(progress >= 0 && progress < 100) && code !== 102 && code !== 202) {
+    return { pending: false };
+  }
+
   let sleepMs = FARM_POLL_INTERVAL_MS;
-  const sleepSec = Number((payload as unknown as Record<string, unknown>).sleep)
-    || Number((record(payload.data) || {})?.sleep);
-  if (sleepSec > 0) sleepMs = Math.min(Math.max(sleepSec * (sleepSec < 60 ? 1000 : 1), 500), 4000);
+  const sleepValue = Number(
+    payload.sleep ?? payload.retryAfter ?? payload.retry_after ?? payload.eta
+    ?? data?.sleep ?? data?.retryAfter ?? data?.retry_after ?? data?.eta,
+  );
+  if (sleepValue > 0) {
+    sleepMs = Math.min(Math.max(sleepValue * (sleepValue < 60 ? 1000 : 1), 500), 4000);
+  }
   return { pending: true, sleep: sleepMs };
 }
 
@@ -481,17 +525,31 @@ function defaultDlsrvQuality(kind: NineConvertKind, quality?: string): string {
 }
 
 function currentDlsrvQualities(payload: JsonRecord | null, kind: NineConvertKind): string[] {
-  const info = record(payload?.info);
-  const formats = Array.isArray(info?.formats) ? info.formats : [];
+  const data = record(payload?.data);
+  const info = record(payload?.info) || record(data?.info);
+  const rawFormats = info?.formats ?? data?.formats ?? payload?.formats;
+  const formatRecord = record(rawFormats);
+  const formats: unknown[] = Array.isArray(rawFormats)
+    ? rawFormats
+    : formatRecord ? Object.values(formatRecord) : [];
   const values: string[] = [];
   for (const raw of formats) {
     const item = record(raw);
-    if (!item || text(item.type).toLowerCase() !== (kind === 'mp3' ? 'audio' : 'video')) continue;
-    const format = text(item.format).toLowerCase();
-    if (kind === 'mp4' && format && format !== 'mp4') continue;
-    const value = text(item.quality) || format;
+    if (!item) continue;
+    const type = (text(item.type) || text(item.kind) || text(item.mediaType)).toLowerCase();
+    const format = (text(item.format) || text(item.ext) || text(item.extension)).toLowerCase();
+    if (kind === 'mp3') {
+      if (type && !/audio|mp3/.test(type)) continue;
+      if (format && format !== 'mp3') continue;
+    } else {
+      if (type && !/video|mp4/.test(type)) continue;
+      if (format && format !== 'mp4') continue;
+    }
+    const value = text(item.quality) || text(item.bitrate) || text(item.label) || format;
     if (numericQuality(value)) values.push(value);
   }
+  // The live embed advertises these MP3 transcodes even when /info omits its
+  // audio list. Keeping them as fallback choices is intentional.
   if (kind === 'mp3') values.push('320', '256', '128', '96', '64');
   return [...new Set(values)];
 }
@@ -518,7 +576,6 @@ async function currentDlsrvFormats(
   const dlHeaders = farmHeaders(origin, jar, videoId, true);
   const deadline = Date.now() + FARM_POLL_TOTAL_MS;
   let lastUrl = '';
-  let lastPayload: JsonRecord | null = null;
   for (let attempt = 0; attempt < 60; attempt += 1) {
     const payload = await postJson(
       jar,
@@ -526,7 +583,6 @@ async function currentDlsrvFormats(
       JSON.stringify({ videoId, format: kind, quality: String(numericQuality(selected) || selected) }),
       dlHeaders,
     );
-    lastPayload = payload;
     const decision = isPending(payload);
     if (decision.dlink) { lastUrl = decision.dlink; break; }
     if (!decision.pending) { lastUrl = mediaUrl(payload); break; }

@@ -214,6 +214,84 @@ describe('nineConvertFormats', () => {
     expect(calls).toBeGreaterThanOrEqual(3);
   });
 
+  it('handles nested format/result shapes and numeric MP3 transcode progress', async () => {
+    let downloads = 0;
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit = {}) => {
+      const method = (init.method || 'GET').toUpperCase();
+      if (url === `${DLSRV_CURRENT_BASE}/info` && method === 'POST') {
+        return json({
+          data: {
+            formats: {
+              low: { kind: 'audio', extension: 'mp3', bitrate: '128kbps' },
+              high: { mediaType: 'audio', ext: 'mp3', label: '256 kbps' },
+            },
+          },
+        });
+      }
+      if (url === `${DLSRV_CURRENT_BASE}/download/mp3` && method === 'POST') {
+        downloads += 1;
+        if (downloads === 1) return json({ data: { progress: 40, retry_after: 0.001 } });
+        return json({ response: { output: { download_url: 'https://media.embed.dlsrv.online/transcoded.mp3' } } });
+      }
+      if (url === 'https://media.embed.dlsrv.online/transcoded.mp3') return fakeMp3Response();
+      return json({}, 404);
+    }));
+
+    const formats = await nineConvertFormats('dQw4w9WgXcQ', 'mp3', '256');
+    expect(downloads).toBe(2);
+    expect(formats[0]).toMatchObject({
+      url: 'https://media.embed.dlsrv.online/transcoded.mp3',
+      bitrate: 256_000,
+    });
+  });
+
+  it('follows allowlisted CDN redirects with a bounded Range probe and no cookie leak', async () => {
+    const calls: Array<{ url: string; headers: Headers }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit = {}) => {
+      const headers = new Headers(init.headers);
+      calls.push({ url, headers });
+      if (url === `${DLSRV_CURRENT_BASE}/info`) {
+        return json({ info: { formats: [{ type: 'video', format: 'mp4', quality: '720p' }] } }, 200, {
+          'Set-Cookie': 'farm_session=secret; Path=/; Secure',
+        });
+      }
+      if (url === `${DLSRV_CURRENT_BASE}/download/mp4`) {
+        return json({ data: { download: { url: 'https://media.embed.dlsrv.online/start' } } });
+      }
+      if (url === 'https://media.embed.dlsrv.online/start') {
+        return new Response(null, { status: 302, headers: { Location: 'https://cdn.dlsrv.online/next' } });
+      }
+      if (url === 'https://cdn.dlsrv.online/next') {
+        return new Response(null, { status: 307, headers: { Location: 'https://rr1---sn-test.googlevideo.com/file' } });
+      }
+      if (url === 'https://rr1---sn-test.googlevideo.com/file') return fakeMp4Response();
+      return json({}, 404);
+    }));
+
+    const formats = await nineConvertFormats('dQw4w9WgXcQ', 'mp4', '720');
+    expect(formats).toHaveLength(1);
+    const probeCalls = calls.filter(call => /\/start$|\/next$|googlevideo\.com\/file$/.test(call.url));
+    expect(probeCalls).toHaveLength(3);
+    for (const call of probeCalls) expect(call.headers.get('range')).toBe('bytes=0-2047');
+    expect(probeCalls[0].headers.get('cookie')).toBeNull();
+    expect(probeCalls[1].headers.get('cookie')).toBeNull();
+    expect(probeCalls[2].headers.get('cookie')).toBeNull();
+  });
+
+  it('rejects a redirect that leaves the strict farm media allowlist', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit = {}) => {
+      const method = (init.method || 'GET').toUpperCase();
+      if (url === `${DLSRV_CURRENT_BASE}/download/mp3` && method === 'POST') {
+        return json({ url: 'https://media.embed.dlsrv.online/start' });
+      }
+      if (url === 'https://media.embed.dlsrv.online/start') {
+        return new Response(null, { status: 302, headers: { Location: 'https://169.254.169.254/private' } });
+      }
+      return json({}, 404);
+    }));
+    await expect(nineConvertFormats('dQw4w9WgXcQ', 'mp3', '128')).resolves.toEqual([]);
+  });
+
   it('restricts farm dlinks to dlsrv, 9Convert, and googlevideo', async () => {
     expect(isAllowedNineConvertUrl('https://media.embed.dlsrv.online/file.mp4')).toBe(true);
     expect(isAllowedNineConvertUrl('https://files.9convert.org/file.mp3')).toBe(true);

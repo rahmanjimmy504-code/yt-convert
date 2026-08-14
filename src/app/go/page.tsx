@@ -34,13 +34,15 @@ function LoadingHandoff({ converterName }: { converterName?: string }) {
   );
 }
 
-function copyWithFallback(text: string, input: HTMLInputElement | null): boolean {
+async function copyWithFallback(text: string, input: HTMLInputElement | null): Promise<boolean> {
   try {
     if (navigator.clipboard?.writeText) {
-      void navigator.clipboard.writeText(text);
+      await navigator.clipboard.writeText(text);
+      return true;
     }
   } catch {
-    // fall through to execCommand
+    // Permission denied or unavailable: fall through to the selected-input
+    // fallback so COPY NEEDED remains useful in restricted browsers.
   }
   if (!input) return false;
   input.focus();

@@ -76,6 +76,29 @@ describe('handoff', () => {
     expect(hasAutomaticHandoff(nine)).toBe(true);
   });
 
+  it('keeps active YouTube cards on verified handoffs only', () => {
+    const youtubeCards = ALL_CONVERTERS.filter(c => c.platforms.includes('youtube'));
+    expect(youtubeCards.map(c => c.name)).toEqual(['9Convert', 'AudioConverter', 'Hicoo']);
+
+    const nine = getConverterByName('9Convert')!;
+    expect(hasAutomaticHandoff(nine)).toBe(true);
+    expect(buildConverterLaunchUrl(nine, media)).toBe(
+      'https://embed.dlsrv.online/v2/full?videoId=dQw4w9WgXcQ',
+    );
+
+    // Neither site documents a URL/form pre-fill contract. They must remain
+    // honest COPY NEEDED cards rather than receiving an invented query key.
+    for (const name of ['AudioConverter', 'Hicoo']) {
+      const converter = getConverterByName(name)!;
+      expect(converter.status).toBe('working');
+      expect(hasAutomaticHandoff(converter)).toBe(false);
+      expect(buildConverterLaunchUrl(converter, media)).toBe(converter.url);
+      expect(converterGoPath(name, media)).toBe(
+        `/go?c=${encodeURIComponent(name)}&u=${encodeURIComponent(media)}`,
+      );
+    }
+  });
+
   it('does not invent query or hash params for clipboard converters', () => {
     const save = getConverterByName('SaveInsta')!;
     const instagram = 'https://www.instagram.com/reel/abc/';
