@@ -436,11 +436,13 @@ The default live site is at **https://yt-convert-xi.vercel.app/**.
 > complete copy-paste walkthrough — renting the server, DNS, secrets, and
 > verifying it works — written for driving a VPS from an Android phone.
 >
-> **No budget?** [docs/setup-free.md](docs/setup-free.md) covers the two £0
-> routes: running the site on an Android phone via Termux + a Cloudflare quick
-> tunnel (a real consumer IP, so it usually clears the bot check, but the URL
-> changes on every restart), or Oracle Cloud's Always Free tier (permanent
-> address and 10 TB/month, but a datacenter IP that YouTube often blocks).
+> **No budget, or no credit card?** [docs/setup-free.md](docs/setup-free.md)
+> compares the £0 routes. The simplest is Render's free plan — no card, no
+> terminal, permanent `*.onrender.com` address; `render.yaml` in the repo root
+> makes it a one-click blueprint deploy. Like any datacenter host it will be
+> bot-blocked for direct extraction, but the 9Convert farm and converter
+> handoffs still work, so the site stays useful. Only the Termux route has a
+> consumer IP that clears the bot check outright.
 
 ```bash
 cp .env.example .env   # set AUTH_TOKEN, CONVERT_TICKET_SECRET, SITE_ADDRESS
