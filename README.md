@@ -191,6 +191,15 @@ The limiter uses Redis `INCR` and applies `EXPIRE` on the first hit in one atomi
 
 If either variable is missing, the bounded per-instance in-memory path remains active. Local development, CI, and self-hosted installs therefore need no Redis service. The shared backend is only for rate-limit counters: CAPTCHA challenges/proof-token state, aggregate analytics in `stats.ts`, and PO tokens remain in memory by design.
 
+Client IP selection is ingress-aware rather than blindly trusting the first
+`X-Forwarded-For` value. Render uses Cloudflare's single-value
+`CF-Connecting-IP`; Vercel uses the `X-Forwarded-For` value that Vercel
+explicitly overwrites; the included Caddy and Termux setups opt into the header
+they overwrite. A custom proxy must set `TRUSTED_PROXY_IP_HEADER` only after it
+has been configured to replace visitor-supplied values. With no known trust
+boundary, clients share the conservative `unknown` bucket instead of being
+allowed to spoof unlimited rate-limit identities.
+
 ### YouTube extraction chain & the PO-token sidecar
 
 YouTube / YT Music downloads try sources in order, stopping at the first that returns a direct, allowlisted stream:

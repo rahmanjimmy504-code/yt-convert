@@ -132,6 +132,9 @@ export default function Home() {
   const [videoQuality, setVideoQuality] = useState<string>('best');
   const [phase, setPhase] = useState<Phase>('input');
   const [error, setError] = useState('');
+  // Appears only after a real three-second wait. It explains free-host cold
+  // starts without inventing a percentage or pretending work has completed.
+  const [showWakeMessage, setShowWakeMessage] = useState(false);
   const [videoInfo, setVideoInfo] = useState<VideoInfo | null>(null);
   const [launched, setLaunched] = useState<{ name: string; copied: boolean } | null>(null);
   const [tipIdx, setTipIdx] = useState(0);
@@ -170,6 +173,7 @@ export default function Home() {
   const convertersRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const autoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const wakeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Guards against stale metadata lookups: abort cancels the in-flight fetch,
   // reqId ensures a slow older response can never overwrite a newer one.
@@ -201,6 +205,7 @@ export default function Home() {
     return () => {
       if (scrollTimer.current) clearTimeout(scrollTimer.current);
       if (copyTimer.current) clearTimeout(copyTimer.current);
+      if (wakeTimer.current) clearTimeout(wakeTimer.current);
       abortRef.current?.abort();
     };
   }, []);
@@ -342,12 +347,19 @@ export default function Home() {
       return;
     }
     setError(''); setPhase('loading'); setVideoInfo(null); setLaunched(null); setLinkCopied(false); setPreviewOpen(false); setConvertError('');
+    setShowWakeMessage(false);
+    if (wakeTimer.current) clearTimeout(wakeTimer.current);
     // Cancel the previous lookup (if any) so it can't clobber this one.
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
     const reqId = ++reqIdRef.current;
     const stale = () => reqId !== reqIdRef.current;
+    wakeTimer.current = setTimeout(() => {
+      // This is elapsed-time feedback, not simulated progress. A superseded
+      // request is never allowed to show a wake-up message for the new one.
+      if (!stale()) setShowWakeMessage(true);
+    }, 3000);
     try {
       const r = await fetch('/api/video-info?url=' + encodeURIComponent(u), {
         signal: controller.signal,
@@ -412,6 +424,12 @@ export default function Home() {
       setVideoInfo({ title: 'Could not load info', author: '', thumbnail: '', duration: '', views: '', published: '', platform: plat, canConvert: false, convertReason: '', convertTicket: '' });
       setPhase('ready');
       scrollToResult();
+    } finally {
+      if (!stale()) {
+        if (wakeTimer.current) clearTimeout(wakeTimer.current);
+        wakeTimer.current = null;
+        setShowWakeMessage(false);
+      }
     }
   }, [url, captchaToken, ytCookies, scrollToResult]);
 
@@ -568,6 +586,9 @@ export default function Home() {
     // Drop any in-flight lookup so its result can't reappear after the reset.
     abortRef.current?.abort();
     reqIdRef.current++;
+    if (wakeTimer.current) clearTimeout(wakeTimer.current);
+    wakeTimer.current = null;
+    setShowWakeMessage(false);
     setUrl(''); setPhase('input'); setError(''); setVideoInfo(null); setLaunched(null); setLinkCopied(false); setPreviewOpen(false); setShowHelp(false); setConvertError(''); setConverting(false); setShowAdvanced(false);
     setCaptchaToken('');
     setCaptchaResetKey(key => key + 1);
@@ -751,7 +772,13 @@ export default function Home() {
         {phase === 'loading' && (
           <div role="status" aria-live="polite" className="bg-white dark:bg-gray-900 rounded-2xl border-2 border-red-200 dark:border-red-900 p-8 text-center space-y-3">
             <div className="w-8 h-8 border-[3px] border-red-500 border-t-transparent rounded-full animate-spin mx-auto" />
-            <p className="text-sm text-gray-500">Fetching info...</p>
+            <p className="text-sm text-gray-600 dark:text-gray-300">Fetching info…</p>
+            {showWakeMessage && (
+              <div className="mx-auto max-w-md rounded-xl bg-amber-50 px-4 py-3 text-left text-xs leading-relaxed text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+                <p className="font-semibold">The server may be waking up.</p>
+                <p className="mt-1">Free hosting sleeps after a quiet period, so this lookup can take up to a minute. Keep this tab open — the request is still running.</p>
+              </div>
+            )}
           </div>
         )}
 

@@ -27,18 +27,21 @@ Every free *server* (Render, Oracle, Fly, anything) lives in a datacenter, and
 YouTube blocks datacenter IPs. **No free host avoids this.** Anyone claiming
 otherwise is guessing.
 
-But that does **not** make your site useless, because it has four fallbacks:
+The site still degrades instead of hiding every option, but none of the remote
+fallbacks is a guarantee:
 
-1. **Innertube** — direct. Blocked on a datacenter IP.
+1. **Innertube** — direct. Usually blocked on a datacenter IP.
 2. **Public mirrors** — Piped/Invidious. Sometimes work.
-3. **9Convert farm** — extracts on *its own* server, so **this works even when
-   your IP is blocked**.
-4. **Converter cards** — hand off to the visitor's own browser, on *their*
-   connection. Always works.
+3. **9Convert farm** — runs on separate egress, but it can impose its own
+   CAPTCHA or block server-to-server requests. Treat it as best effort, not as
+   an escape hatch that is known to work from every host.
+4. **Converter cards** — stay available and hand the link to the visitor's
+   browser. They are independent third-party sites, so a card can still be
+   offline, blocked in that visitor's region, or fail to convert a video.
 
-So on Render, downloads mostly flow through the farm and the converter cards.
-The site is genuinely usable. What you lose is the fastest path, not the
-product.
+On Render, metadata and browser handoffs remain useful, but a first-party MP3
+or MP4 download can still fail after every server-side source has been tried.
+That is the honest free-tier tradeoff.
 
 Only **Option B (your phone)** has a consumer IP that clears the bot check
 outright. That is its one real advantage, and it is why it exists.
@@ -49,24 +52,26 @@ outright. That is its one real advantage, and it is why it exists.
 
 Free, no credit card, permanent address, no terminal.
 
-## 1. Get the code onto your GitHub
-
-Open the repo and press **Fork** (top right). You need a free GitHub account.
-
-## 2. Sign up at Render
+## 1. Give Render access to this repository
 
 [render.com](https://render.com) → **Get Started** → *Sign in with GitHub*.
-No payment details are requested on the free plan.
+When GitHub asks which repositories Render may access, grant it access to
+`rahmanjimmy504-code/yt-convert`. The repository is already yours, so **do not
+fork it**.
 
-## 3. Create the service
+Forking is appropriate only when you are deploying somebody else's repository
+and need an independent copy that you can change. It adds no value when you
+already own the source repository.
 
-- Dashboard → **New +** → **Web Service**
-- Connect your forked repo
-- Render reads `render.yaml` from the repo and fills everything in:
+## 2. Deploy the Blueprint
+
+- Dashboard → **New +** → **Blueprint**
+- Connect `rahmanjimmy504-code/yt-convert` directly and select `main`
+- Render reads `render.yaml` from the repository and fills everything in:
   - **Runtime:** Docker
   - **Plan:** Free
   - Three secrets generated automatically
-- Press **Create Web Service**
+- Review the changes, then press **Deploy Blueprint**
 
 First build takes 5–15 minutes. When it finishes you get:
 
@@ -76,7 +81,7 @@ https://yt-convert-xxxx.onrender.com
 
 That's your site. Share it, bookmark it — it doesn't change.
 
-## 4. Optional: your own domain
+## 3. Optional: your own domain
 
 Settings → **Custom Domain**. Works on the free plan. You still need to buy a
 domain (~£10/yr), or use a free subdomain from

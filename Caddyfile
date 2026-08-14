@@ -4,7 +4,11 @@
 
 {$SITE_ADDRESS:localhost} {
 	encode gzip zstd
-	reverse_proxy web:3000
+	reverse_proxy web:3000 {
+		# Replace, do not append to, any visitor-supplied value. The app uses
+		# this header for rate limits and short-lived ticket IP binding.
+		header_up X-Forwarded-For {remote_host}
+	}
 }
 
 # Cobalt's public hostname. It exists only so cobalt can hand out HTTPS

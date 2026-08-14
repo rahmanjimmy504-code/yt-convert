@@ -231,18 +231,21 @@ if (!formats.length) {
   ]);
   formats = [...farmVideo, ...farmAudio];
   if (formats.length) via = '9convert';
-  check(formats.length > 0, 'nineConvertFormats() fallback returned formats', `${formats.length} formats`);
+  // Keep the two user-visible promises separate: one successful MP4 must not
+  // make a broken MP3 path look green (or vice versa).
+  check(farmVideo.length > 0, 'nineConvertFormats() MP4 fallback returned a probed file', `${farmVideo.length} formats`);
+  check(farmAudio.length > 0, 'nineConvertFormats() MP3 fallback returned a probed file', `${farmAudio.length} formats`);
 }
 
-/* -- Last resort: cobalt. Probed even when unconfigured, so the log states
-   plainly why it did nothing. -- */
+/* -- Last resort: cobalt. Public discovery is enabled by default even when
+   there is no private COBALT_API_URL, so never dereference a null config in
+   the diagnostic path. -- */
 if (!formats.length) {
   if (!isCobaltConfigured()) {
-    console.log('  → cobalt fallback skipped: COBALT_API_URL is not set.');
-    console.log('    NOTE: the official api.cobalt.tools is blocked from YouTube and gated behind bot');
-    console.log('    protection — the cobalt docs tell operators to self-host for a working fallback.');
+    console.log('  → cobalt fallback skipped: private config and public discovery are disabled.');
   } else {
-    console.log(`  → falling back to cobalt (${cobaltCfg.url})…`);
+    const cobaltLabel = cobaltCfg?.url || 'reviewed public discovery';
+    console.log(`  → falling back to cobalt (${cobaltLabel})…`);
     const cobalt = await cobaltFormats(target, 'video');
     const usable = cobalt.formats.filter(f => f.url && isAllowedMediaUrl(f.url));
     if (usable.length) {
@@ -250,7 +253,7 @@ if (!formats.length) {
       via = 'cobalt';
     }
     console.log(
-      `    ${cobaltCfg.url.padEnd(38)} → ${
+      `    ${cobaltLabel.padEnd(38)} → ${
         usable.length ? 'OK' : cobalt.error ? `refused (${cobalt.error})` : 'no usable URL'
       }`,
     );
