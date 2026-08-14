@@ -261,7 +261,15 @@ if (!formats.length || process.env.VERIFY_PUBLIC_FARM === '1' || process.env.GIT
   // Keep the two user-visible promises separate: one successful MP4 must not
   // make a broken MP3 path look green (or vice versa). A failed independent
   // audit is a warning; if no earlier source worked, it remains a hard failure.
-  const reportFarm = farmIsRequired ? check : audit;
+  const reportFarm = farmIsRequired
+    ? (ok, label, detail) => {
+        const result = check(ok, label, detail);
+        if (process.env.GITHUB_ACTIONS === 'true') {
+          console.log(`::${ok ? 'notice' : 'error'} title=${label}::${detail}`);
+        }
+        return result;
+      }
+    : audit;
   reportFarm(farmVideo.length > 0, '9Convert MP4 live audit', `${farmVideo.length} probed files for ${videoId}`);
   reportFarm(farmAudio.length > 0, '9Convert MP3 live audit', `${farmAudio.length} probed files for ${videoId}`);
 }

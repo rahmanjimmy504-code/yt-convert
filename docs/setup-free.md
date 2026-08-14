@@ -46,6 +46,25 @@ That is the honest free-tier tradeoff.
 Only **Option B (your phone)** has a consumer IP that clears the bot check
 outright. That is its one real advantage, and it is why it exists.
 
+### Live datacenter check (14 August 2026)
+
+An unmocked run on a GitHub-hosted Ubuntu runner tested
+`https://www.youtube.com/watch?v=jNQXAC9IVRw`. The complete server-side chain
+returned **no usable format**. In particular, the public 9Convert/dlsrv audit
+returned **zero probed MP4 files and zero probed MP3 files**. The farm must be
+treated as blocked or unavailable from this datacenter path, not as a working
+way around the bot wall.
+
+The converter cards were not counted as successful conversions: the app can
+prove that it generated a browser handoff, but only the visitor can complete
+that independent site's CAPTCHA, regional checks, and download flow. This is
+why the table and fallback list above promise availability of the handoff, not
+a successful third-party download.
+
+This check was on GitHub's datacenter, not Render's. An actual Render deploy
+still needs to be checked separately; do not copy this result into a claim that
+a particular Render egress IP behaves identically.
+
 ---
 
 # Option A — Render (recommended start)
