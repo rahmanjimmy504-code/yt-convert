@@ -222,15 +222,23 @@ if (!formats.length) {
 }
 
 /* -- Public 9Convert/dlsrv farm, after mirrors and before cobalt. Probe both
-   kinds because the normal request asks for only the format the user chose. -- */
-if (!formats.length) {
-  console.log('  → falling back to the public 9Convert/dlsrv farm…');
+   kinds because the normal request asks for only the format the user chose.
+   VERIFY_PUBLIC_FARM=1 audits it even when Innertube worked, which is how CI
+   tests the fallback from a datacenter IP instead of accidentally skipping it. -- */
+if (!formats.length || process.env.VERIFY_PUBLIC_FARM === '1') {
+  console.log(
+    formats.length
+      ? '  → independently auditing the public 9Convert/dlsrv farm…'
+      : '  → falling back to the public 9Convert/dlsrv farm…',
+  );
   const [farmVideo, farmAudio] = await Promise.all([
     nineConvertFormats(videoId, 'mp4', '360'),
     nineConvertFormats(videoId, 'mp3', '128'),
   ]);
-  formats = [...farmVideo, ...farmAudio];
-  if (formats.length) via = '9convert';
+  if (!formats.length) {
+    formats = [...farmVideo, ...farmAudio];
+    if (formats.length) via = '9convert';
+  }
   // Keep the two user-visible promises separate: one successful MP4 must not
   // make a broken MP3 path look green (or vice versa).
   check(farmVideo.length > 0, 'nineConvertFormats() MP4 fallback returned a probed file', `${farmVideo.length} formats`);
