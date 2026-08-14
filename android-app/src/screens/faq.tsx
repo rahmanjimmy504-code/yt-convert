@@ -16,6 +16,7 @@
 import { Link } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
 import { LogoTile } from '@/components/logo';
+import FaqAssistant from '@/components/faq-assistant';
 
 const FAQS: { q: string; a: string }[] = [
   {
@@ -110,6 +111,10 @@ export default function FaqScreen() {
             </details>
           ))}
         </div>
+
+        {/* On-device assistant: answers from the bundled knowledge base, so it
+            needs no server and no API key. */}
+        <FaqAssistant />
 
         <div className="mt-8 text-center">
           <Link
