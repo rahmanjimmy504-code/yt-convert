@@ -4,150 +4,81 @@ const LIVE = process.env.GITHUB_ACTIONS === 'true'
   && process.env.GITHUB_HEAD_REF === 'arena/019ffff3-yt-convert';
 const BASE = 'https://yt-convert-r8b2.onrender.com';
 const VIDEO = 'https://www.youtube.com/watch?v=jNQXAC9IVRw';
+const MARKER = 'ticket-redeploy-audit-20260814';
 
-function annotation(ok: boolean, title: string, message: string): void {
-  const safe = message.replace(/[\r\n]+/g, ' ').slice(0, 900);
-  console.log(`::${ok ? 'notice' : 'warning'} title=${title}::${safe}`);
+async function request(url: string, init: RequestInit = {}, timeout = 120_000): Promise<Response> {
+  return fetch(url, { ...init, cache: 'no-store', signal: AbortSignal.timeout(timeout) });
 }
 
-async function fetchWithTimeout(url: string, init: RequestInit = {}, ms = 120_000): Promise<Response> {
-  return fetch(url, { ...init, signal: AbortSignal.timeout(ms) });
-}
-
-async function responseSummary(response: Response): Promise<string> {
-  const type = response.headers.get('content-type') || '';
-  if (type.includes('json') || type.startsWith('text/')) {
-    return (await response.text()).replace(/\s+/g, ' ').slice(0, 400);
-  }
-  try { await response.body?.cancel(); } catch { /* ignore */ }
-  return `${type || 'unknown content type'} stream`;
-}
-
-async function jsonWithEdgeRetry<T>(url: string, init: RequestInit = {}): Promise<{
-  response: Response;
-  body: T;
-  notFoundRetries: number;
-}> {
-  let notFoundRetries = 0;
+async function jsonRetry<T>(url: string, init: RequestInit = {}): Promise<{ response: Response; body: T }> {
   for (let attempt = 0; attempt < 12; attempt += 1) {
-    const response = await fetchWithTimeout(url, init);
+    const response = await request(url, init);
     const text = await response.text();
     if (response.status === 404 && text.trim() === 'Not Found') {
-      notFoundRetries += 1;
       await new Promise(resolve => setTimeout(resolve, 2_000));
       continue;
     }
-    return { response, body: JSON.parse(text) as T, notFoundRetries };
+    return { response, body: JSON.parse(text) as T };
   }
-  throw new Error(`Render edge returned plain Not Found 12 times for ${new URL(url).pathname}`);
+  throw new Error(`plain Not Found persisted for ${new URL(url).pathname}`);
 }
 
 const liveDescribe = LIVE ? describe : describe.skip;
 
-liveDescribe('one-time Render free-instance verification', () => {
-  it('checks health, tickets, MP3/MP4, converter reachability, and spoofed XFF', async () => {
-    const started = Date.now();
-    let root: Response | null = null;
-    let rootBody = '';
-    for (let attempt = 0; attempt < 24; attempt += 1) {
-      root = await fetchWithTimeout(`${BASE}/?live-smoke=${Date.now()}`, {
-        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; YTConvertLiveAudit/1.0)' },
-        cache: 'no-store',
-      }, 90_000);
-      rootBody = await root.text();
-      if (root.status === 200 && rootBody.includes('YT Convert') && !rootBody.includes('Application loading')) break;
-      await new Promise(resolve => setTimeout(resolve, 5_000));
-    }
-    const healthSeconds = ((Date.now() - started) / 1000).toFixed(1);
-    annotation(root?.status === 200 && rootBody.includes('YT Convert'), 'Render root health',
-      `HTTP ${root?.status}; app HTML=${rootBody.includes('YT Convert')}; ready after ${healthSeconds}s`);
-    expect(root?.status).toBe(200);
-    expect(rootBody).toContain('YT Convert');
-
-    const challengeResult = await jsonWithEdgeRetry<{ challengeId: string; question: string }>(
+liveDescribe('one-time Render secret continuity verification', () => {
+  it('redeems a pre-deploy ticket after a marker proves a new image is live', async () => {
+    const challenge = await jsonRetry<{ challengeId: string; question: string }>(
       `${BASE}/api/captcha?mode=math`,
-      { cache: 'no-store' },
     );
-    const challenge = challengeResult.body;
-    const numbers = challenge.question.match(/\d+/g)?.map(Number) || [];
-    const answer = String(numbers.reduce((sum, value) => sum + value, 0));
-    const proofResult = await jsonWithEdgeRetry<{ token?: string; error?: string }>(`${BASE}/api/captcha`, {
+    const values = challenge.body.question.match(/\d+/g)?.map(Number) || [];
+    const answer = String(values.reduce((sum, value) => sum + value, 0));
+    const proof = await jsonRetry<{ token?: string }>(`${BASE}/api/captcha`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ challengeId: challenge.challengeId, answer }),
+      body: JSON.stringify({ challengeId: challenge.body.challengeId, answer }),
     });
-    const proofResponse = proofResult.response;
-    const proof = proofResult.body;
-    expect(proofResponse.status).toBe(200);
-    expect(proof.token).toBeTruthy();
+    expect(proof.body.token).toBeTruthy();
 
-    const infoResult = await jsonWithEdgeRetry<{ convertTicket?: string; title?: string; error?: string }>(
+    const info = await jsonRetry<{ convertTicket?: string; title?: string }>(
       `${BASE}/api/video-info?url=${encodeURIComponent(VIDEO)}`,
-      { headers: { 'X-Captcha-Token': proof.token || '' }, cache: 'no-store' },
+      { headers: { 'X-Captcha-Token': proof.body.token || '' } },
     );
-    const infoResponse = infoResult.response;
-    const info = infoResult.body;
-    annotation(infoResponse.status === 200 && Boolean(info.convertTicket), 'Render video-info ticket',
-      `HTTP ${infoResponse.status}; title=${info.title || '(empty)'}; ticket=${info.convertTicket ? 'issued' : 'missing'}${info.error ? `; ${info.error}` : ''}`);
-    expect(infoResponse.status).toBe(200);
-    expect(info.convertTicket).toBeTruthy();
+    expect(info.response.status).toBe(200);
+    expect(info.body.convertTicket).toBeTruthy();
+    const ticket = info.body.convertTicket || '';
+    const issuedAt = Date.now();
 
-    const convert = async (format: 'mp3' | 'mp4') => {
-      const quality = format === 'mp3' ? '128' : '360';
-      const response = await fetchWithTimeout(
-        `${BASE}/api/convert?url=${encodeURIComponent(VIDEO)}&format=${format}&quality=${quality}&ticket=${encodeURIComponent(info.convertTicket || '')}&title=Render-live-test`,
-        { headers: { Range: 'bytes=0-2047' }, cache: 'no-store' },
-        150_000,
-      );
-      const summary = await responseSummary(response);
-      const success = response.status === 200 || response.status === 206;
-      annotation(success, `Render ${format.toUpperCase()} live conversion`, `HTTP ${response.status}; ${summary}`);
-      return { status: response.status, summary };
-    };
-    const [mp3Result, mp4Result] = await Promise.all([convert('mp3'), convert('mp4')]);
-
-    const statusResult = await jsonWithEdgeRetry<{ results?: Array<{ status: string }> }>(
-      `${BASE}/api/converters/status`,
-      { cache: 'no-store' },
-    );
-    const statusResponse = statusResult.response;
-    const statuses = statusResult.body;
-    const working = statuses.results?.filter(item => item.status === 'working').length || 0;
-    const total = statuses.results?.length || 0;
-    annotation(statusResponse.status === 200 && working > 0, 'Render converter-card reachability',
-      `HTTP ${statusResponse.status}; ${working}/${total} landing pages reachable (not a completed-conversion claim)`);
-    expect(statusResponse.status).toBe(200);
-
-    const limitedStatuses: number[] = [];
-    for (let index = 1; index <= 12; index += 1) {
-      const response = await fetchWithTimeout(
-        `${BASE}/api/convert?url=${encodeURIComponent(VIDEO)}&format=mp4`,
-        { headers: { 'X-Forwarded-For': `198.51.100.${index}` }, cache: 'no-store' },
-      );
-      limitedStatuses.push(response.status);
-      await response.body?.cancel();
+    let markerWaitSeconds = 0;
+    let markerSeen = false;
+    // Another commit adds this marker after the ticket has been minted. Seeing
+    // it proves requests have moved to a newly built/restarted Render image.
+    for (let attempt = 0; attempt < 72; attempt += 1) {
+      const response = await request(`${BASE}/api/deploy-marker?at=${Date.now()}`);
+      const text = await response.text();
+      if (response.status === 200 && text.includes(MARKER)) {
+        markerSeen = true;
+        markerWaitSeconds = Math.round((Date.now() - issuedAt) / 1000);
+        break;
+      }
+      await new Promise(resolve => setTimeout(resolve, 5_000));
     }
-    const first429 = limitedStatuses.indexOf(429);
-    annotation(first429 >= 0, 'Render client-IP rate limit',
-      `varying spoofed XFF produced statuses ${limitedStatuses.join(',')}; first 429 at probe ${first429 + 1}`);
-    throw new Error(`LIVE_RENDER_REPORT ${JSON.stringify({
-      rootStatus: root?.status,
-      appHtml: rootBody.includes('YT Convert'),
-      readySeconds: Number(healthSeconds),
-      edgeNotFoundRetries: {
-        captchaGet: challengeResult.notFoundRetries,
-        captchaPost: proofResult.notFoundRetries,
-        videoInfo: infoResult.notFoundRetries,
-        converterStatus: statusResult.notFoundRetries,
-      },
-      infoStatus: infoResponse.status,
-      title: info.title || '',
-      ticketIssued: Boolean(info.convertTicket),
-      mp3: mp3Result,
-      mp4: mp4Result,
-      converterPages: { working, total },
-      rateStatuses: limitedStatuses,
-      first429Probe: first429 + 1,
+    expect(markerSeen).toBe(true);
+
+    const convert = await request(
+      `${BASE}/api/convert?url=${encodeURIComponent(VIDEO)}&format=mp4&quality=360&ticket=${encodeURIComponent(ticket)}&title=Redeploy-audit`,
+      { headers: { Range: 'bytes=0-2047' } },
+      150_000,
+    );
+    const body = (await convert.text()).replace(/\s+/g, ' ').slice(0, 500);
+    // A stable secret reaches extraction (normally 502 bot-check here). A
+    // regenerated secret fails immediately with 403 "ticket is invalid".
+    throw new Error(`LIVE_RENDER_REDEPLOY_REPORT ${JSON.stringify({
+      title: info.body.title || '',
+      markerSeen,
+      markerWaitSeconds,
+      redeemStatus: convert.status,
+      redeemBody: body,
+      stable: convert.status !== 403 || !/ticket is invalid/i.test(body),
     })}`);
-  }, 420_000);
+  }, 720_000);
 });
