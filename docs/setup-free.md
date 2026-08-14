@@ -61,9 +61,33 @@ that independent site's CAPTCHA, regional checks, and download flow. This is
 why the table and fallback list above promise availability of the handoff, not
 a successful third-party download.
 
-This check was on GitHub's datacenter, not Render's. An actual Render deploy
-still needs to be checked separately; do not copy this result into a claim that
-a particular Render egress IP behaves identically.
+A separate live audit then exercised the free service at
+`https://yt-convert-r8b2.onrender.com` from another hosted runner:
+
+- the Docker image built and started on the Free plan;
+- a normal `GET /` returned **200** with the app HTML (0.2 s while warm);
+- a real cold request displayed Render's **Application loading** page, then the
+  service answered after roughly 40 seconds;
+- `/api/video-info` returned **200**, identified *Me at the zoo*, and issued a
+  download ticket;
+- both MP3 and MP4 returned **502** with YouTube's *Sign in to confirm you're
+  not a bot* refusal after every server fallback, including the farm;
+- 14 of 16 converter landing pages were reachable. That is a reachability
+  signal, not proof that those sites completed a conversion; and
+- after two conversion attempts, eight more requests were admitted and the
+  next four returned **429**, even though every request supplied a different
+  spoofed `X-Forwarded-For`. Render visitors therefore do not all collapse onto
+  the proxy IP, and a caller cannot evade the limit with a fake XFF prefix.
+
+The initial Blueprint used `generateValue` secrets. A ticket minted before a
+marker deploy was rejected 142 seconds later as invalid; a second marker deploy
+reproduced it after 258 seconds. The guide now uses one-time `sync: false`
+values instead. Existing deployments created from the old Blueprint must
+manually replace those generated variables once; never post their values.
+After doing that, a third marker proved a new image was live after 185 seconds,
+and its pre-deploy ticket reached extraction (**502 bot check**, not **403
+invalid ticket**). The signing secret therefore stayed stable across the real
+redeploy.
 
 ---
 
@@ -181,8 +205,8 @@ only free option with enough RAM to also run cobalt.
 
 | Symptom | Fix |
 |---|---|
-| Render build fails | Check the build log. Almost always a missing env var — `render.yaml` should set them; re-sync the blueprint. |
-| First visit takes a minute | Free-plan sleep. Expected. |
-| "Download ticket is invalid" | `CONVERT_TICKET_SECRET` changed between deploys. Re-sync the Blueprint: it declares the key `sync: false`, so Render keeps the value you entered during initial setup. Do not regenerate it during redeploys. |
-| Direct downloads fail, converter cards work | The bot wall. Expected on any free host — see the top of this guide. |
+| Render build fails | Check the build log and Blueprint sync status; confirm all `sync: false` fields were filled during initial setup. |
+| First visit takes a minute | Free-plan sleep. Expected; Render shows its loading page while the container wakes. |
+| "Download ticket is invalid" | `CONVERT_TICKET_SECRET` changed between deploys. The current Blueprint declares it `sync: false`; enter it once and do not regenerate it. For a service created from the old `generateValue` Blueprint, manually replace the Environment value once to detach it from rotation. |
+| Direct downloads fail, converter cards remain listed | The bot wall. The cards are independent, best-effort browser handoffs — see the top of this guide. |
 | Phone URL keeps changing | Expected with quick tunnels. Use Render for a fixed address. |
