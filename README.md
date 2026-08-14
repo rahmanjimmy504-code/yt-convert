@@ -1,6 +1,6 @@
 # YT Convert
 
-A clean, fast multi-platform converter website built with Next.js. Paste a link from a supported platform, see the thumbnail and metadata instantly, then download here when we can — or pick a fallback converter. AUTO-SEND converters use a verified deep link or form. COPY NEEDED converters cannot be auto-filled.
+A clean, fast multi-platform converter website built with Next.js. Paste a link from a supported platform, see the thumbnail and metadata instantly, then download here when we can — or pick a fallback converter. For YouTube on Android, Download here can hand the video directly to Seal, YTDLnis, or NewPipe so the phone uses its own connection instead of the bot-blocked host. AUTO-SEND converters use a verified deep link or form. COPY NEEDED converters cannot be auto-filled.
 
 **We convert where we legally and technically can.** Download here extracts a public stream (YouTube / YT Music via Music-first Innertube → public Piped/Invidious/embed mirrors → the 9Convert/dlsrv farm, SoundCloud progressive, public X / TikTok / Instagram / Facebook URLs) and **streams** it to your browser (no `blob()` buffer; `Range` / `206` resume). Files are never stored. We do **not** unlock private, DRM, deleted, members-only, or region-blocked videos, and we do not claim every YouTube upload works. See [docs/limitations.md](docs/limitations.md). Third-party converter cards stay as fallback.
 
@@ -44,6 +44,7 @@ A clean, fast multi-platform converter website built with Next.js. Paste a link 
 - **Generated OG / Twitter share images** and a web app manifest
 - **Keyboard shortcuts**: `/` focuses the link box, `Esc` starts over, `?` opens the shortcut list
 - **Native media previews** (YouTube, SoundCloud, Spotify, TikTok) via the platforms' own embed players
+- **On-device Android fallback** inside Download here: package-targeted VIEW intents open YouTube links in Seal, YTDLnis, or NewPipe, with official install pages and clipboard fallback
 - **FAQ page** (`/faq`) with `FAQPage` JSON-LD, included in the sitemap
 
 ## Project Structure
@@ -88,6 +89,7 @@ yt-convert/
 │   │   └── cookie-consent.tsx       # Cookie-consent notice (accept / decline / dismiss)
 │   └── lib/
 │       ├── admin.ts                 # ADMIN_TOKEN auth for the status dashboard
+│       ├── android-download-apps.ts # Safe on-device handoffs to Seal, YTDLnis, and NewPipe
 │       ├── captcha-env.ts           # Per-environment CAPTCHA key resolution (prod/preview/dev)
 │       ├── captcha.ts               # Server-side CAPTCHA challenge/token verification
 │       ├── converters.ts            # Converter catalog + availability probing/caching

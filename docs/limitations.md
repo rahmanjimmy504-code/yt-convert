@@ -13,6 +13,14 @@ may return a completed MP3/MP4 conversion. SoundCloud progressive tracks.
 Public TikTok / X / Instagram / Facebook embeds when those sites still expose
 a file.
 
+For YouTube on Android, the Download here panel also offers **Seal, YTDLnis,
+and NewPipe**. Those are free, independently maintained Android apps rather
+than hosted APIs. The browser sends only the canonical YouTube watch URL in an
+Android VIEW intent; the app then downloads over the visitor's own connection.
+If an app is missing, Chrome falls back to its official installation page, and
+the URL is copied for browsers that do not support intents. Quality and format
+are chosen inside the app; NewPipe audio may be M4A/WebM rather than MP3.
+
 Sites such as [9convert.org](https://9convert.org/) follow the same pattern
 every browser converter uses: the user pastes a watch URL, the backend asks
 YouTube (or a mirror) for `streamingData`, picks an itag, and either redirects

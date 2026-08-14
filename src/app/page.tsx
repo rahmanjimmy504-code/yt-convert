@@ -41,6 +41,7 @@ import { ALL_CONVERTERS, converterGoPath, hasAutomaticHandoff, type Converter, t
 import { getEmbed } from '@/lib/embed';
 import { OPEN_COOKIE_PREFERENCES_EVENT } from '@/lib/cookies';
 import { deriveDownloadPanelState, qualityDowngradeNote } from '@/lib/download-panel';
+import { ANDROID_DOWNLOAD_APPS, buildAndroidDownloadIntent, type AndroidDownloadApp } from '@/lib/android-download-apps';
 import { AUDIO_KBPS_OPTIONS, VIDEO_QUALITY_OPTIONS, type VideoQualityPlan } from '@/lib/youtube-formats';
 import Captcha from '@/components/captcha';
 
@@ -505,6 +506,26 @@ export default function Home() {
 
     // Anonymous analytics: which converter was picked for which platform.
     sendEvent({ type: 'converter_click', converter: c.name, platform: videoInfo?.platform || detectPlatform(u) || '' });
+  };
+
+  const openAndroidDownloadApp = (app: AndroidDownloadApp) => {
+    const videoId = extractYouTubeId(url.trim());
+    if (!videoId) return;
+    // Canonicalize music.youtube.com / youtu.be links so every app receives a
+    // simple, verified YouTube VIEW URL. No yt-dlp command extras are passed.
+    const mediaUrl = `https://www.youtube.com/watch?v=${videoId}`;
+    const intent = buildAndroidDownloadIntent(app, mediaUrl);
+    if (!intent) return;
+
+    // Start both operations during the tap gesture. The copied URL remains a
+    // manual fallback for browsers that do not support Android intent:// URLs.
+    void copyText(mediaUrl);
+    sendEvent({ type: 'converter_click', converter: app.name, platform: videoInfo?.platform || 'youtube' });
+    if (/Android/i.test(navigator.userAgent)) {
+      window.location.assign(intent);
+    } else {
+      window.open(app.installUrl, '_blank', 'noopener');
+    }
   };
 
   const downloadHere = async () => {
@@ -997,9 +1018,43 @@ export default function Home() {
                       Look the link up again
                     </button>
                   )}
+
+                  {videoId &&
+                    (videoInfo.platform === 'youtube' || videoInfo.platform === 'youtubemusic') && (
+                    <div className="border-t border-red-200/80 dark:border-red-900 pt-3 space-y-2.5">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className="text-xs font-semibold">Download with a free Android app</p>
+                        <span className="text-[9px] font-bold tracking-wide px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">ON DEVICE</span>
+                      </div>
+                      <p className="text-[11px] leading-relaxed text-gray-500 dark:text-gray-400">
+                        These options use your phone&apos;s connection instead of this server, so they can work when Render or Vercel is bot-blocked. Tap an app to open it with this video; if it is not installed, Android opens its official download page. The link is copied as a fallback.
+                      </p>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                        {ANDROID_DOWNLOAD_APPS.map(app => (
+                          <button
+                            key={app.name}
+                            type="button"
+                            onClick={() => openAndroidDownloadApp(app)}
+                            className="min-h-14 rounded-lg border border-emerald-200 dark:border-emerald-900 bg-white dark:bg-gray-900 px-3 py-2 text-left hover:border-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 transition-colors"
+                            title={`Open ${app.name} on Android or visit its official install page`}
+                          >
+                            <span className="flex items-center justify-between gap-2 text-xs font-semibold text-gray-800 dark:text-gray-200">
+                              {app.name}
+                              <ExternalLink className="w-3.5 h-3.5 text-emerald-600 flex-shrink-0" />
+                            </span>
+                            <span className="block mt-0.5 text-[10px] leading-snug text-gray-500 dark:text-gray-400">{app.description}</span>
+                          </button>
+                        ))}
+                      </div>
+                      <p className="text-[10px] text-gray-400">
+                        Choose audio/video and quality inside the app. NewPipe audio downloads may use M4A or WebM rather than MP3.
+                      </p>
+                    </div>
+                  )}
+
                   {convertError && (
                     <div role="alert" className="space-y-1.5">
-                      <p className="text-xs text-red-600 dark:text-red-400">{convertError} Third-party converters remain as fallback.</p>
+                      <p className="text-xs text-red-600 dark:text-red-400">{convertError} Try an on-device Android app above or a converter below.</p>
                       {/* When the error is age-restriction related and cookies are
                           available but not yet provided, nudge the user to try cookies. */}
                       {process.env.NEXT_PUBLIC_YT_COOKIES_ENABLED === '1' &&

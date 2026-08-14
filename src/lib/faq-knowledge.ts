@@ -23,7 +23,7 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
   {
     id: "what-is",
     q: "What does YT Convert actually do?",
-    a: "YT Convert detects the platform of a link you paste (YouTube, Spotify, TikTok and 9 more) and shows title, thumbnail and other metadata. Where we legally and technically can, Download here extracts a public stream and proxies it to your browser — we never store the file. DRM catalogs (Spotify, Deezer, Apple Music, Amazon Music) are not ripped. Third-party converter cards stay as fallback. AUTO-SEND converters use a verified deep link or form. COPY NEEDED converters cannot be auto-filled.",
+    a: "YT Convert detects the platform of a link you paste (YouTube, Spotify, TikTok and 9 more) and shows title, thumbnail and other metadata. Where we legally and technically can, Download here extracts a public stream and proxies it to your browser — we never store the file. For YouTube on Android, the same panel can open the link on-device in Seal, YTDLnis, or NewPipe when this server is bot-blocked. DRM catalogs (Spotify, Deezer, Apple Music, Amazon Music) are not ripped. Third-party converter cards stay as fallback.",
     keywords: [
       "what does",
       "what is",
@@ -37,7 +37,7 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
   {
     id: "does-not-convert",
     q: "Does YT Convert download or convert files itself?",
-    a: "Where we legally and technically can (YouTube, YT Music, SoundCloud, and public posts on X, TikTok, Instagram, or Facebook), we extract a public stream and proxy it through Download here. We do not store files on the server. Spotify, Deezer, Apple Music and Amazon Music are DRM-protected — preview only / use a licensed downloader; we do not strip Widevine or FairPlay. Snapchat and BeReal have no public media URL we can proxy. If first-party extraction fails, the third-party converter list is the fallback.",
+    a: "Where we legally and technically can (YouTube, YT Music, SoundCloud, and public posts on X, TikTok, Instagram, or Facebook), we extract a public stream and proxy it through Download here. We do not store files on the server. For YouTube, Download here also offers Seal, YTDLnis, and NewPipe on Android; those apps fetch on the visitor's device and are not hosted APIs. Spotify, Deezer, Apple Music and Amazon Music are DRM-protected — preview only / use a licensed downloader; we do not strip Widevine or FairPlay. Snapchat and BeReal have no public media URL we can proxy.",
     keywords: [
       "does yt convert download",
       "does it convert itself",
@@ -377,7 +377,7 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
   {
     id: "youtube-bot-check",
     q: "Why does YouTube say 'Sign in to confirm you're not a bot'?",
-    a: "That LOGIN_REQUIRED text is a BotGuard challenge on this website server's public IP, not proof that a typical public video is private or age-restricted. Download here automatically tries public Piped/Invidious relays and the 9Convert/dlsrv farm next. If those paths also return no stream, use the 9Convert card below the result. Visitors do not need to run a PO-token service or Termux. This does not unlock private, DRM, members-only, deleted, or region-blocked videos, and YT Convert does not claim every YouTube video works.",
+    a: "That LOGIN_REQUIRED text is a BotGuard challenge on this website server's public IP, not proof that a typical public video is private or age-restricted. Download here automatically tries public Piped/Invidious relays and the 9Convert/dlsrv farm next. If those paths also return no stream, Android visitors can open the link in Seal, YTDLnis, or NewPipe from the same panel so their phone makes the request; converter cards remain another best-effort option. This does not unlock private, DRM, members-only, deleted, or region-blocked videos.",
     keywords: [
       "sign in to confirm you're not a bot",
       "confirm you are not a bot",

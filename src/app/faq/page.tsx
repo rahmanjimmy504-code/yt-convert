@@ -19,15 +19,15 @@ export const metadata: Metadata = {
 const FAQS: { q: string; a: string }[] = [
   {
     q: 'What does YT Convert actually do?',
-    a: 'YT Convert detects the platform of a link you paste (YouTube, Spotify, TikTok and 9 more) and shows title, thumbnail and other metadata. Where we legally and technically can, Download here extracts a public stream and proxies it — we never store the file. DRM catalogs are not ripped. Third-party cards stay as fallback. AUTO-SEND uses a verified deep link or form; COPY NEEDED cannot be auto-filled.',
+    a: 'YT Convert detects the platform of a link you paste (YouTube, Spotify, TikTok and 9 more) and shows title, thumbnail and other metadata. Where we legally and technically can, Download here extracts a public stream and proxies it — we never store the file. For YouTube on Android, that panel can instead open the link in Seal, YTDLnis, or NewPipe so the phone performs the request. DRM catalogs are not ripped, and third-party cards stay as fallback.',
   },
   {
     q: 'Does YT Convert download or convert files itself?',
-    a: 'Where we legally and technically can (YouTube, YT Music, SoundCloud, and public posts on X, TikTok, Instagram, or Facebook), we extract a public stream and proxy it through Download here. We do not store files. Spotify, Deezer, Apple Music and Amazon Music are DRM-protected (preview only / use a licensed downloader). Snapchat and BeReal have no public media URL we can proxy. If first-party extraction fails, use a third-party converter.',
+    a: 'Where we legally and technically can (YouTube, YT Music, SoundCloud, and public posts on X, TikTok, Instagram, or Facebook), we extract a public stream and proxy it through Download here. We do not store files. For YouTube, Download here also offers the free Android apps Seal, YTDLnis, and NewPipe; they fetch on the visitor\'s phone rather than our server. Spotify, Deezer, Apple Music and Amazon Music are DRM-protected (preview only / use a licensed downloader).',
   },
   {
     q: 'Why does YouTube say “Sign in to confirm you’re not a bot”?',
-    a: 'That LOGIN_REQUIRED message is a BotGuard challenge on this website server’s public IP, not proof that a typical public video is private or age-restricted. Download here automatically tries public Piped/Invidious relays and the 9Convert/dlsrv farm next. If they also return no stream, use the 9Convert card below the result. This does not unlock private, DRM, members-only, deleted, or region-blocked videos.',
+    a: 'That LOGIN_REQUIRED message is a BotGuard challenge on this website server’s public IP, not proof that a typical public video is private or age-restricted. Download here automatically tries public Piped/Invidious relays and the 9Convert/dlsrv farm next. If those fail, Android visitors can open the link on-device in Seal, YTDLnis, or NewPipe from the same panel; converter cards remain another best-effort option. This does not unlock private, DRM, members-only, deleted, or region-blocked videos.',
   },
   {
     q: 'Which platforms are supported?',
