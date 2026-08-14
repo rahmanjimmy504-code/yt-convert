@@ -61,6 +61,53 @@ services:
       retries: 3
       start_period: 40s
 
+  # Self-hosted cobalt: the last-resort fallback when YouTube bot-blocks this
+  # server's IP. Optional — the stack runs fine without it (the app just falls
+  # through to the reviewed public instances, then to an honest error).
+  #
+  # WHY IT HAS A PUBLIC HOSTNAME INSTEAD OF LIVING ONLY ON THE PRIVATE NETWORK:
+  # cobalt builds its tunnel URLs from API_URL, and /api/convert refuses any
+  # media URL that is not HTTPS (see isAllowedMediaUrl). With an internal
+  # http://cobalt:9000 the tunnels would come back as http and be rejected, so
+  # the fallback would silently never work. Caddy therefore terminates TLS for
+  # a cobalt subdomain, and API_AUTH_REQUIRED below stops strangers using it.
+  cobalt:
+    image: ghcr.io/imputnet/cobalt:11
+    init: true
+    read_only: true
+    restart: unless-stopped
+    environment:
+      # MUST be the public URL, with the trailing slash, or tunnels break.
+      API_URL: "https://${COBALT_SITE_ADDRESS:-cobalt.localhost}/"
+      # Require a key so only this app can use the instance.
+      API_KEY_URL: "file:///keys.json"
+      API_AUTH_REQUIRED: "1"
+      # Ask the session sidecar for YouTube poToken/visitor_data. This is what
+      # gives the instance a chance against the bot wall; without it a plain
+      # datacenter IP usually gets error.api.youtube.login.
+      YOUTUBE_SESSION_SERVER: "http://yt-session:8080/"
+      # Tunnels are single-use and short-lived; 300s leaves room for a slow
+      # phone connection to finish the download.
+      TUNNEL_LIFESPAN: "300"
+    volumes:
+      - ./keys.json:/keys.json:ro
+    networks:
+      - internal
+    expose:
+      - "9000"
+
+  # Generates YouTube poToken + visitor_data for cobalt. Not published: it
+  # shares the private network (and therefore the egress IP) with cobalt,
+  # which is the whole point — a token minted from a different IP is useless.
+  yt-session:
+    image: ghcr.io/imputnet/yt-session-generator:webserver
+    init: true
+    restart: unless-stopped
+    networks:
+      - internal
+    expose:
+      - "8080"
+
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
@@ -69,6 +116,7 @@ services:
       - "443:443"
     environment:
       SITE_ADDRESS: ${SITE_ADDRESS:-localhost}
+      COBALT_SITE_ADDRESS: ${COBALT_SITE_ADDRESS:-cobalt.localhost}
       CADDY_EMAIL: ${CADDY_EMAIL:-admin@example.com}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro

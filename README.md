@@ -432,6 +432,10 @@ The default live site is at **https://yt-convert-xi.vercel.app/**.
 
 ### One-VPS Docker (recommended for YouTube)
 
+> **New to this?** [docs/setup-cobalt-vps.md](docs/setup-cobalt-vps.md) is a
+> complete copy-paste walkthrough — renting the server, DNS, secrets, and
+> verifying it works — written for driving a VPS from an Android phone.
+
 ```bash
 cp .env.example .env   # set AUTH_TOKEN, CONVERT_TICKET_SECRET, SITE_ADDRESS
 docker compose up -d --build
@@ -440,6 +444,16 @@ docker compose up -d --build
 Caddy terminates TLS and proxies to the Next.js app. The PO-token sidecar is
 reachable only on the internal network as `http://po-token:4416`. Do not
 publish port 4416.
+
+The stack also includes an optional self-hosted **cobalt** instance plus the
+`yt-session-generator` sidecar that mints its YouTube tokens. Cobalt gets its
+own public hostname (`COBALT_SITE_ADDRESS`) because it builds tunnel URLs from
+`API_URL`, and `/api/convert` only accepts **HTTPS** media URLs — an
+internal-only `http://cobalt:9000` would emit tunnels that the SSRF guard then
+refuses. The instance is locked down with `API_AUTH_REQUIRED` + a `keys.json`
+UUID (copy `keys.example.json`; the real file is git-ignored), so exposing the
+hostname does not let strangers use it. Omit the `cobalt`/`yt-session` services
+entirely and the app falls through to the reviewed public instances as before.
 
 To use a **free Android phone** as the YouTube egress IP (same-egress PO
 tokens without a paid proxy), set `YT_EGRESS_PROXY` and follow

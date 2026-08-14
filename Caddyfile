@@ -6,3 +6,14 @@
 	encode gzip zstd
 	reverse_proxy web:3000
 }
+
+# Cobalt's public hostname. It exists only so cobalt can hand out HTTPS
+# tunnel URLs (the convert proxy rejects plain-http media URLs). The instance
+# itself is key-protected via API_AUTH_REQUIRED, so exposing this hostname
+# does not let strangers use it.
+#
+# Media streams through here, so no compression: it would waste CPU on
+# already-compressed mp4/mp3 bytes.
+{$COBALT_SITE_ADDRESS:cobalt.localhost} {
+	reverse_proxy cobalt:9000
+}
