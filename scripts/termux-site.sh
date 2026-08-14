@@ -15,7 +15,9 @@ set -eu
 PREFIX="${PREFIX:-/data/data/com.termux/files/usr}"
 HOME="${HOME:-/data/data/com.termux/files/home}"
 ROOT="$HOME/yt-convert"
-BRANCH="${YT_CONVERT_BRANCH:-arena/019ffc0a-yt-convert}"
+# Track main by default. Pinning to a session branch left users on stale
+# code; override with YT_CONVERT_BRANCH=... only for testing.
+BRANCH="${YT_CONVERT_BRANCH:-main}"
 REPO="${YT_CONVERT_REPO:-https://github.com/rahmanjimmy504-code/yt-convert.git}"
 APP_PORT="${PORT:-3000}"
 SIDECAR_PORT="${SIDECAR_PORT:-4416}"

@@ -435,6 +435,12 @@ The default live site is at **https://yt-convert-xi.vercel.app/**.
 > **New to this?** [docs/setup-cobalt-vps.md](docs/setup-cobalt-vps.md) is a
 > complete copy-paste walkthrough — renting the server, DNS, secrets, and
 > verifying it works — written for driving a VPS from an Android phone.
+>
+> **No budget?** [docs/setup-free.md](docs/setup-free.md) covers the two £0
+> routes: running the site on an Android phone via Termux + a Cloudflare quick
+> tunnel (a real consumer IP, so it usually clears the bot check, but the URL
+> changes on every restart), or Oracle Cloud's Always Free tier (permanent
+> address and 10 TB/month, but a datacenter IP that YouTube often blocks).
 
 ```bash
 cp .env.example .env   # set AUTH_TOKEN, CONVERT_TICKET_SECRET, SITE_ADDRESS

@@ -12,7 +12,7 @@ item 3 (same-egress) done for free.
 
 ```bash
 pkg update && pkg install -y curl
-curl -fsSL https://raw.githubusercontent.com/rahmanjimmy504-code/yt-convert/arena/019ffc0a-yt-convert/scripts/termux-site.sh -o ~/termux-site.sh
+curl -fsSL https://raw.githubusercontent.com/rahmanjimmy504-code/yt-convert/main/scripts/termux-site.sh -o ~/termux-site.sh
 chmod +x ~/termux-site.sh
 bash ~/termux-site.sh
 ```
