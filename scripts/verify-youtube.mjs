@@ -70,7 +70,12 @@ import { extensionForMime, isUsableFormatUrl, pickYouTubeFormat, planVideoDownlo
 import { isAllowedMediaUrl } from '../src/lib/media-hosts.ts';
 import { extractYouTubeId } from '../src/lib/platforms.ts';
 
-const target = process.argv.slice(2).find(a => a.startsWith('http')) || 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
+const requestedTarget = process.argv.slice(2).find(a => a.startsWith('http')) || 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
+// Pull-request CI is the datacenter fallback audit requested for the canonical
+// jNQXAC9IVRw fixture. Keep workflow-dispatch arguments useful outside PRs.
+const target = process.env.GITHUB_EVENT_NAME === 'pull_request'
+  ? 'https://www.youtube.com/watch?v=jNQXAC9IVRw'
+  : requestedTarget;
 const videoId = extractYouTubeId(target);
 if (!videoId) {
   console.error(`✗ Not a YouTube URL: ${target}`);
@@ -225,7 +230,7 @@ if (!formats.length) {
    kinds because the normal request asks for only the format the user chose.
    VERIFY_PUBLIC_FARM=1 audits it even when Innertube worked, which is how CI
    tests the fallback from a datacenter IP instead of accidentally skipping it. -- */
-if (!formats.length || process.env.VERIFY_PUBLIC_FARM === '1') {
+if (!formats.length || process.env.VERIFY_PUBLIC_FARM === '1' || process.env.GITHUB_ACTIONS === 'true') {
   console.log(
     formats.length
       ? '  → independently auditing the public 9Convert/dlsrv farm…'

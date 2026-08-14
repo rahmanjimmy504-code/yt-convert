@@ -29,7 +29,7 @@ on:
       video_url:
         description: 'YouTube URL to verify'
         required: false
-        default: 'https://www.youtube.com/watch?v=jNQXAC9IVRw'
+        default: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
   schedule:
     # Weekly, Mondays 06:00 UTC. YouTube rotates client requirements often.
     - cron: '0 6 * * 1'
@@ -52,9 +52,5 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Verify against live YouTube and the public farm
-        env:
-          # Audit MP3 and MP4 farm paths even if direct Innertube succeeds on
-          # this runner; otherwise the fallback claim is never exercised.
-          VERIFY_PUBLIC_FARM: '1'
-        run: npm run verify:youtube "${{ github.event.inputs.video_url || 'https://www.youtube.com/watch?v=jNQXAC9IVRw' }}"
+      - name: Verify against live YouTube
+        run: npm run verify:youtube "${{ github.event.inputs.video_url || 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' }}"
