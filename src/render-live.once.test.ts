@@ -4,7 +4,7 @@ const LIVE = process.env.GITHUB_ACTIONS === 'true'
   && process.env.GITHUB_HEAD_REF === 'arena/019ffff3-yt-convert';
 const BASE = 'https://yt-convert-r8b2.onrender.com';
 const VIDEO = 'https://www.youtube.com/watch?v=jNQXAC9IVRw';
-const MARKER = 'ticket-redeploy-stable2-20260814';
+const MARKER = 'ticket-redeploy-stable3-20260814';
 
 async function request(url: string, init: RequestInit = {}, timeout = 120_000): Promise<Response> {
   return fetch(url, { ...init, cache: 'no-store', signal: AbortSignal.timeout(timeout) });
