@@ -23,6 +23,25 @@ async function responseSummary(response: Response): Promise<string> {
   return `${type || 'unknown content type'} stream`;
 }
 
+async function jsonWithEdgeRetry<T>(url: string, init: RequestInit = {}): Promise<{
+  response: Response;
+  body: T;
+  notFoundRetries: number;
+}> {
+  let notFoundRetries = 0;
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    const response = await fetchWithTimeout(url, init);
+    const text = await response.text();
+    if (response.status === 404 && text.trim() === 'Not Found') {
+      notFoundRetries += 1;
+      await new Promise(resolve => setTimeout(resolve, 2_000));
+      continue;
+    }
+    return { response, body: JSON.parse(text) as T, notFoundRetries };
+  }
+  throw new Error(`Render edge returned plain Not Found 12 times for ${new URL(url).pathname}`);
+}
+
 const liveDescribe = LIVE ? describe : describe.skip;
 
 liveDescribe('one-time Render free-instance verification', () => {
@@ -45,25 +64,29 @@ liveDescribe('one-time Render free-instance verification', () => {
     expect(root?.status).toBe(200);
     expect(rootBody).toContain('YT Convert');
 
-    const challengeResponse = await fetchWithTimeout(`${BASE}/api/captcha?mode=math`, { cache: 'no-store' });
-    const challenge = await challengeResponse.json() as { challengeId: string; question: string };
+    const challengeResult = await jsonWithEdgeRetry<{ challengeId: string; question: string }>(
+      `${BASE}/api/captcha?mode=math`,
+      { cache: 'no-store' },
+    );
+    const challenge = challengeResult.body;
     const numbers = challenge.question.match(/\d+/g)?.map(Number) || [];
     const answer = String(numbers.reduce((sum, value) => sum + value, 0));
-    const proofResponse = await fetchWithTimeout(`${BASE}/api/captcha`, {
+    const proofResult = await jsonWithEdgeRetry<{ token?: string; error?: string }>(`${BASE}/api/captcha`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ challengeId: challenge.challengeId, answer }),
     });
-    const proof = await proofResponse.json() as { token?: string; error?: string };
+    const proofResponse = proofResult.response;
+    const proof = proofResult.body;
     expect(proofResponse.status).toBe(200);
     expect(proof.token).toBeTruthy();
 
-    const infoResponse = await fetchWithTimeout(
+    const infoResult = await jsonWithEdgeRetry<{ convertTicket?: string; title?: string; error?: string }>(
       `${BASE}/api/video-info?url=${encodeURIComponent(VIDEO)}`,
       { headers: { 'X-Captcha-Token': proof.token || '' }, cache: 'no-store' },
-      120_000,
     );
-    const info = await infoResponse.json() as { convertTicket?: string; title?: string; error?: string };
+    const infoResponse = infoResult.response;
+    const info = infoResult.body;
     annotation(infoResponse.status === 200 && Boolean(info.convertTicket), 'Render video-info ticket',
       `HTTP ${infoResponse.status}; title=${info.title || '(empty)'}; ticket=${info.convertTicket ? 'issued' : 'missing'}${info.error ? `; ${info.error}` : ''}`);
     expect(infoResponse.status).toBe(200);
@@ -83,8 +106,12 @@ liveDescribe('one-time Render free-instance verification', () => {
     };
     const [mp3Result, mp4Result] = await Promise.all([convert('mp3'), convert('mp4')]);
 
-    const statusResponse = await fetchWithTimeout(`${BASE}/api/converters/status`, { cache: 'no-store' });
-    const statuses = await statusResponse.json() as { results?: Array<{ status: string }> };
+    const statusResult = await jsonWithEdgeRetry<{ results?: Array<{ status: string }> }>(
+      `${BASE}/api/converters/status`,
+      { cache: 'no-store' },
+    );
+    const statusResponse = statusResult.response;
+    const statuses = statusResult.body;
     const working = statuses.results?.filter(item => item.status === 'working').length || 0;
     const total = statuses.results?.length || 0;
     annotation(statusResponse.status === 200 && working > 0, 'Render converter-card reachability',
@@ -107,6 +134,12 @@ liveDescribe('one-time Render free-instance verification', () => {
       rootStatus: root?.status,
       appHtml: rootBody.includes('YT Convert'),
       readySeconds: Number(healthSeconds),
+      edgeNotFoundRetries: {
+        captchaGet: challengeResult.notFoundRetries,
+        captchaPost: proofResult.notFoundRetries,
+        videoInfo: infoResult.notFoundRetries,
+        converterStatus: statusResult.notFoundRetries,
+      },
       infoStatus: infoResponse.status,
       title: info.title || '',
       ticketIssued: Boolean(info.convertTicket),
