@@ -89,6 +89,19 @@ const check = (ok, label, detail = '') => {
   return ok;
 };
 
+/** Report an independently audited fallback without making a healthy primary
+ * path fail CI. GitHub annotations preserve the result even when log-artifact
+ * downloads are unavailable. If the app actually needs this fallback, callers
+ * use check() instead so an empty result still fails end-to-end verification. */
+const audit = (ok, label, detail = '') => {
+  console.log(`${ok ? '✓' : '⚠'} ${label}${detail ? ` — ${detail}` : ''}`);
+  if (process.env.GITHUB_ACTIONS === 'true') {
+    const level = ok ? 'notice' : 'warning';
+    console.log(`::${level} title=${label}::${detail || (ok ? 'passed' : 'failed')}`);
+  }
+  return ok;
+};
+
 const RETRY_WAIT_MS = 2500;
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -231,10 +244,11 @@ if (!formats.length) {
    VERIFY_PUBLIC_FARM=1 audits it even when Innertube worked, which is how CI
    tests the fallback from a datacenter IP instead of accidentally skipping it. -- */
 if (!formats.length || process.env.VERIFY_PUBLIC_FARM === '1' || process.env.GITHUB_ACTIONS === 'true') {
+  const farmIsRequired = !formats.length;
   console.log(
-    formats.length
-      ? '  → independently auditing the public 9Convert/dlsrv farm…'
-      : '  → falling back to the public 9Convert/dlsrv farm…',
+    farmIsRequired
+      ? '  → falling back to the public 9Convert/dlsrv farm…'
+      : '  → independently auditing the public 9Convert/dlsrv farm…',
   );
   const [farmVideo, farmAudio] = await Promise.all([
     nineConvertFormats(videoId, 'mp4', '360'),
@@ -245,9 +259,11 @@ if (!formats.length || process.env.VERIFY_PUBLIC_FARM === '1' || process.env.GIT
     if (formats.length) via = '9convert';
   }
   // Keep the two user-visible promises separate: one successful MP4 must not
-  // make a broken MP3 path look green (or vice versa).
-  check(farmVideo.length > 0, 'nineConvertFormats() MP4 fallback returned a probed file', `${farmVideo.length} formats`);
-  check(farmAudio.length > 0, 'nineConvertFormats() MP3 fallback returned a probed file', `${farmAudio.length} formats`);
+  // make a broken MP3 path look green (or vice versa). A failed independent
+  // audit is a warning; if no earlier source worked, it remains a hard failure.
+  const reportFarm = farmIsRequired ? check : audit;
+  reportFarm(farmVideo.length > 0, '9Convert MP4 live audit', `${farmVideo.length} probed files for ${videoId}`);
+  reportFarm(farmAudio.length > 0, '9Convert MP3 live audit', `${farmAudio.length} probed files for ${videoId}`);
 }
 
 /* -- Last resort: cobalt. Public discovery is enabled by default even when
@@ -282,6 +298,10 @@ if (!formats.length) {
   console.log('  being BotGuard-challenged. An operator-owned PO-token path helps only when token minting,');
   console.log('  Innertube, and googlevideo share this same public egress IP (one VPS/site or YT_EGRESS_PROXY).');
   process.exit(1);
+}
+
+if (process.env.GITHUB_ACTIONS === 'true') {
+  console.log(`::notice title=Primary YouTube extraction source::${via} returned ${formats.length} formats for ${videoId}`);
 }
 
 // Innertube/Invidious can serve googlevideo.com; mirror/farm fallbacks serve
