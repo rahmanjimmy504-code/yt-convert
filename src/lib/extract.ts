@@ -375,8 +375,11 @@ export function playabilityMessage(
   if (!status || status === 'OK') return '';
   // Report a bot check as exactly that — never as "age-restricted or private".
   if (isBotChallenge(status, reason)) {
+    // Exactly ONE actionable instruction. This message is composed with
+    // `withFallbackHint`, which will not append a second "try a converter"
+    // sentence once it sees the 9Convert pointer here.
     return poTokenConfigured
-      ? "YouTube served a bot check (\u201cSign in to confirm you\u2019re not a bot\u201d) for this server's IP, and the configured PO token did not clear it. Use the 9Convert option below."
+      ? 'YouTube served a bot check (\u201cSign in to confirm you\u2019re not a bot\u201d) for this server\u2019s IP, and the configured PO token did not clear it. Use the 9Convert option below.'
       : 'YouTube served a bot check (\u201cSign in to confirm you\u2019re not a bot\u201d) for this server\u2019s IP. Use the 9Convert option below.';
   }
   const base = PLAYABILITY_MESSAGES[status];
@@ -384,6 +387,24 @@ export function playabilityMessage(
   return reason
     ? `YouTube refused playback: ${reason}`
     : `YouTube refused playback (${status}).`;
+}
+
+/**
+ * Append the single "try a converter" pointer to a message — but only when
+ * the message does not already tell the visitor where to go.
+ *
+ * Before this, a bot-check failure read:
+ *   "…for this server's IP. Use the 9Convert option below. Try a converter
+ *    below."
+ * Two instructions for one action is noise, and it made the app look broken
+ * rather than degraded. Visitors get exactly one actionable next step.
+ */
+export function withFallbackHint(message: string): string {
+  const trimmed = message.trim();
+  if (!trimmed) return 'Try a converter below.';
+  // Already points somewhere concrete (9Convert card, converter list, …).
+  if (/\b(option|converter|converters)\s+below\b/i.test(trimmed)) return trimmed;
+  return /[.!?]$/.test(trimmed) ? `${trimmed} Try a converter below.` : `${trimmed}. Try a converter below.`;
 }
 
 /**
@@ -795,33 +816,33 @@ async function extractYouTube(
   // survive a BotGuard wall on this Vercel host. Empty/404 farm hops are
   // explicitly non-fatal and fall through to cobalt/the honest error below.
   let cobaltError: string | undefined;
-  let cobaltTried = false;
   if (!formats.length) {
     const farmFormats = await nineConvertFormats(id, format === 'mp4' ? 'mp4' : 'mp3', quality);
     if (farmFormats.length) {
       formats = farmFormats;
       source = '9convert';
-    } else if (isCobaltConfigured()) {
-      cobaltTried = true;
-      const cobalt = await cobaltFormats(pageUrl, format === 'mp4' ? 'video' : 'audio');
-      const cobaltUrls = cobalt.formats.filter(f => f.url && isAllowedMediaUrl(f.url));
-      if (cobaltUrls.length) {
-        formats = cobaltUrls;
-        source = 'cobalt';
-      } else {
-        cobaltError = cobalt.error;
-      }
     }
   }
 
-  // Last resort: an operator-configured cobalt instance. Disabled unless
-  // COBALT_API_URL is set, and it returns a finished muxed file rather than a
-  // format list, so it runs only when everything else produced nothing.
-  if (!formats.length && !cobaltTried && isCobaltConfigured()) {
+  // Last resort: cobalt — the operator's own instance first, then the
+  // reviewed public instances the directory reports as YouTube-healthy. It
+  // returns a finished muxed file rather than a format list, so it runs only
+  // when everything else produced nothing.
+  //
+  // Every URL it hands back is re-checked against the media-host allowlist
+  // here, so even a compromised instance cannot make /api/convert fetch an
+  // arbitrary host. A URL that fails that check is treated as no result at
+  // all rather than being silently proxied.
+  if (!formats.length && isCobaltConfigured()) {
     const cobalt = await cobaltFormats(pageUrl, format === 'mp4' ? 'video' : 'audio');
-    formats = cobalt.formats.filter(f => f.url && isAllowedMediaUrl(f.url));
-    if (formats.length) source = 'cobalt';
-    else cobaltError = cobalt.error;
+    const cobaltUrls = cobalt.formats.filter(f => f.url && isAllowedMediaUrl(f.url));
+    if (cobaltUrls.length) {
+      formats = cobaltUrls;
+      source = 'cobalt';
+    } else {
+      cobaltError =
+        cobalt.error ?? (cobalt.formats.length ? 'returned a non-allowlisted media host' : undefined);
+    }
   }
 
   if (!formats.length) {
@@ -830,7 +851,7 @@ async function extractYouTube(
     const statusToExplain = innertube.status || (innertube.botChallenged ? 'LOGIN_REQUIRED' : undefined);
     const reasonToExplain = innertube.reason || (innertube.botChallenged ? "Sign in to confirm you're not a bot" : undefined);
     const explained = playabilityMessage(statusToExplain, reasonToExplain, poTokenConfigured);
-    if (explained) return fail(`${explained} Try a converter below.`);
+    if (explained) return fail(withFallbackHint(explained));
     // Piped sometimes returns a descriptive reason ("Video unavailable",
     // "This video is age-restricted", "region-locked") when Innertube gave us
     // nothing actionable. Surface it so the error isn't a vague "try again".
@@ -838,18 +859,25 @@ async function extractYouTube(
     // the video, so it must not mask a later source's real verdict.
     const pipedIsDescriptive = Boolean(pipedError) && !/^(HTTP \d+|fetch failed)$/i.test(pipedError!.trim());
     if (pipedIsDescriptive) {
-      const friendly = friendlyPipedError(pipedError!);
-      return fail(`${friendly} Try a converter below.`);
+      return fail(withFallbackHint(friendlyPipedError(pipedError!)));
     }
     if (cobaltError) {
-      return fail(`The configured cobalt instance refused this video (${cobaltError}). Try a converter below.`);
+      // `cobaltError` carries raw instance diagnostics ("kitty.tame.gg:
+      // error.api.auth.turnstile.missing"). Log it for the operator, but show
+      // the visitor a plain sentence with one instruction — an internal host
+      // name and error code mean nothing to them.
+      console.warn('[cobalt] all candidates failed:', cobaltError);
+      return fail(
+        withFallbackHint('No independent conversion service could fetch this video right now.'),
+      );
     }
     if (pipedError) {
-      const friendly = friendlyPipedError(pipedError);
-      return fail(`${friendly} Try a converter below.`);
+      return fail(withFallbackHint(friendlyPipedError(pipedError)));
     }
     return fail(
-      'YouTube did not return a playable stream. This can happen for music-label videos, region-locked uploads, or recently removed content. Try a converter below.',
+      withFallbackHint(
+        'YouTube did not return a playable stream. This can happen for music-label videos, region-locked uploads, or recently removed content.',
+      ),
     );
   }
 

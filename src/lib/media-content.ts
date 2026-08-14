@@ -128,6 +128,22 @@ export function sniffContainer(bytes: Uint8Array): MediaContainer {
   }
   if (hasHtml) return 'html';
 
+  // A JSON document is not media, whatever the Content-Type claims. Cobalt
+  // and the 9Convert farm both answer errors as JSON, and an instance that
+  // mislabels one as video/mp4 previously slipped past every check below:
+  // 'unknown' + a media Content-Type is accepted, so the user saved an error
+  // payload as .mp4. Real MP3/MP4/WebM/Ogg never begin with '{' or '['.
+  //
+  // Grouped under 'html' because callers treat that as "a web response, not a
+  // file", which is exactly the verdict here.
+  for (let i = 0; i < head.length; i += 1) {
+    const b = head[i];
+    // Skip leading ASCII whitespace (space, tab, CR, LF).
+    if (b === 0x20 || b === 0x09 || b === 0x0d || b === 0x0a) continue;
+    if (b === 0x7b || b === 0x5b) return 'html'; // '{' or '['
+    break;
+  }
+
   // MP3: ID3v2 header OR an MPEG audio frame sync within the first 2 KB
   // (some live streams drop ID3 metadata and jump straight to a sync word).
   if (startsWithBytes(head, ID3)) return 'mp3';

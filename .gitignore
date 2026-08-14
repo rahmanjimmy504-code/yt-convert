@@ -35,3 +35,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Cobalt API key file (contains a live credential; keys.example.json is the template)
+/keys.json

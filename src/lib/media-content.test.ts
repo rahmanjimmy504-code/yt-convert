@@ -117,3 +117,35 @@ describe('acceptMediaResponse', () => {
     expect(SNIFF_BYTES).toBeGreaterThanOrEqual(2048);
   });
 });
+
+describe('a JSON body is never treated as media, whatever the Content-Type says', () => {
+  const enc = (s: string) => new TextEncoder().encode(s);
+
+  it('classifies a JSON object or array as a web response, not a container', () => {
+    expect(sniffContainer(enc('{"status":"error","error":{"code":"error.api.fetch.fail"}}'))).toBe('html');
+    expect(sniffContainer(enc('  \n\t{"status":"tunnel"}'))).toBe('html');
+    expect(sniffContainer(enc('[{"url":"https://x"}]'))).toBe('html');
+  });
+
+  it('refuses a cobalt/farm JSON error mislabelled as video/mp4 or audio/mpeg', () => {
+    // Regression: 'unknown' + a media Content-Type used to be accepted, so an
+    // API error payload was saved as the user's .mp4/.mp3 file.
+    const jsonError = enc('{"status":"error","error":{"code":"error.api.youtube.login"}}');
+    expect(acceptMediaResponse('mp4', 'video/mp4', jsonError).ok).toBe(false);
+    expect(acceptMediaResponse('mp3', 'audio/mpeg', jsonError).ok).toBe(false);
+    expect(acceptMediaResponse('mp4', 'application/octet-stream', jsonError).ok).toBe(false);
+  });
+
+  it('does not misclassify binary media that merely contains a brace later on', () => {
+    // '{' inside the payload is fine; only a leading one indicates JSON.
+    const mp4 = new Uint8Array(64);
+    mp4.set([0x00, 0x00, 0x00, 0x20, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6f, 0x6d], 0);
+    mp4[40] = 0x7b;
+    expect(sniffContainer(mp4)).toBe('mp4');
+
+    const mp3 = new Uint8Array(64);
+    mp3.set([0x49, 0x44, 0x33, 0x04], 0);
+    mp3[30] = 0x5b;
+    expect(sniffContainer(mp3)).toBe('mp3');
+  });
+});

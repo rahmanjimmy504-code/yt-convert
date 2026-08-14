@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   attachMediaUrlToken,
   extractInstagramShortcode,
@@ -10,9 +10,11 @@ import {
   isExtractError,
   playabilityMessage,
   sanitizeYouTubeCookies,
+  withFallbackHint,
   twitterSyndicationToken,
 } from './extract';
 import { __resetPoTokenCacheForTests } from './po-token';
+import { resetCobaltDirectoryCache } from './cobalt-directory';
 
 /** Minimal 24-byte MP4 (ftyp=isom) for probes. */
 function fakeMp4Body(): Uint8Array {
@@ -562,9 +564,17 @@ describe('PO-token bot-challenge retry', () => {
 describe('cobalt last-resort fallback through extractMedia', () => {
   const SAVED = { ...process.env };
 
+  beforeEach(() => {
+    // Pin these tests to the private-instance path so a directory lookup
+    // can't reach the network or perturb the stubbed call list.
+    process.env.COBALT_PUBLIC_DISCOVERY = '0';
+    resetCobaltDirectoryCache();
+  });
+
   afterEach(() => {
     process.env = { ...SAVED };
     vi.unstubAllGlobals();
+    resetCobaltDirectoryCache();
   });
 
   /** Every upstream source (Innertube/Invidious/Piped) returns nothing. */
@@ -624,14 +634,71 @@ describe('cobalt last-resort fallback through extractMedia', () => {
 
     const result = await extractMedia('youtube', 'https://www.youtube.com/watch?v=Y1Z3Q3O7IRE', 'mp4', 'best');
     expect(isExtractError(result)).toBe(true);
-    if (isExtractError(result)) expect(result.error).toMatch(/error\.api\.youtube\.login/);
+    if (isExtractError(result)) {
+      // Visitors get a plain sentence with exactly ONE instruction. The raw
+      // instance host and cobalt code go to the server log, not the page.
+      expect(result.error).toBe(
+        'No independent conversion service could fetch this video right now. Try a converter below.',
+      );
+      expect(result.error).not.toMatch(/error\.api\./);
+      expect(result.error).not.toMatch(/cobalt/i);
+      expect(result.error.match(/below/gi) ?? []).toHaveLength(1);
+    }
   });
 
-  it('is never called when COBALT_API_URL is unset', async () => {
+  it('is never called when COBALT_API_URL is unset and discovery is off', async () => {
     delete process.env.COBALT_API_URL;
     const calls = stubDeadUpstreams({ status: 'tunnel', url: 'https://cobalt.example.com/x' });
 
     await extractMedia('youtube', 'https://www.youtube.com/watch?v=Y1Z3Q3O7IRE', 'mp4', 'best');
     expect(calls.some(u => u.startsWith('https://cobalt.example.com'))).toBe(false);
+  });
+});
+
+describe('withFallbackHint (one actionable instruction, never two)', () => {
+  it('does not append a second pointer when the message already has one', () => {
+    const bot = playabilityMessage('LOGIN_REQUIRED', "Sign in to confirm you're not a bot");
+    const hinted = withFallbackHint(bot);
+    expect(hinted).toBe(bot);
+    expect(hinted).toMatch(/9Convert option below/);
+    // The exact regression: "…Use the 9Convert option below. Try a converter
+    // below." Two instructions for one action.
+    expect(hinted).not.toMatch(/Try a converter below/);
+    expect(hinted.match(/below/gi) ?? []).toHaveLength(1);
+  });
+
+  it('appends the pointer when the message has none', () => {
+    expect(withFallbackHint('This video is private and cannot be downloaded.')).toBe(
+      'This video is private and cannot be downloaded. Try a converter below.',
+    );
+  });
+
+  it('adds the missing full stop before the pointer', () => {
+    expect(withFallbackHint('Something went wrong')).toBe('Something went wrong. Try a converter below.');
+    expect(withFallbackHint('Really?')).toBe('Really? Try a converter below.');
+  });
+
+  it('degrades to the bare pointer for an empty message', () => {
+    expect(withFallbackHint('')).toBe('Try a converter below.');
+    expect(withFallbackHint('   ')).toBe('Try a converter below.');
+  });
+
+  it('leaves any "converters below" phrasing alone', () => {
+    const msg = 'No MP3 source here — use one of the converters below.';
+    expect(withFallbackHint(msg)).toBe(msg);
+  });
+});
+
+describe('bot-check wording end to end', () => {
+  it('gives a bot-challenged visitor exactly one instruction', () => {
+    for (const configured of [false, true]) {
+      const msg = withFallbackHint(
+        playabilityMessage('LOGIN_REQUIRED', "Sign in to confirm you're not a bot", configured),
+      );
+      expect(msg).toMatch(/bot check/i);
+      expect(msg.match(/below/gi) ?? []).toHaveLength(1);
+      // And it must not be reworded into an age-gate claim.
+      expect(msg).not.toMatch(/age.restricted/i);
+    }
   });
 });

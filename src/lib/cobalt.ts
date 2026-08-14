@@ -1,21 +1,39 @@
 /**
  * Cobalt API client — the LAST-RESORT fallback for YouTube, tried only after
- * the Innertube clients, Invidious, and Piped have all come up empty.
+ * the Innertube clients, the Piped/Invidious mirrors, and the 9Convert farm
+ * have all come up empty.
  *
- * Endpoint discovery (verified against the official API docs and a live
- * probe of api.cobalt.tools running v11.7.1):
- *   - Cobalt v10 removed the old `POST /api/json` path (shut down Nov 2024).
- *     Requests to it now 404, so any client still using it is dead code.
- *   - The v11 processing endpoint is `POST /` on the INSTANCE ROOT, with both
- *     `Accept: application/json` and `Content-Type: application/json`
- *     required. `GET /` returns instance info (version, supported services).
+ * Endpoint shape (verified against the official v11 API docs):
+ *   - Cobalt v10 removed the old `POST /api/json` path. The v11 processing
+ *     endpoint is `POST /` on the INSTANCE ROOT, with both
+ *     `Accept: application/json` and `Content-Type: application/json`.
+ *   - `GET /` returns instance info (version, services, turnstileSitekey).
  *
- * IMPORTANT CAVEAT: the official `api.cobalt.tools` instance is blocked from
- * YouTube (it returns a refusal for youtube URLs) and its bot protection
- * makes it off-limits to third-party apps anyway — the cobalt docs tell
- * operators to host their own instance. So this fallback is a no-op until an
- * operator points COBALT_API_URL at an instance they run. That is deliberate:
- * it costs one failed request and never silently degrades the main path.
+ * ── Why this fallback exists ─────────────────────────────────────────────
+ * When YouTube bot-blocks this server's egress IP ("Sign in to confirm
+ * you're not a bot"), no amount of retrying Innertube from the same IP can
+ * help. Cobalt runs on somebody else's egress, so it is genuinely
+ * independent — which is the only kind of fallback worth having here.
+ *
+ * ── Candidate order ──────────────────────────────────────────────────────
+ *   1. COBALT_API_URL, the operator's own instance. Always tried first, and
+ *      when it is configured WITH authentication we never spill the URL to
+ *      public instances: an operator who paid for a private instance should
+ *      not have their traffic silently fan out to strangers.
+ *   2. Reviewed public instances that cobalt.directory currently reports as
+ *      passing its YouTube test (see ./cobalt-directory.ts for the trust
+ *      model). At most COBALT_MAX_PUBLIC_ATTEMPTS of them, concurrently.
+ *      Opt out entirely with COBALT_PUBLIC_DISCOVERY=0.
+ *
+ * ── Honest limitation ────────────────────────────────────────────────────
+ * Every public instance currently passing the directory's YouTube test also
+ * advertises a `turnstileSitekey`, i.e. it issues Bearer tokens only to
+ * clients that solved a Cloudflare Turnstile challenge in a browser. A
+ * server-to-server call therefore usually comes back
+ * `error.api.auth.turnstile.missing`. We keep trying them because the check
+ * costs one bounded request and instance policy changes often, but the code
+ * does NOT pretend to solve challenges and never will. The real fix for an
+ * operator is COBALT_API_URL pointing at an instance they run.
  *
  * Every URL cobalt hands back is re-validated against the media-host
  * allowlist (./media-hosts.ts) before it can reach the convert proxy, so a
@@ -23,7 +41,13 @@
  */
 
 import type { PlayerFormat } from './youtube-formats';
+import {
+  COBALT_MAX_PUBLIC_ATTEMPTS,
+  discoverPublicCobaltApis,
+  isPublicDiscoveryEnabled,
+} from './cobalt-directory';
 
+/** Per-instance budget. Bounded so a hung instance can't eat the request. */
 const COBALT_TIMEOUT_MS = 15_000;
 
 export interface CobaltConfig {
@@ -33,7 +57,8 @@ export interface CobaltConfig {
 
 /**
  * Read the cobalt configuration from the environment. Returns null when no
- * instance is configured, which disables the fallback entirely.
+ * instance is configured, which disables the private path (public discovery
+ * may still run).
  */
 export function cobaltConfigFromEnv(): CobaltConfig | null {
   const url = (process.env.COBALT_API_URL || '').trim().replace(/\/+$/, '');
@@ -48,9 +73,12 @@ export function cobaltConfigFromEnv(): CobaltConfig | null {
   return auth ? { url, auth } : { url };
 }
 
-/** True when a cobalt instance is configured. */
+/**
+ * True when the cobalt fallback can do anything at all: either the operator
+ * configured an instance, or public discovery is enabled.
+ */
 export function isCobaltConfigured(): boolean {
-  return cobaltConfigFromEnv() !== null;
+  return cobaltConfigFromEnv() !== null || isPublicDiscoveryEnabled();
 }
 
 /**
@@ -115,28 +143,76 @@ export function cobaltErrorText(payload: Record<string, unknown>): string {
 }
 
 /**
- * Ask a cobalt instance for a downloadable file.
+ * Interpret one v11 response body. Split out from the transport so every
+ * documented status is unit-testable without a network stub.
  *
- * Handles every documented v11 status:
- *   - `redirect` / `tunnel`  -> a single usable URL
- *   - `picker`               -> pick the first video entry
- *   - `local-processing`     -> needs client-side remuxing, which we cannot
- *                               do in the proxy, so it is reported, not used
- *   - `error`                -> surfaced with its code
+ * Statuses handled:
+ *   - `tunnel` / `redirect` -> a single usable URL
+ *   - `picker`              -> the audio track (audio requests) or first
+ *                              video/gif entry
+ *   - `local-processing`    -> needs client-side remuxing, which the byte
+ *                              proxy cannot do, so it is reported, not used
+ *   - `error`               -> surfaced with its code, for diagnostics
  */
-export async function cobaltFormats(
+export function interpretCobaltPayload(
+  payload: Record<string, unknown>,
+  kind: 'video' | 'audio',
+): CobaltResult {
+  const status = asString(payload.status);
+
+  if (status === 'error') {
+    return { formats: [], error: cobaltErrorText(payload) };
+  }
+
+  if (status === 'redirect' || status === 'tunnel') {
+    const url = asString(payload.url);
+    return url ? { formats: [toFormat(url, kind)] } : { formats: [], error: `${status} without a url` };
+  }
+
+  if (status === 'picker') {
+    const items = Array.isArray(payload.picker) ? payload.picker : [];
+    // For an audio request prefer the dedicated audio track when present.
+    if (kind === 'audio') {
+      const audioUrl = asString(payload.audio);
+      if (audioUrl) return { formats: [toFormat(audioUrl, 'audio')] };
+    }
+    for (const item of items) {
+      if (!item || typeof item !== 'object') continue;
+      const entry = item as Record<string, unknown>;
+      const type = asString(entry.type);
+      // Skip photos: a slideshow image is not a usable mp3/mp4 result.
+      if (type && type !== 'video' && type !== 'gif') continue;
+      const url = asString(entry.url);
+      if (url) return { formats: [toFormat(url, kind)] };
+    }
+    return { formats: [], error: 'picker had no usable video entry' };
+  }
+
+  if (status === 'local-processing') {
+    // The output would need to be remuxed/merged by the client; the convert
+    // proxy streams bytes straight through and cannot do that.
+    return {
+      formats: [],
+      error: 'local-processing (this server cannot remux)',
+    };
+  }
+
+  return { formats: [], error: status ? `unexpected status "${status}"` : 'malformed cobalt response' };
+}
+
+/** Ask ONE cobalt instance. Never throws; a transport failure is an error string. */
+async function askInstance(
+  origin: string,
   pageUrl: string,
   kind: 'video' | 'audio',
+  auth?: string,
 ): Promise<CobaltResult> {
-  const config = cobaltConfigFromEnv();
-  if (!config) return { formats: [] };
-
   const headers: Record<string, string> = {
     Accept: 'application/json',
     'Content-Type': 'application/json',
     'User-Agent': 'Mozilla/5.0 (compatible; YTConvert/1.0)',
   };
-  if (config.auth) headers.Authorization = cobaltAuthHeader(config.auth);
+  if (auth) headers.Authorization = cobaltAuthHeader(auth);
 
   const body = {
     url: pageUrl,
@@ -152,9 +228,8 @@ export async function cobaltFormats(
     localProcessing: 'disabled',
   };
 
-  let payload: Record<string, unknown>;
   try {
-    const response = await fetch(config.url, {
+    const response = await fetch(origin, {
       method: 'POST',
       headers,
       body: JSON.stringify(body),
@@ -162,50 +237,87 @@ export async function cobaltFormats(
     });
     const data = (await response.json().catch(() => null)) as Record<string, unknown> | null;
     if (!data) {
-      return { formats: [], error: `cobalt returned HTTP ${response.status}` };
+      // 429 deserves its own note: it is a rate limit, not a refusal, and an
+      // operator reading logs should be able to tell them apart.
+      return {
+        formats: [],
+        error: response.status === 429 ? 'rate limited (HTTP 429)' : `HTTP ${response.status}`,
+      };
     }
-    payload = data;
+    return interpretCobaltPayload(data, kind);
+  } catch (err) {
+    const message = (err as Error)?.name === 'TimeoutError' ? 'timed out' : 'unreachable';
+    return { formats: [], error: message };
+  }
+}
+
+/**
+ * Ask cobalt for a downloadable file, trying the private instance first and
+ * then a bounded set of reviewed public instances.
+ *
+ * The public instances are raced concurrently (not serially) so that three
+ * candidates cost one 15 s budget rather than 45 s; the first one returning a
+ * usable URL wins. If none succeed, the most useful error code is kept for
+ * diagnostics.
+ */
+export async function cobaltFormats(
+  pageUrl: string,
+  kind: 'video' | 'audio',
+): Promise<CobaltResult> {
+  const errors: string[] = [];
+  const config = cobaltConfigFromEnv();
+
+  // 1. The operator's own instance.
+  if (config) {
+    const result = await askInstance(config.url, pageUrl, kind, config.auth);
+    if (result.formats.length) return result;
+    if (result.error) errors.push(`${hostOf(config.url)}: ${result.error}`);
+
+    // Do not leak the requested URL to third parties when the operator has
+    // configured an authenticated private instance — that is a deliberate
+    // privacy boundary, not an oversight.
+    if (config.auth) return { formats: [], error: errors[0] };
+  }
+
+  // 2. Reviewed public instances the directory reports as YouTube-healthy.
+  if (!isPublicDiscoveryEnabled()) {
+    return { formats: [], error: errors[0] };
+  }
+
+  const discovered = (await discoverPublicCobaltApis())
+    .filter(origin => origin !== config?.url)
+    .slice(0, COBALT_MAX_PUBLIC_ATTEMPTS);
+
+  if (!discovered.length) return { formats: [], error: errors[0] };
+
+  const attempts = await Promise.all(
+    discovered.map(async origin => ({ origin, result: await askInstance(origin, pageUrl, kind) })),
+  );
+
+  for (const { origin, result } of attempts) {
+    if (result.formats.length) return result;
+    if (result.error) errors.push(`${hostOf(origin)}: ${result.error}`);
+  }
+
+  // Keep the most informative code for the operator; the user-facing layer
+  // never renders this verbatim.
+  return { formats: [], error: pickBestError(errors) };
+}
+
+function hostOf(origin: string): string {
+  try {
+    return new URL(origin).hostname;
   } catch {
-    return { formats: [] };
+    return 'cobalt';
   }
+}
 
-  const status = asString(payload.status);
-
-  if (status === 'error') {
-    return { formats: [], error: cobaltErrorText(payload) };
-  }
-
-  if (status === 'redirect' || status === 'tunnel') {
-    const url = asString(payload.url);
-    return url ? { formats: [toFormat(url, kind)] } : { formats: [] };
-  }
-
-  if (status === 'picker') {
-    const items = Array.isArray(payload.picker) ? payload.picker : [];
-    // For an audio request prefer the dedicated audio track when present.
-    if (kind === 'audio') {
-      const audioUrl = asString(payload.audio);
-      if (audioUrl) return { formats: [toFormat(audioUrl, 'audio')] };
-    }
-    for (const item of items) {
-      if (!item || typeof item !== 'object') continue;
-      const entry = item as Record<string, unknown>;
-      const type = asString(entry.type);
-      if (type && type !== 'video' && type !== 'gif') continue;
-      const url = asString(entry.url);
-      if (url) return { formats: [toFormat(url, kind)] };
-    }
-    return { formats: [] };
-  }
-
-  if (status === 'local-processing') {
-    // The output would need to be remuxed/merged by the client; the convert
-    // proxy streams bytes straight through and cannot do that.
-    return {
-      formats: [],
-      error: 'cobalt returned a local-processing job, which this server cannot remux',
-    };
-  }
-
-  return { formats: [] };
+/**
+ * Prefer a real cobalt error code over a bare transport failure: knowing an
+ * instance said `error.api.youtube.login` is far more actionable than knowing
+ * a different one was unreachable.
+ */
+function pickBestError(errors: string[]): string | undefined {
+  if (!errors.length) return undefined;
+  return errors.find(e => e.includes('error.api.')) ?? errors[0];
 }
