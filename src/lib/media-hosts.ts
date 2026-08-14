@@ -4,7 +4,19 @@
  *
  * This module is client-safe: it must not import undici or youtube-egress.
  * Server fetch + redirect following lives in ./media-fetch.
+ *
+ * ── Cross-process note ───────────────────────────────────────────────────
+ * Every rule here is derived from compile-time constants or environment
+ * variables, never from in-memory discovery state. That is deliberate: a
+ * conversion ticket minted by /api/video-info on one serverless instance
+ * must still authorize the exact same media host when a *different*
+ * instance serves /api/convert. Anything cached in a module-level variable
+ * would make authorization depend on which process answered, so cobalt host
+ * trust comes from the reviewed allowlist in ./cobalt-directory.ts (a
+ * committed constant) rather than from a live directory response.
  */
+
+import { REVIEWED_COBALT_APIS } from './cobalt-directory';
 
 const ALLOWED_SUFFIXES = [
   'googlevideo.com',
@@ -36,11 +48,6 @@ const ALLOWED_SUFFIXES = [
   'codespace.cz',
   'darkness.services',
   'orangenet.cc',
-  // Cobalt last-resort fallback — tunnel/redirect URLs are served from the
-  // instance's own host. The official instance is allowlisted by default;
-  // self-hosted instances (the only ones that actually work for YouTube) are
-  // approved by the operator via COBALT_PROXY_HOSTS.
-  'cobalt.tools',
 ] as const;
 
 // Invidious /latest_version with local=true keeps googlevideo retrieval on
@@ -52,7 +59,39 @@ const ALLOWED_EXACT_HOSTS = [
   'yt.chocolatemoo53.com',
   'inv.nadeko.net',
   'invidious.nerdvpn.de',
+  // Reviewed public cobalt APIs. A cobalt `tunnel` URL is always served from
+  // the API's own origin (GET /tunnel), so allowing the exact API host is
+  // enough — and, being exact, it cannot be widened by a subdomain the
+  // directory happens to report.
+  ...REVIEWED_COBALT_APIS,
 ] as const;
+
+/**
+ * The exact host of the operator's own cobalt instance, taken from
+ * COBALT_API_URL. Cobalt serves its tunnels from the same origin as the API,
+ * so configuring the API implicitly authorises same-host tunnel media —
+ * without this, a correctly configured private instance would return a
+ * perfectly good tunnel URL that /api/convert then refused to fetch.
+ *
+ * Only an exact HTTPS host qualifies. A plaintext or malformed COBALT_API_URL
+ * grants nothing, and a private instance whose MEDIA is served from a
+ * *different* hostname still needs COBALT_PROXY_HOSTS.
+ */
+function configuredCobaltHost(): string | null {
+  const raw = (process.env.COBALT_API_URL || '').trim();
+  if (!raw) return null;
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== 'https:') return null;
+  if (parsed.username || parsed.password) return null;
+  const host = parsed.hostname.toLowerCase().replace(/\.$/, '');
+  if (!host || isBlockedHost(host)) return null;
+  return host;
+}
 
 /**
  * Parse a comma-separated host-suffix allowlist from an environment variable.
@@ -92,6 +131,7 @@ function extraCobaltSuffixes(): string[] {
 function isAllowedHost(host: string): boolean {
   const h = host.toLowerCase();
   if (ALLOWED_EXACT_HOSTS.some(allowed => h === allowed)) return true;
+  if (h === configuredCobaltHost()) return true;
   if (ALLOWED_SUFFIXES.some(suffix => h === suffix || h.endsWith(`.${suffix}`))) return true;
   const extras = [...extraPipedSuffixes(), ...extraCobaltSuffixes()];
   return extras.some(suffix => h === suffix || h.endsWith(`.${suffix}`));

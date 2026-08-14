@@ -177,7 +177,8 @@ The dev server runs at **http://localhost:3000** by default. Edit any file under
 | `PO_TOKEN_SERVER_AUTH` | *(empty)* | Bearer token for the PO-token sidecar (must match its `AUTH_TOKEN`) |
 | `COBALT_API_URL` | *(empty)* | Root URL of a **cobalt** instance used as the last-resort fallback (v11 `POST /`). Unset = disabled. The official `api.cobalt.tools` is blocked from YouTube, so self-host to get a working fallback |
 | `COBALT_API_AUTH` | *(empty)* | Cobalt API token — a bare token (sent as `Bearer …`) or an explicit scheme like `Api-Key aaaa-bbbb` |
-| `COBALT_PROXY_HOSTS` | *(empty)* | Comma-separated extra host suffixes to allow as cobalt tunnel hosts (self-hosted instances); `*.cobalt.tools` is already allowed |
+| `COBALT_PROXY_HOSTS` | *(empty)* | Comma-separated extra host suffixes to allow as cobalt tunnel hosts. Only needed when your instance serves media from a **different** hostname than `COBALT_API_URL` — the configured API host is trusted automatically |
+| `COBALT_PUBLIC_DISCOVERY` | `1` | Set to `0` to disable querying `cobalt.directory` for reviewed public instances, leaving only `COBALT_API_URL` |
 | `YT_API_KEY` | *(built-in)* | Override the public, non-secret Innertube API key used by the `WEB_EMBEDDED_PLAYER` client if YouTube rotates it |
 
 Set values in a `.env.local` file (excluded from Git via `.gitignore`) or in your hosting platform's environment settings.
@@ -197,7 +198,7 @@ YouTube / YT Music downloads try sources in order, stopping at the first that re
 1. **Innertube clients** — `ANDROID_MUSIC` then `IOS_MUSIC` first (matching the 9Convert extractor family), followed by `ANDROID`, `IOS`, `ANDROID_VR`, `VISIONOS`, `WEB_EMBEDDED_PLAYER`, and finally `TVHTML5`. Direct adaptive AAC is preferred; progressive itag 18 is the honest last-resort audio source when no adaptive audio exists.
 2. **Public mirrors, raced** — Piped `/streams`, Invidious `/latest_version?local=true`, the often-disabled Invidious JSON API, and YouTube embed HTML. Relayed Piped/`latest_version` URLs keep the googlevideo fetch on the mirror's egress IP.
 3. **9Convert/dlsrv public farm** — the current `embed.dlsrv.online/api/info` + `/api/download/{mp3|mp4}` contract, with the legacy `ajaxSearch/index` (`query` + `vt`) → `ajaxConvert/convert` (`vid` + `k`) flow retained for 9convert.org/dlsrv-compatible hosts. A 404, empty response, or dlink outside the 9Convert/dlsrv/googlevideo allowlist is non-fatal.
-4. **Cobalt instance** (optional, last resort) — if `COBALT_API_URL` is set, the URL is sent to the cobalt **v11** API (`POST /` on the instance root) and the resulting muxed mp4 / mp3 is used. See the caveat below.
+4. **Cobalt** (last resort) — the operator's own instance (`COBALT_API_URL`) first, then up to three **reviewed** public instances that `cobalt.directory` currently reports as passing its YouTube test. The resulting muxed mp4 / mp3 is used. See the caveat below.
 
 Alongside the chain, **External PO-token server** (optional) — if `PO_TOKEN_SERVER_URL` + `PO_TOKEN_SERVER_AUTH` are configured, a token is fetched once (cached ~30 min) and attached to the Innertube requests under `serviceIntegrityDimensions`.
 
@@ -213,7 +214,15 @@ When a sidecar is configured and every client hits that wall — or the up-front
 
 Cobalt v10 removed the old `POST /api/json` endpoint (shut down Nov 2024); this client uses the current **v11** contract — `POST /` on the instance root with `Accept` and `Content-Type: application/json` — and handles the `redirect`, `tunnel`, `picker`, `local-processing`, and `error` (including the nested `error.code`) statuses.
 
-The catch: the official `api.cobalt.tools` has been **blocked from YouTube since mid-2025**, and its bot protection puts it off-limits to third-party apps regardless — the cobalt docs direct operators to [host their own instance](https://github.com/imputnet/cobalt/blob/main/docs/run-an-instance.md). So this fallback is inert until you point `COBALT_API_URL` at an instance you run, and every URL it returns is re-checked against the media allowlist (add your instance to `COBALT_PROXY_HOSTS`) before the convert proxy will fetch it.
+Candidates are tried in a bounded order: `COBALT_API_URL`, then reviewed public instances. The three public candidates are attempted **concurrently**, so the whole step costs one 15 s budget rather than 45 s, and a failure on one instance falls through to the rest.
+
+**Public-instance discovery is a health signal, not a trust source.** `src/lib/cobalt-directory.ts` reads only `data.youtube` from `https://cobalt.directory/api/working?type=api` and intersects it with `REVIEWED_COBALT_APIS`, a committed exact-host allowlist. The directory can only ever *narrow* that list — never widen it. Entries are rejected if they are not reviewed, use plaintext HTTP, embed credentials, carry an unexpected port, name an IP literal or localhost, or include a path, query string, or fragment. Set `COBALT_PUBLIC_DISCOVERY=0` to opt out entirely.
+
+Because the allowlist is a compile-time constant, every serverless instance derives the same set of proxiable hosts without shared memory. That is what keeps a conversion ticket minted by `/api/video-info` on one instance valid when a *different* instance serves `/api/convert`.
+
+**Honest limitation:** as of 2026-08-14 every public instance passing the directory's YouTube test also advertises a `turnstileSitekey`, meaning it only issues Bearer tokens to clients that solved a Cloudflare Turnstile challenge in a browser. Server-to-server calls therefore usually return `error.api.auth.turnstile.missing`. The candidates are still tried — the check is one bounded request and instance policies change often — but this app does **not** solve challenges. The official `api.cobalt.tools` and `*.imput.net` instances are deliberately excluded, because the cobalt docs state hosted instances are not intended for use by other projects without permission. A reliably working fallback still means pointing `COBALT_API_URL` at an instance you run.
+
+Every URL cobalt returns is re-checked against the media allowlist before the convert proxy will fetch it, and the streamed bytes are sniffed so an HTML/CAPTCHA page or a JSON error body can never be saved as your `.mp3`/`.mp4`.
 
 ### Custom production domain
 

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fetchAllowedMedia } from './media-fetch';
 import { isAllowedMediaUrl } from './media-hosts';
+import { REVIEWED_COBALT_APIS } from './cobalt-directory';
 
 describe('isAllowedMediaUrl', () => {
   it('accepts allowlisted HTTPS media hosts', () => {
@@ -159,18 +160,60 @@ describe('fetchAllowedMedia', () => {
 
 describe('cobalt fallback hosts', () => {
   const SAVED = { ...process.env };
+  beforeEach(() => {
+    delete process.env.COBALT_API_URL;
+    delete process.env.COBALT_PROXY_HOSTS;
+  });
   afterEach(() => {
     process.env = { ...SAVED };
   });
 
-  it('allows the official cobalt instance tunnel host', () => {
-    expect(isAllowedMediaUrl('https://api.cobalt.tools/tunnel?id=1')).toBe(true);
-    expect(isAllowedMediaUrl('https://cobalt.tools/tunnel?id=1')).toBe(true);
+  it('no longer blanket-allows *.cobalt.tools', () => {
+    // The official instances forbid third-party API use, so they are not
+    // candidates and their hosts must not be proxiable. A suffix rule here
+    // would also have allowed any subdomain anyone could point at cobalt.tools.
+    expect(isAllowedMediaUrl('https://api.cobalt.tools/tunnel?id=1')).toBe(false);
+    expect(isAllowedMediaUrl('https://cobalt.tools/tunnel?id=1')).toBe(false);
+  });
+
+  it('allows reviewed public cobalt API hosts as EXACT hosts only', () => {
+    for (const host of REVIEWED_COBALT_APIS) {
+      expect(isAllowedMediaUrl(`https://${host}/tunnel?id=1&exp=1`)).toBe(true);
+      // Exact means exact: a subdomain of a reviewed host is not reviewed.
+      expect(isAllowedMediaUrl(`https://evil.${host}/tunnel?id=1`)).toBe(false);
+    }
   });
 
   it('rejects cobalt lookalikes', () => {
     expect(isAllowedMediaUrl('https://cobalt.tools.evil.example/x')).toBe(false);
     expect(isAllowedMediaUrl('https://evilcobalt.tools/x')).toBe(false);
+    expect(isAllowedMediaUrl('https://kitty.tame.gg.evil.example/x')).toBe(false);
+    expect(isAllowedMediaUrl('https://notkitty.tame.gg/x')).toBe(false);
+  });
+
+  it('trusts the exact host configured by COBALT_API_URL for same-host tunnels', () => {
+    // Cobalt serves GET /tunnel from the same origin as the API, so a
+    // configured private instance must be able to hand back its own media.
+    expect(isAllowedMediaUrl('https://cobalt.private.example/tunnel?id=1')).toBe(false);
+    process.env.COBALT_API_URL = 'https://cobalt.private.example';
+    expect(isAllowedMediaUrl('https://cobalt.private.example/tunnel?id=1')).toBe(true);
+    // Exact host only — a sibling hostname still needs COBALT_PROXY_HOSTS.
+    expect(isAllowedMediaUrl('https://media.cobalt.private.example/tunnel?id=1')).toBe(false);
+  });
+
+  it('grants nothing for an unsafe COBALT_API_URL', () => {
+    // Plaintext, credentials, IP literals and localhost never confer trust,
+    // even though cobaltConfigFromEnv() would otherwise accept some of them.
+    process.env.COBALT_API_URL = 'http://cobalt.private.example';
+    expect(isAllowedMediaUrl('https://cobalt.private.example/tunnel')).toBe(false);
+    process.env.COBALT_API_URL = 'https://user:pass@cobalt.private.example';
+    expect(isAllowedMediaUrl('https://cobalt.private.example/tunnel')).toBe(false);
+    process.env.COBALT_API_URL = 'https://127.0.0.1';
+    expect(isAllowedMediaUrl('https://127.0.0.1/tunnel')).toBe(false);
+    process.env.COBALT_API_URL = 'https://localhost';
+    expect(isAllowedMediaUrl('https://localhost/tunnel')).toBe(false);
+    process.env.COBALT_API_URL = 'not a url';
+    expect(isAllowedMediaUrl('https://cobalt.private.example/tunnel')).toBe(false);
   });
 
   it('allows operator-approved self-hosted cobalt hosts via COBALT_PROXY_HOSTS', () => {
