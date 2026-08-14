@@ -38,3 +38,15 @@ next-env.d.ts
 
 # Cobalt API key file (contains a live credential; keys.example.json is the template)
 /keys.json
+
+# Android companion staging area (see android-app/README.md). Only build
+# output and dependencies are ignored; the source is tracked.
+/android-app/node_modules
+/android-app/dist
+/android-app/android/.gradle
+/android-app/android/build
+/android-app/android/app/build
+/android-app/android/local.properties
+/android-app/android/app/src/main/assets/public
+/android-app/android/app/src/main/assets/capacitor.config.json
+/android-app/android/app/src/main/assets/capacitor.plugins.json
