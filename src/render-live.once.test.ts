@@ -79,11 +79,11 @@ liveDescribe('one-time Render free-instance verification', () => {
       const summary = await responseSummary(response);
       const success = response.status === 200 || response.status === 206;
       annotation(success, `Render ${format.toUpperCase()} live conversion`, `HTTP ${response.status}; ${summary}`);
-      return response.status;
+      return { status: response.status, summary };
     };
-    const [mp3Status, mp4Status] = await Promise.all([convert('mp3'), convert('mp4')]);
-    expect([200, 206, 502]).toContain(mp3Status);
-    expect([200, 206, 502]).toContain(mp4Status);
+    const [mp3Result, mp4Result] = await Promise.all([convert('mp3'), convert('mp4')]);
+    expect([200, 206, 502]).toContain(mp3Result.status);
+    expect([200, 206, 502]).toContain(mp4Result.status);
 
     const statusResponse = await fetchWithTimeout(`${BASE}/api/converters/status`, { cache: 'no-store' });
     const statuses = await statusResponse.json() as { results?: Array<{ status: string }> };
@@ -105,6 +105,18 @@ liveDescribe('one-time Render free-instance verification', () => {
     const first429 = limitedStatuses.indexOf(429);
     annotation(first429 >= 0, 'Render client-IP rate limit',
       `varying spoofed XFF produced statuses ${limitedStatuses.join(',')}; first 429 at probe ${first429 + 1}`);
-    expect(first429).toBeGreaterThanOrEqual(0);
+    throw new Error(`LIVE_RENDER_REPORT ${JSON.stringify({
+      rootStatus: root?.status,
+      appHtml: rootBody.includes('YT Convert'),
+      readySeconds: Number(healthSeconds),
+      infoStatus: infoResponse.status,
+      title: info.title || '',
+      ticketIssued: Boolean(info.convertTicket),
+      mp3: mp3Result,
+      mp4: mp4Result,
+      converterPages: { working, total },
+      rateStatuses: limitedStatuses,
+      first429Probe: first429 + 1,
+    })}`);
   }, 420_000);
 });
