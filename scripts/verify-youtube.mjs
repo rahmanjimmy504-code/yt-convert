@@ -70,7 +70,12 @@ import { extensionForMime, isUsableFormatUrl, pickYouTubeFormat, planVideoDownlo
 import { isAllowedMediaUrl } from '../src/lib/media-hosts.ts';
 import { extractYouTubeId } from '../src/lib/platforms.ts';
 
-const target = process.argv.slice(2).find(a => a.startsWith('http')) || 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
+const requestedTarget = process.argv.slice(2).find(a => a.startsWith('http')) || 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
+// Pull-request CI is the datacenter fallback audit requested for the canonical
+// jNQXAC9IVRw fixture. Keep workflow-dispatch arguments useful outside PRs.
+const target = process.env.GITHUB_EVENT_NAME === 'pull_request'
+  ? 'https://www.youtube.com/watch?v=jNQXAC9IVRw'
+  : requestedTarget;
 const videoId = extractYouTubeId(target);
 if (!videoId) {
   console.error(`✗ Not a YouTube URL: ${target}`);
@@ -81,6 +86,19 @@ let failures = 0;
 const check = (ok, label, detail = '') => {
   console.log(`${ok ? '✓' : '✗'} ${label}${detail ? ` — ${detail}` : ''}`);
   if (!ok) failures += 1;
+  return ok;
+};
+
+/** Report an independently audited fallback without making a healthy primary
+ * path fail CI. GitHub annotations preserve the result even when log-artifact
+ * downloads are unavailable. If the app actually needs this fallback, callers
+ * use check() instead so an empty result still fails end-to-end verification. */
+const audit = (ok, label, detail = '') => {
+  console.log(`${ok ? '✓' : '⚠'} ${label}${detail ? ` — ${detail}` : ''}`);
+  if (process.env.GITHUB_ACTIONS === 'true') {
+    const level = ok ? 'notice' : 'warning';
+    console.log(`::${level} title=${label}::${detail || (ok ? 'passed' : 'failed')}`);
+  }
   return ok;
 };
 
@@ -222,27 +240,49 @@ if (!formats.length) {
 }
 
 /* -- Public 9Convert/dlsrv farm, after mirrors and before cobalt. Probe both
-   kinds because the normal request asks for only the format the user chose. -- */
-if (!formats.length) {
-  console.log('  → falling back to the public 9Convert/dlsrv farm…');
+   kinds because the normal request asks for only the format the user chose.
+   VERIFY_PUBLIC_FARM=1 audits it even when Innertube worked, which is how CI
+   tests the fallback from a datacenter IP instead of accidentally skipping it. -- */
+if (!formats.length || process.env.VERIFY_PUBLIC_FARM === '1' || process.env.GITHUB_ACTIONS === 'true') {
+  const farmIsRequired = !formats.length;
+  console.log(
+    farmIsRequired
+      ? '  → falling back to the public 9Convert/dlsrv farm…'
+      : '  → independently auditing the public 9Convert/dlsrv farm…',
+  );
   const [farmVideo, farmAudio] = await Promise.all([
     nineConvertFormats(videoId, 'mp4', '360'),
     nineConvertFormats(videoId, 'mp3', '128'),
   ]);
-  formats = [...farmVideo, ...farmAudio];
-  if (formats.length) via = '9convert';
-  check(formats.length > 0, 'nineConvertFormats() fallback returned formats', `${formats.length} formats`);
+  if (!formats.length) {
+    formats = [...farmVideo, ...farmAudio];
+    if (formats.length) via = '9convert';
+  }
+  // Keep the two user-visible promises separate: one successful MP4 must not
+  // make a broken MP3 path look green (or vice versa). A failed independent
+  // audit is a warning; if no earlier source worked, it remains a hard failure.
+  const reportFarm = farmIsRequired
+    ? (ok, label, detail) => {
+        const result = check(ok, label, detail);
+        if (process.env.GITHUB_ACTIONS === 'true') {
+          console.log(`::${ok ? 'notice' : 'error'} title=${label}::${detail}`);
+        }
+        return result;
+      }
+    : audit;
+  reportFarm(farmVideo.length > 0, '9Convert MP4 live audit', `${farmVideo.length} probed files for ${videoId}`);
+  reportFarm(farmAudio.length > 0, '9Convert MP3 live audit', `${farmAudio.length} probed files for ${videoId}`);
 }
 
-/* -- Last resort: cobalt. Probed even when unconfigured, so the log states
-   plainly why it did nothing. -- */
+/* -- Last resort: cobalt. Public discovery is enabled by default even when
+   there is no private COBALT_API_URL, so never dereference a null config in
+   the diagnostic path. -- */
 if (!formats.length) {
   if (!isCobaltConfigured()) {
-    console.log('  → cobalt fallback skipped: COBALT_API_URL is not set.');
-    console.log('    NOTE: the official api.cobalt.tools is blocked from YouTube and gated behind bot');
-    console.log('    protection — the cobalt docs tell operators to self-host for a working fallback.');
+    console.log('  → cobalt fallback skipped: private config and public discovery are disabled.');
   } else {
-    console.log(`  → falling back to cobalt (${cobaltCfg.url})…`);
+    const cobaltLabel = cobaltCfg?.url || 'reviewed public discovery';
+    console.log(`  → falling back to cobalt (${cobaltLabel})…`);
     const cobalt = await cobaltFormats(target, 'video');
     const usable = cobalt.formats.filter(f => f.url && isAllowedMediaUrl(f.url));
     if (usable.length) {
@@ -250,7 +290,7 @@ if (!formats.length) {
       via = 'cobalt';
     }
     console.log(
-      `    ${cobaltCfg.url.padEnd(38)} → ${
+      `    ${cobaltLabel.padEnd(38)} → ${
         usable.length ? 'OK' : cobalt.error ? `refused (${cobalt.error})` : 'no usable URL'
       }`,
     );
@@ -266,6 +306,10 @@ if (!formats.length) {
   console.log('  being BotGuard-challenged. An operator-owned PO-token path helps only when token minting,');
   console.log('  Innertube, and googlevideo share this same public egress IP (one VPS/site or YT_EGRESS_PROXY).');
   process.exit(1);
+}
+
+if (process.env.GITHUB_ACTIONS === 'true') {
+  console.log(`::notice title=Primary YouTube extraction source::${via} returned ${formats.length} formats for ${videoId}`);
 }
 
 // Innertube/Invidious can serve googlevideo.com; mirror/farm fallbacks serve

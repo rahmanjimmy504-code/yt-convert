@@ -1,6 +1,6 @@
 # YT Convert
 
-A clean, fast multi-platform converter website built with Next.js. Paste a link from a supported platform, see the thumbnail and metadata instantly, then download here when we can — or pick a fallback converter. AUTO-SEND converters use a verified deep link or form. COPY NEEDED converters cannot be auto-filled.
+A clean, fast multi-platform converter website built with Next.js. Paste a link from a supported platform, see the thumbnail and metadata instantly, then download here when we can — or pick a fallback converter. For YouTube on Android, Download here can hand the video directly to Seal, YTDLnis, or NewPipe so the phone uses its own connection instead of the bot-blocked host. AUTO-SEND converters use a verified deep link or form. COPY NEEDED converters cannot be auto-filled.
 
 **We convert where we legally and technically can.** Download here extracts a public stream (YouTube / YT Music via Music-first Innertube → public Piped/Invidious/embed mirrors → the 9Convert/dlsrv farm, SoundCloud progressive, public X / TikTok / Instagram / Facebook URLs) and **streams** it to your browser (no `blob()` buffer; `Range` / `206` resume). Files are never stored. We do **not** unlock private, DRM, deleted, members-only, or region-blocked videos, and we do not claim every YouTube upload works. See [docs/limitations.md](docs/limitations.md). Third-party converter cards stay as fallback.
 
@@ -44,6 +44,7 @@ A clean, fast multi-platform converter website built with Next.js. Paste a link 
 - **Generated OG / Twitter share images** and a web app manifest
 - **Keyboard shortcuts**: `/` focuses the link box, `Esc` starts over, `?` opens the shortcut list
 - **Native media previews** (YouTube, SoundCloud, Spotify, TikTok) via the platforms' own embed players
+- **On-device Android fallback** inside Download here: package-targeted VIEW intents open YouTube links in Seal, YTDLnis, or NewPipe, with official install pages and clipboard fallback
 - **FAQ page** (`/faq`) with `FAQPage` JSON-LD, included in the sitemap
 
 ## Project Structure
@@ -88,6 +89,7 @@ yt-convert/
 │   │   └── cookie-consent.tsx       # Cookie-consent notice (accept / decline / dismiss)
 │   └── lib/
 │       ├── admin.ts                 # ADMIN_TOKEN auth for the status dashboard
+│       ├── android-download-apps.ts # Safe on-device handoffs to Seal, YTDLnis, and NewPipe
 │       ├── captcha-env.ts           # Per-environment CAPTCHA key resolution (prod/preview/dev)
 │       ├── captcha.ts               # Server-side CAPTCHA challenge/token verification
 │       ├── converters.ts            # Converter catalog + availability probing/caching
@@ -190,6 +192,15 @@ Vercel can serve requests from multiple short-lived instances, so an in-memory c
 The limiter uses Redis `INCR` and applies `EXPIRE` on the first hit in one atomic script, avoiding read-modify-write races. Keys are SHA-256 hashed before storage, windows expire after 60 seconds, and over-limit responses keep the existing seconds-to-wait contract. Calls have a 500 ms deadline and **fail open** on timeouts, connection failures, HTTP errors, or malformed responses, so Redis cannot take the site down.
 
 If either variable is missing, the bounded per-instance in-memory path remains active. Local development, CI, and self-hosted installs therefore need no Redis service. The shared backend is only for rate-limit counters: CAPTCHA challenges/proof-token state, aggregate analytics in `stats.ts`, and PO tokens remain in memory by design.
+
+Client IP selection is ingress-aware rather than blindly trusting the first
+`X-Forwarded-For` value. Render uses Cloudflare's single-value
+`CF-Connecting-IP`; Vercel uses the `X-Forwarded-For` value that Vercel
+explicitly overwrites; the included Caddy and Termux setups opt into the header
+they overwrite. A custom proxy must set `TRUSTED_PROXY_IP_HEADER` only after it
+has been configured to replace visitor-supplied values. With no known trust
+boundary, clients share the conservative `unknown` bucket instead of being
+allowed to spoof unlimited rate-limit identities.
 
 ### YouTube extraction chain & the PO-token sidecar
 
@@ -436,11 +447,14 @@ The default live site is at **https://yt-convert-xi.vercel.app/**.
 > complete copy-paste walkthrough — renting the server, DNS, secrets, and
 > verifying it works — written for driving a VPS from an Android phone.
 >
-> **No budget?** [docs/setup-free.md](docs/setup-free.md) covers the two £0
-> routes: running the site on an Android phone via Termux + a Cloudflare quick
-> tunnel (a real consumer IP, so it usually clears the bot check, but the URL
-> changes on every restart), or Oracle Cloud's Always Free tier (permanent
-> address and 10 TB/month, but a datacenter IP that YouTube often blocks).
+> **No budget, or no credit card?** [docs/setup-free.md](docs/setup-free.md)
+> compares the £0 routes. The simplest is Render's free plan — no card, no
+> terminal, permanent `*.onrender.com` address; `render.yaml` in the repo root
+> makes it a one-click blueprint deploy. Like any datacenter host it can be
+> bot-blocked for direct extraction. The farm is best effort (the 2026-08-14
+> live checks returned no MP3 or MP4), and converter cards provide browser
+> handoffs rather than guaranteed third-party conversions. Only the Termux
+> route has a consumer IP that usually clears the bot check outright.
 
 ```bash
 cp .env.example .env   # set AUTH_TOKEN, CONVERT_TICKET_SECRET, SITE_ADDRESS

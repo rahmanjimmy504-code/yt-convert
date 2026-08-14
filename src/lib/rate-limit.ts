@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { isIP } from 'node:net';
 
 /**
  * Fixed-window rate limiter with an optional Upstash Redis REST backend.
@@ -122,17 +123,54 @@ export async function rateLimit(key: string, maxPerWindow: number): Promise<numb
     : memoryRateLimit(key, maxPerWindow);
 }
 
+type TrustedIpHeader = 'cf-connecting-ip' | 'x-forwarded-for' | 'x-real-ip';
+
+function validIp(value: string | null): string {
+  const candidate = (value || '').trim();
+  // Forwarded values become in-memory rate-limit keys. Reject malformed or
+  // oversized input rather than letting an attacker manufacture arbitrary
+  // keys (and never accept an address with a client-supplied port suffix).
+  return candidate.length <= 64 && isIP(candidate) !== 0 ? candidate : '';
+}
+
+function forwardedIp(value: string | null): string {
+  const raw = value || '';
+  if (!raw || raw.length > 512) return '';
+  // For an append-style proxy the rightmost value is the hop the trusted
+  // ingress actually observed; leftmost entries can be supplied by a client.
+  // Our bundled Caddy config overwrites XFF, and Vercel also overwrites it, so
+  // those deployments normally contain exactly one value.
+  const values = raw.split(',');
+  return validIp(values[values.length - 1]);
+}
+
+function configuredTrustedHeader(): TrustedIpHeader | null {
+  const configured = (process.env.TRUSTED_PROXY_IP_HEADER || '').trim().toLowerCase();
+  return configured === 'cf-connecting-ip' || configured === 'x-forwarded-for' || configured === 'x-real-ip'
+    ? configured
+    : null;
+}
+
 /**
  * Read the address supplied by the deployment's trusted ingress proxy.
- * Vercel overwrites client-supplied forwarding headers, so its first (normally
- * only) x-forwarded-for value is authoritative. Off Vercel this makes the same
- * trust assumption: self-hosters must configure their public reverse proxy to
- * overwrite untrusted forwarding headers before requests reach this app.
+ *
+ * Render is fronted by Cloudflare, whose CF-Connecting-IP is a single value
+ * derived from the edge connection; unlike X-Forwarded-For, a visitor cannot
+ * inject a fake leftmost value. Vercel documents that it overwrites XFF to
+ * prevent spoofing. Other deployments must opt into one header explicitly
+ * and configure their ingress to overwrite it (the provided Caddy/Termux
+ * configurations do this). With no known trust boundary we deliberately use
+ * "unknown" instead of trusting an arbitrary request header.
  */
 export function clientIp(request: Request): string {
-  return (
-    (request.headers.get('x-forwarded-for') || '').split(',')[0].trim() ||
-    request.headers.get('x-real-ip') ||
-    'unknown'
-  );
+  let header: TrustedIpHeader | null = null;
+  if (process.env.RENDER === 'true') header = 'cf-connecting-ip';
+  else if (process.env.VERCEL === '1') header = 'x-forwarded-for';
+  else header = configuredTrustedHeader();
+
+  if (!header) return 'unknown';
+  const ip = header === 'x-forwarded-for'
+    ? forwardedIp(request.headers.get(header))
+    : validIp(request.headers.get(header));
+  return ip || 'unknown';
 }

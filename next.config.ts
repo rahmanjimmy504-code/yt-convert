@@ -42,6 +42,13 @@ const nextConfig: NextConfig = {
   reactStrictMode: true,
   // Required for the slim production Docker image (see Dockerfile).
   output: 'standalone',
+  experimental: {
+    // Render's free service has 512 MB RAM. The Webpack option trades a little
+    // build speed for a lower peak, while lazy server entry loading leaves
+    // more headroom for streamed downloads at runtime.
+    webpackMemoryOptimizations: true,
+    preloadEntriesOnStart: false,
+  },
   // Resolve per-environment CAPTCHA site keys at build time so previews and
   // production can use separate widgets without code changes.
   env: resolvePublicCaptchaKeys(),

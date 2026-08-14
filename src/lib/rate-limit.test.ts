@@ -4,6 +4,9 @@ import { clientIp, rateLimit } from './rate-limit';
 beforeEach(() => {
   vi.stubEnv('UPSTASH_REDIS_REST_URL', '');
   vi.stubEnv('UPSTASH_REDIS_REST_TOKEN', '');
+  vi.stubEnv('RENDER', '');
+  vi.stubEnv('VERCEL', '');
+  vi.stubEnv('TRUSTED_PROXY_IP_HEADER', '');
 });
 
 afterEach(() => {
@@ -13,21 +16,53 @@ afterEach(() => {
 });
 
 describe('clientIp', () => {
-  it('uses the first address supplied by a trusted forwarding proxy', () => {
+  it('uses Render Cloudflare connection IP and ignores spoofable XFF input', () => {
+    vi.stubEnv('RENDER', 'true');
     const request = new Request('https://example.com', {
-      headers: { 'X-Forwarded-For': '203.0.113.8, 192.0.2.4' },
+      headers: {
+        'CF-Connecting-IP': '203.0.113.8',
+        'X-Forwarded-For': '198.51.100.99, 192.0.2.4',
+      },
     });
 
     expect(clientIp(request)).toBe('203.0.113.8');
   });
 
-  it('falls back to x-real-ip and then unknown off platform', () => {
-    const realIpRequest = new Request('https://example.com', {
-      headers: { 'X-Real-IP': '198.51.100.7' },
+  it('uses XFF on Vercel, which overwrites that header at ingress', () => {
+    vi.stubEnv('VERCEL', '1');
+    const request = new Request('https://example.com', {
+      headers: { 'X-Forwarded-For': '198.51.100.7' },
     });
 
-    expect(clientIp(realIpRequest)).toBe('198.51.100.7');
-    expect(clientIp(new Request('https://example.com'))).toBe('unknown');
+    expect(clientIp(request)).toBe('198.51.100.7');
+  });
+
+  it('uses the rightmost XFF hop when a self-hosted trusted proxy is explicit', () => {
+    vi.stubEnv('TRUSTED_PROXY_IP_HEADER', 'x-forwarded-for');
+    const request = new Request('https://example.com', {
+      headers: { 'X-Forwarded-For': '198.51.100.99, 203.0.113.8' },
+    });
+
+    expect(clientIp(request)).toBe('203.0.113.8');
+  });
+
+  it('does not trust arbitrary headers without a configured ingress boundary', () => {
+    const request = new Request('https://example.com', {
+      headers: {
+        'CF-Connecting-IP': '203.0.113.8',
+        'X-Forwarded-For': '198.51.100.7',
+        'X-Real-IP': '192.0.2.4',
+      },
+    });
+
+    expect(clientIp(request)).toBe('unknown');
+  });
+
+  it('rejects malformed trusted header values', () => {
+    vi.stubEnv('RENDER', 'true');
+    expect(clientIp(new Request('https://example.com', {
+      headers: { 'CF-Connecting-IP': 'not-an-ip' },
+    }))).toBe('unknown');
   });
 });
 

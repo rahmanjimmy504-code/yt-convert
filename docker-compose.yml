@@ -18,6 +18,8 @@ services:
     environment:
       PORT: "3000"
       HOSTNAME: "0.0.0.0"
+      # Caddy overwrites this header from its connection's source address.
+      TRUSTED_PROXY_IP_HEADER: x-forwarded-for
       PO_TOKEN_SERVER_URL: http://po-token:4416
       PO_TOKEN_SERVER_AUTH: ${AUTH_TOKEN}
       CONVERT_TICKET_SECRET: ${CONVERT_TICKET_SECRET:-${CAPTCHA_SECRET:-change-me}}

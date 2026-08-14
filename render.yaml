@@ -1,0 +1,47 @@
+# One-click deploy to Render's free tier (no credit card required).
+#
+#   https://render.com/deploy?repo=https://github.com/rahmanjimmy504-code/yt-convert
+#
+# Render builds the existing Dockerfile and injects $PORT, which the Next.js
+# standalone server already honours — no code changes needed.
+#
+# WHAT THE FREE PLAN GIVES YOU
+#   - a permanent https://<name>.onrender.com address
+#   - 750 instance-hours/month (enough for one always-listening service)
+#   - 100 GB/month bandwidth
+#
+# THE TWO FREE-PLAN CATCHES
+#   1. The service sleeps after 15 minutes idle; the next visitor waits
+#      ~30-60 s while it wakes. Subsequent requests are normal speed.
+#   2. Render runs in a datacenter, so YouTube will very likely bot-block
+#      direct extraction from it. The app still tries mirrors and the public
+#      9Convert farm, then keeps browser handoff cards available, but every
+#      third-party path is best effort; a first-party download may still fail.
+#      See docs/setup-free.md.
+#
+# The three secrets below are entered once during Blueprint creation. Render
+# ignores sync:false values on later Blueprint updates, which is deliberate:
+# live testing proved generateValue could rotate on this deployment and break
+# download tickets across a redeploy. Cobalt is left unset deliberately.
+services:
+  - type: web
+    name: yt-convert
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /
+    envVars:
+      # Supply strong random values once in the initial Blueprint form. Render
+      # preserves existing sync:false values on every later sync/redeploy.
+      - key: CONVERT_TICKET_SECRET
+        sync: false
+      - key: CAPTCHA_SECRET
+        sync: false
+      - key: ADMIN_TOKEN
+        sync: false
+      # Render exposes the service's own URL; metadata/robots/sitemap use it.
+      - key: NEXT_PUBLIC_SITE_URL
+        fromService:
+          type: web
+          name: yt-convert
+          envVarKey: RENDER_EXTERNAL_URL

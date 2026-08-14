@@ -54,6 +54,8 @@ CONVERT_TICKET_SECRET=$TICKET
 CAPTCHA_SECRET=$TICKET
 PORT=${APP_PORT}
 HOSTNAME=127.0.0.1
+# The public listener is a Cloudflare tunnel, which overwrites this header.
+TRUSTED_PROXY_IP_HEADER=cf-connecting-ip
 EOF
   echo "Wrote $ENV_FILE (keep this file if Termux resets you will lose the tokens, not the code)."
 fi
@@ -61,6 +63,9 @@ fi
 set -a
 # shellcheck source=/dev/null
 . "$ENV_FILE"
+# Existing installs predate this setting. A Cloudflare quick tunnel is the
+# only public ingress and supplies CF-Connecting-IP itself.
+export TRUSTED_PROXY_IP_HEADER="${TRUSTED_PROXY_IP_HEADER:-cf-connecting-ip}"
 set +a
 
 echo "[4/6] npm install"
