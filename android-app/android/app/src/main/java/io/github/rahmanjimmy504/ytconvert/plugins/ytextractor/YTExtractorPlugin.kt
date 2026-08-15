@@ -64,14 +64,18 @@ class YTExtractorPlugin : Plugin() {
         val format = call.getString("format") ?: "video"
         val quality = call.getString("quality") ?: "best"
 
-        // Network never runs on the bridge thread.
-        bridge.executeOnWorkerThread {
+        // Capacitor 7 already invokes plugin methods off the UI thread (the
+        // "CapacitorPlugins" HandlerThread), but an extraction can hold that
+        // single thread for tens of seconds, so the network runs on its own
+        // worker and the call is resolved from there (resolve/reject post
+        // back to the WebView internally).
+        Thread({
             try {
                 call.resolve(runExtraction(pageUrl.trim(), format, quality))
             } catch (e: Exception) {
                 call.reject("On-device extraction failed: ${e.message ?: "unknown error"}")
             }
-        }
+        }, "YTExtractor-query").start()
     }
 
     private fun runExtraction(pageUrl: String, format: String, quality: String): JSObject {
