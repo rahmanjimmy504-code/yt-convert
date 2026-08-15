@@ -1,0 +1,76 @@
+# AUTHORS
+
+Copyright holder and authorship record for **YT Convert**
+(https://github.com/rahmanjimmy504-code/yt-convert).
+
+This file exists to resolve the contributor-rights blocker recorded in
+`docs/licensing-audit.md` §1. See `CONTRIBUTING.md` for the Developer
+Certificate of Origin (DCO) that governs all future contributions.
+
+## Copyright holder
+
+    Copyright (C) 2025-2026 Jimmy Rahman <rahmanjimmy504@gmail.com>
+                            (GitHub: rahmanjimmy504-code)
+
+Jimmy Rahman is the sole human author, project owner, and copyright holder
+of YT Convert.
+
+## Human contributors
+
+| Name | GitHub | Role |
+|---|---|---|
+| Jimmy Rahman | [@rahmanjimmy504-code](https://github.com/rahmanjimmy504-code) | Owner, sole human author, copyright holder |
+
+## AI-assisted authorship
+
+A substantial part of this codebase — the majority of the feature pull
+requests numbered #2 through #64 — was produced with the assistance of an
+AI coding agent (`arena-ai-coding-agent`, also committing as
+`Arena Agent <agent@arena.ai>`) running in Arena.ai's Agent Mode.
+
+The AI agent is a tool, not a legal person. It holds no copyright, it is
+not a contributor for licensing purposes, and it grants no licence. Every
+change it produced was:
+
+- initiated by the copyright holder, from prompts and specifications the
+  copyright holder wrote;
+- directed, reviewed, corrected, and iterated on by the copyright holder;
+- accepted or rejected solely at the copyright holder's discretion, and
+  merged into the default branch only by the copyright holder (see, for
+  example, the revert of PR #63 in PR #64);
+- integrated into the copyright holder's own selection, arrangement, and
+  architecture of the work as a whole.
+
+The copyright holder therefore asserts ownership of the resulting work and
+of the rights necessary to license it, including the right to release it
+under the GNU General Public License, version 3 or (at your option) any
+later version.
+
+To the extent that any individual machine-generated fragment is held not to
+attract copyright protection, that fragment is either (a) not subject to
+copyright and so freely usable by anyone, or (b) owned by the copyright
+holder above; in neither case does it encumber the rights granted by this
+project's licence, and no third party holds a competing claim to it.
+
+## Attestation
+
+I, Jimmy Rahman, the sole human author and copyright holder of YT Convert,
+confirm that:
+
+1. I directed and supervised the AI-assisted authorship described above,
+   and I claim the resulting work as my own;
+2. I have the right to submit the entire work under the project's licence
+   and to relicense it under GPL-3.0-or-later;
+3. no other person or entity holds a contributor copyright claim in this
+   repository that would prevent that relicense;
+4. I make this attestation under the terms of the Developer Certificate of
+   Origin 1.1 reproduced in `CONTRIBUTING.md`.
+
+Signed-off-by: Jimmy Rahman <rahmanjimmy504@gmail.com>
+
+## Third-party material
+
+This file covers authorship of the project's own source. Material owned by
+others — dependencies, the Geist font, and third-party trademarks — is
+listed separately in `THIRD_PARTY_NOTICES.md` and remains under its own
+licence.
