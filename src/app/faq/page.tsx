@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { ArrowLeft } from 'lucide-react';
 import FaqAssistant from '@/components/faq-assistant';
+import { LICENSE_SPDX, LICENSE_URL, SOURCE_URL } from '@/lib/site';
 
 export const metadata: Metadata = {
   title: 'FAQ',
@@ -139,7 +140,27 @@ export default function FaqPage() {
       </main>
 
       <footer className="border-t border-gray-200 dark:border-gray-800 py-3 mt-auto">
-        <p className="text-center text-[11px] text-gray-400">YT Convert {'\u2014'} For personal use only</p>
+        {/* Software licence (GPL-3.0-or-later), distinct from the Terms. */}
+        <p className="text-center text-[11px] text-gray-400">
+          YT Convert {'\u2014'} free software under{' '}
+          <a
+            href={LICENSE_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="hover:text-red-500 underline-offset-2 hover:underline transition-colors"
+          >
+            {LICENSE_SPDX}
+          </a>
+          {' \u00B7 '}
+          <a
+            href={SOURCE_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="hover:text-red-500 underline-offset-2 hover:underline transition-colors"
+          >
+            Source
+          </a>
+        </p>
       </footer>
 
       <script

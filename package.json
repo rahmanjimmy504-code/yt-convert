@@ -1,7 +1,14 @@
 {
   "name": "yt-convert",
   "version": "1.0.0",
-  "private": true,
+  "description": "A clean, fast multi-platform link converter website built with Next.js.",
+  "license": "GPL-3.0-or-later",
+  "private": false,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rahmanjimmy504-code/yt-convert.git"
+  },
+  "homepage": "https://github.com/rahmanjimmy504-code/yt-convert#readme",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
