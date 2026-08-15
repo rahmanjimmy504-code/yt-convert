@@ -163,6 +163,16 @@ export function convertUnavailableReason(platform: PlatformKey): string {
   }
 }
 
+/**
+ * Platforms the on-device extractor (YTExtractor plugin) handles in this
+ * release. YouTube only for now: the native plugin speaks Innertube over the
+ * phone's own connection. Other platforms stay honest-notes until their
+ * extraction is ported; DRM catalogs never appear here.
+ */
+export function canExtractOnDevice(platform: PlatformKey): boolean {
+  return platform === 'youtube' || platform === 'youtubemusic';
+}
+
 /** Extract an 11-character YouTube video id from common URL shapes. */
 export function extractYouTubeId(url: string): string | null {
   const m = url.match(/(?:v=|youtu\.be\/|shorts\/|live\/|embed\/|clip\/|\/v\/)([a-zA-Z0-9_-]{11})(?![\w-])/i);

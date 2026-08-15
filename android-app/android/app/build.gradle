@@ -1,4 +1,6 @@
 apply plugin: 'com.android.application'
+// The in-app Capacitor plugins (YTExtractor) are written in Kotlin.
+apply plugin: 'kotlin-android'
 
 android {
     namespace "io.github.rahmanjimmy504.ytconvert"
@@ -28,6 +30,10 @@ android {
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
     }
+    kotlinOptions {
+        // Match the Java 21 compileOptions set in capacitor.build.gradle.
+        jvmTarget = '21'
+    }
 }
 
 repositories {
@@ -38,11 +44,15 @@ repositories {
 
 dependencies {
     implementation fileTree(include: ['*.jar'], dir: 'libs')
+    implementation "org.jetbrains.kotlin:kotlin-stdlib:$kotlinVersion"
     implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
     implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
     implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
     implementation project(':capacitor-android')
     testImplementation "junit:junit:$junitVersion"
+    // JVM unit tests parse/build JSON with the real org.json implementation
+    // (the copy inside android.jar is a stub that throws at runtime).
+    testImplementation "org.json:json:20240303"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
     implementation project(':capacitor-cordova-android-plugins')

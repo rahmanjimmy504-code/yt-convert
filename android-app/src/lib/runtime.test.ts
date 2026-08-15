@@ -5,14 +5,15 @@ vi.mock('@capacitor/core', () => ({
   Capacitor: {
     isNativePlatform: () => mockNative,
     getPlatform: () => mockPlatform,
-    isPluginAvailable: (n: string) => n === 'Registered',
+    isPluginAvailable: (n: string) => n === 'Registered' || (mockExtractor && n === 'YTExtractor'),
   },
 }));
 
 let mockNative = false;
 let mockPlatform = 'web';
+let mockExtractor = false;
 
-const { describeRuntime, hasPlugin } = await import('./runtime');
+const { describeRuntime, hasPlugin, extractorReady, EXTRACTOR_PLUGIN_NAME } = await import('./runtime');
 
 describe('describeRuntime', () => {
   it('reports the browser during development', () => {
@@ -37,11 +38,35 @@ describe('describeRuntime', () => {
 });
 
 describe('hasPlugin', () => {
-  it('is false for the extraction plugin that does not exist yet', () => {
-    expect(hasPlugin('YTExtractor')).toBe(false);
+  it('is false for a plugin Capacitor has not registered', () => {
+    expect(hasPlugin('Missing')).toBe(false);
   });
 
   it('is true for a plugin Capacitor has registered', () => {
     expect(hasPlugin('Registered')).toBe(true);
+  });
+});
+
+describe('extractorReady', () => {
+  it('exposes the fixed plugin name', () => {
+    expect(EXTRACTOR_PLUGIN_NAME).toBe('YTExtractor');
+  });
+
+  it('is true only inside the native shell with the plugin registered', () => {
+    mockNative = true;
+    mockExtractor = true;
+    expect(extractorReady()).toBe(true);
+  });
+
+  it('is false in a browser even if a plugin were somehow reported', () => {
+    mockNative = false;
+    mockExtractor = true;
+    expect(extractorReady()).toBe(false);
+  });
+
+  it('is false in the native shell without the plugin', () => {
+    mockNative = true;
+    mockExtractor = false;
+    expect(extractorReady()).toBe(false);
   });
 });
