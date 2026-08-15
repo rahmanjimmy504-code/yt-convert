@@ -333,7 +333,7 @@ On any unhandled error during `fetchInfo()`, the route logs the error and return
 
 Streams a public media file to the browser. The file is not written to disk. Requires a convert ticket issued by `/api/video-info` after CAPTCHA (bound to the exact URL and client IP, 10-minute TTL). Rate-limited to **10 requests per 60 s per IP** (shared across instances when Upstash is configured). The proxy only fetches allowlisted media hosts (`*.googlevideo.com`, SoundCloud CDNs, TikTok CDNs, `*.twimg.com`, `*.cdninstagram.com`, `*.fbcdn.net`, and the public Piped proxy hosts such as `*.kavin.rocks`) and re-checks every redirect (SSRF).
 
-Audio is delivered in the real container (often `.m4a` / AAC). A file is never labeled `.mp3` unless it is actually MP3. Video is progressive MP4 when the platform provides one.
+Audio is delivered in the real container (often `.m4a` / AAC). A file is never labeled `.mp3` unless it is actually MP3. Video is progressive MP4 when the platform provides one. On YouTube, when a requested resolution only exists as separate video + audio tracks and the server has `ffmpeg` available, the two tracks are **stream-copied** into a fragmented MP4 on the fly (no re-encode, no file stored); otherwise the closest single-file stream is used and the result card says so honestly.
 
 ### Adding a Converter
 

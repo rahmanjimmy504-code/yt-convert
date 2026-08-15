@@ -27,6 +27,12 @@ ENV NODE_ENV=production \
     NODE_OPTIONS=--max-old-space-size=320 \
     PORT=3000 \
     HOSTNAME=0.0.0.0
+# ffmpeg enables on-the-fly stream-copy remux of YouTube's adaptive >360p
+# tracks (docs/hd-muxing-proposal.md). Stream-copy is near-zero CPU; no
+# re-encoding happens, and no media file is ever written to disk.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
 RUN groupadd -g 1001 nodejs && useradd -u 1001 -g nodejs nextjs
 COPY --from=builder /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./

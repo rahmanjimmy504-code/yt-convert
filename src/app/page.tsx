@@ -64,6 +64,8 @@ interface VideoInfo {
    * the result card stop silently downgrading (e.g. 1080p delivered as 360p).
    */
   videoQualityPlans?: VideoQualityPlan[];
+  /** Whether the server can combine separate video + audio tracks (remux). */
+  muxing?: boolean;
 }
 
 interface HistoryItem {
@@ -694,7 +696,7 @@ export default function Home() {
   // met by a single progressive file, the server told us so in
   // `videoQualityPlans` — surface an honest notice on the result card.
   const videoPlan = videoInfo?.videoQualityPlans?.find(p => p.quality === videoQuality) ?? null;
-  const videoPlanNote = videoPlan ? qualityDowngradeNote(videoPlan, videoQuality) : null;
+  const videoPlanNote = videoPlan ? qualityDowngradeNote(videoPlan, videoQuality, videoInfo?.muxing) : null;
 
   // Converter availability: live probe when it has landed, otherwise the
   // curated catalog badge so cards don't flash "Checking…" for known status.

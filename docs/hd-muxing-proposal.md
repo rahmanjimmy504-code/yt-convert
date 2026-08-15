@@ -1,11 +1,9 @@
-# HD muxing proposal (Phase 2/3) — status: deferred
+# HD muxing proposal (Phase 2/3) — status: shipped
 
 > Written 2026-08-12 alongside the Phase 0/1 fix (honest quality reporting +
-> pure selection logic). Tracked in the repo so the plan survives — it was
-> drafted in a previous session but never pushed.
->
-> Scope of the landed PR: **Phase 0 + Phase 1 only**. No ffmpeg or any binary
-> was added.
+> pure selection logic). Phase 0/1 landed first (no ffmpeg); Phase 2 (the
+> stream-copy remux) landed 2026-08-15 and Phase 3 (deployment) was decided as
+> **"ffmpeg on PATH, bundled in Docker"** — see the resolution at the bottom.
 
 ## The problem
 
@@ -97,7 +95,38 @@ ffmpeg in serverless functions is "not recommended". Options:
 
 ## Open decisions
 
-- Deployment option 1 vs 2 (vs a hybrid: option 1 first, option 2 for headroom).
-- Per-IP rate limit for muxed HD downloads.
-- UI once Phase 2 lands: options with kind `mux` become enabled and the
-  result-card note flips from "not available yet" to "combining streams…".
+- ~~Deployment option 1 vs 2 (vs a hybrid)~~ → **decided**: ffmpeg is bundled
+  into the Docker image (Render / VPS / Compose) and discovered at runtime via
+  `FFMPEG_PATH` → `$PATH`. Vercel's runtime has no ffmpeg, so muxing
+  self-disables there and the single-file path is unchanged. See §"Resolution".
+- ~~Per-IP rate limit for muxed HD downloads~~ → **done**: `/api/convert`
+  applies a separate, tighter `mux:<ip>` budget (3/min) on top of the normal
+  convert limit.
+- ~~UI once Phase 2 lands~~ → **done**: when the deployment reports `muxing:
+  true`, the result-card note for a `mux` quality flips from "not available
+  yet" to "will be combined … (stream-copied, no re-encode)".
+
+## Resolution (2026-08-15)
+
+Phase 2 and 3 landed as one change:
+
+- `src/lib/ffmpeg.ts` — availability probe (`FFMPEG_PATH` → `$PATH`,
+  `DISABLE_MUXING=1` to force off), the exact `muxArgs` argument array, and a
+  backpressured stdout → `ReadableStream` bridge with kill-on-abort.
+- `src/lib/extract.ts` — `extractYouTube` now returns an `ExtractedMux`
+  (video + audio URLs, both re-checked against the SSRF allowlist) when
+  `planVideoDownload` says the target needs muxing and ffmpeg is present. The
+  GVS PO token is attached per-URL only when it matches that URL's client.
+- `src/app/api/convert/route.ts` — remuxes when a mux result is returned,
+  re-validating both URLs immediately before spawn, applying the separate
+  mux rate limit, waiting briefly for ffmpeg's first bytes, and killing the
+  child on client abort. Falls back to the progressive stream (or a clear
+  error) when ffmpeg is unavailable.
+- `src/app/api/video-info/route.ts` — reports `muxing` so the result card can
+  word the note correctly.
+- `Dockerfile` — installs `ffmpeg` so the Render / VPS / Compose paths get
+  muxing out of the box.
+
+The `verify-youtube.mjs` "reports mux-needed" checks still pass unchanged:
+they assert the *plan* (which is still honest), while the convert path now
+serves the muxed stream when ffmpeg is available.

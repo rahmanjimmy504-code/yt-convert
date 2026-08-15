@@ -9,6 +9,7 @@ import {
 import { verifyCaptchaToken } from '@/lib/captcha';
 import { issueConvertTicket } from '@/lib/convert-ticket';
 import { innertubeFormats, sanitizeYouTubeCookies } from '@/lib/extract';
+import { isMuxingEnabled } from '@/lib/ffmpeg';
 import { INVIDIOUS_INSTANCES, invidiousVideoUrl } from '@/lib/invidious';
 import { clientIp, rateLimit } from '@/lib/rate-limit';
 import { recordEvent } from '@/lib/stats';
@@ -36,6 +37,12 @@ export interface VideoInfo {
    * could not be reached in time — the result card then shows no note.
    */
   videoQualityPlans?: VideoQualityPlan[];
+  /**
+   * Whether this deployment can combine separate video + audio tracks
+   * server-side (ffmpeg stream-copy remux). When false, a `mux` quality plan
+   * is reported honestly as "not available yet" by the result card.
+   */
+  muxing?: boolean;
 }
 
 const UA = { 'User-Agent': 'Mozilla/5.0 (compatible; YTConvert/1.0)' };
@@ -273,6 +280,9 @@ function withConvertFields(info: VideoInfo, rawUrl: string, ip: string): VideoIn
     canConvert,
     convertReason: canConvert ? undefined : convertUnavailableReason(info.platform) || undefined,
     convertTicket: canConvert ? issueConvertTicket(rawUrl, ip) : undefined,
+    // Deployment-level capability, attached outside the cache so it always
+    // reflects the current process's ffmpeg availability.
+    muxing: isMuxingEnabled(),
   };
 }
 

@@ -11,12 +11,27 @@ import { cobaltFormats, isCobaltConfigured } from './cobalt';
 import { getPoToken, isPoTokenServerConfigured } from './po-token';
 import { isAllowedMediaUrl } from './media-hosts';
 import { youtubeAwareFetch } from './youtube-egress';
+import { isMuxingEnabled } from './ffmpeg';
 import {
   extensionForMime,
   pickYouTubeFormat,
   isProgressiveMp4Itag,
+  planVideoDownload,
   type PlayerFormat,
 } from './youtube-formats';
+
+/** Two adaptive tracks that must be remuxed server-side (see docs/hd-muxing-proposal.md). */
+export interface ExtractedMux {
+  videoUrl: string;
+  audioUrl: string;
+  height?: number;
+  /**
+   * Best single-file progressive MP4, when one exists. Carried so a request
+   * that lands on a process without ffmpeg can still fall back to the honest
+   * progressive stream rather than failing outright.
+   */
+  progressiveUrl?: string;
+}
 
 export interface ExtractedMedia {
   url: string;
@@ -26,6 +41,8 @@ export interface ExtractedMedia {
   /** TikTok: true when the official play URL still has a watermark. */
   watermarked?: boolean;
   note?: string;
+  /** When set, the download needs a server-side remux of two adaptive tracks. */
+  mux?: ExtractedMux;
 }
 
 export type ExtractResult = ExtractedMedia | { error: string };
@@ -40,6 +57,15 @@ function fail(error: string): ExtractResult {
 }
 
 function ok(media: ExtractedMedia): ExtractResult {
+  // A mux result carries two URLs; both must pass the SSRF allowlist. The
+  // single `url` field is only a fallback and may legitimately be empty for
+  // videos that have no progressive stream at all.
+  if (media.mux) {
+    if (!isAllowedMediaUrl(media.mux.videoUrl) || !isAllowedMediaUrl(media.mux.audioUrl)) {
+      return fail('Extractor returned a host we will not proxy.');
+    }
+    return media;
+  }
   if (!isAllowedMediaUrl(media.url)) {
     return fail('Extractor returned a host we will not proxy.');
   }
@@ -929,6 +955,39 @@ async function extractYouTube(
     const itag18 = formats.find(f => f.itag === 18 && typeof f.url === 'string');
     if (itag18?.url && isProgressiveMp4Itag(18)) picked = itag18;
   }
+
+  // Phase 2 (docs/hd-muxing-proposal.md): when the requested height only
+  // exists as separate video + audio tracks AND ffmpeg is available, return a
+  // stream-copy remux instead of silently downgrading to the progressive
+  // ceiling. `planVideoDownload` prefers avc1 video + AAC audio, so a `-c copy`
+  // remux stays valid in MP4. When ffmpeg is absent (Vercel) this branch is
+  // skipped and the single-file behaviour is unchanged.
+  if (isMuxingEnabled()) {
+    const plan = planVideoDownload(formats, quality ?? 'best');
+    if (plan?.kind === 'mux' && plan.video.url && plan.audio?.url) {
+      // GVS tokens are IP/visitor/client-bound: attach one only to a
+      // googlevideo URL minted by the client the token was issued for.
+      const attach = (url: string, client?: string) =>
+        source === 'innertube' && gvsToken?.client && gvsToken.client === client
+          ? attachMediaUrlToken(url, gvsToken.poToken)
+          : url;
+      return ok({
+        // Fallback URL only; the convert route remuxes when mux is present.
+        url: picked?.url ?? '',
+        mimeType: 'video/mp4',
+        extension: 'mp4',
+        qualityLabel: plan.video.qualityLabel,
+        note: 'Remuxed from separate video + audio tracks',
+        mux: {
+          videoUrl: attach(plan.video.url, plan.video.sourceClient),
+          audioUrl: attach(plan.audio.url, plan.audio.sourceClient),
+          height: plan.video.height,
+          progressiveUrl: picked?.url,
+        },
+      });
+    }
+  }
+
   if (!picked?.url) {
     return fail(
       'No progressive MP4 with audio is available for this video. Higher resolutions may need a converter that combines separate video and audio tracks — try one below.',
