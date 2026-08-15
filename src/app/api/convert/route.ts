@@ -3,6 +3,8 @@ import { canConvertPlatform, convertUnavailableReason, detectPlatform, extractYo
 import { verifyConvertTicket } from '@/lib/convert-ticket';
 import { extractMedia, isExtractError, sanitizeYouTubeCookies } from '@/lib/extract';
 import { fetchAllowedMedia, MediaHostError } from '@/lib/media-fetch';
+import { isAllowedMediaUrl } from '@/lib/media-hosts';
+import { isMuxingEnabled, muxMediaToStream } from '@/lib/ffmpeg';
 import { isValidQuality, sanitizeDownloadFilename } from '@/lib/youtube-formats';
 import { acceptMediaResponse, sniffStreamPrefix, SNIFF_BYTES } from '@/lib/media-content';
 import { clientIp, rateLimit } from '@/lib/rate-limit';
@@ -13,6 +15,10 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
 const RATE_LIMIT = 10;
+// HD remuxes hold the function open for the whole download and double inbound
+// bandwidth, so they get a separate, tighter per-IP budget than single-file
+// downloads (see docs/hd-muxing-proposal.md §Security).
+const MUX_RATE_LIMIT = 3;
 
 function json(error: string, status: number, extra?: Record<string, unknown>) {
   return NextResponse.json(
@@ -162,6 +168,79 @@ export async function GET(request: Request) {
     }
 
     const filename = sanitizeDownloadFilename(title || 'download', extracted.extension);
+
+    // Decide the streaming source: a single upstream URL, or an ffmpeg
+    // stream-copy remux of two adaptive tracks (YouTube >360p).
+    let muxStream: ReturnType<typeof muxMediaToStream> = null;
+    let streamUrl = extracted.url;
+
+    if (extracted.mux) {
+      if (isMuxingEnabled()) {
+        const { videoUrl, audioUrl } = extracted.mux;
+        // Re-validate both URLs immediately before spawning ffmpeg; never
+        // trust the formats cached/returned at extraction time.
+        if (!isAllowedMediaUrl(videoUrl) || !isAllowedMediaUrl(audioUrl)) {
+          recordEvent({ type: 'lookup', platform, ok: false, error: 'mux ssrf' });
+          return json('Refusing to fetch a non-allowlisted media host.', 502);
+        }
+        const muxRetryAfter = await rateLimit(`mux:${ip}`, MUX_RATE_LIMIT);
+        if (muxRetryAfter > 0) {
+          return NextResponse.json(
+            { error: 'Too many HD downloads. Please wait a moment and try again.' },
+            { status: 429, headers: { 'Retry-After': String(muxRetryAfter), 'Cache-Control': 'no-store' } },
+          );
+        }
+        muxStream = muxMediaToStream(videoUrl, audioUrl);
+      }
+      if (!muxStream) {
+        // No ffmpeg on this process: serve the honest progressive fallback, or
+        // fail rather than stream a video-only track without audio.
+        if (extracted.mux.progressiveUrl) {
+          streamUrl = extracted.mux.progressiveUrl;
+        } else {
+          recordEvent({ type: 'lookup', platform, ok: false, error: 'mux unavailable' });
+          return json(
+            'This resolution needs combining separate video and audio tracks, which is unavailable on this server. Choose a lower quality or a converter below.',
+            502,
+          );
+        }
+      }
+    }
+
+    if (muxStream) {
+      // Wait a bounded time for ffmpeg to produce its first MP4 bytes or fail,
+      // mirroring the single-stream HTML-sniff tradeoff. A null result means
+      // "still connecting" — stream optimistically; a false result means
+      // ffmpeg errored before emitting anything.
+      const started = await Promise.race([
+        muxStream.started,
+        new Promise<boolean | null>(resolve => setTimeout(() => resolve(null), 3000)),
+      ]);
+      if (started === false) {
+        muxStream.kill();
+        const tail = muxStream.stderrTail().trim();
+        console.warn('[convert] mux failed:', tail || '(no stderr)');
+        recordEvent({ type: 'lookup', platform, ok: false, error: 'mux failed' });
+        return json(
+          'Could not combine the video and audio tracks. Try a lower quality or a converter below.',
+          502,
+        );
+      }
+
+      request.signal.addEventListener('abort', () => muxStream.kill(), { once: true });
+
+      const encodedName = encodeURIComponent(filename).replace(/['()]/g, '');
+      const headers = new Headers({
+        'Content-Type': 'video/mp4',
+        'Content-Disposition': `attachment; filename="${filename.replace(/"/g, '')}"; filename*=UTF-8''${encodedName}`,
+        'Cache-Control': 'no-store',
+        'X-Content-Type-Options': 'nosniff',
+      });
+
+      recordEvent({ type: 'lookup', platform, ok: true });
+      return new Response(muxStream.body, { status: 200, headers });
+    }
+
     const range = request.headers.get('range');
     const upstreamHeaders: Record<string, string> = {
       Accept: '*/*',
@@ -176,7 +255,7 @@ export async function GET(request: Request) {
       upstreamHeaders.Range = range;
     }
 
-    const upstream = await fetchAllowedMedia(extracted.url, {
+    const upstream = await fetchAllowedMedia(streamUrl, {
       headers: upstreamHeaders,
     });
 

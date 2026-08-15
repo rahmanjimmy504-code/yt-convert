@@ -54,15 +54,23 @@ export function deriveDownloadPanelState(
  * `plan.height` is the height the current single-file download actually
  * delivers, which may be below what the user asked for.
  */
-export function qualityDowngradeNote(plan: VideoQualityPlan | undefined, quality: string): string | null {
+export function qualityDowngradeNote(
+  plan: VideoQualityPlan | undefined,
+  quality: string,
+  muxing = false,
+): string | null {
   if (!plan) return null;
   const numeric = /^\d+$/.test(quality);
   const label = numeric ? `${quality}p` : 'Best quality';
   const delivered = plan.height || 0;
 
   if (plan.kind === 'mux') {
-    // The requested height only exists as separate video + audio tracks, and
-    // combining them is not implemented yet (see docs/hd-muxing-proposal.md).
+    // The requested height only exists as separate video + audio tracks.
+    if (muxing) {
+      // Phase 2 shipped: the server stream-copies the two tracks together, so
+      // the note becomes informational instead of a downgrade warning.
+      return `${label} will be combined from separate video + audio tracks (stream-copied, no re-encode).`;
+    }
     const got = delivered ? ` The closest single-file stream (${delivered}p) will be used for now.` : '';
     return `${label} needs combining separate video + audio tracks — not available yet.${got}`;
   }

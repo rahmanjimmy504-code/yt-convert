@@ -8,8 +8,10 @@ universal YouTube downloader and it does not claim to be.
 Typical public YouTube / YouTube Music videos, when Music-first Innertube, a
 public Piped/Invidious relay, the 9Convert/dlsrv farm, or an
 operator-configured cobalt instance returns a **direct** HTTPS URL on an
-allowlisted CDN. Progressive MP4 (often 360p/720p) and AAC/M4A audio; the farm
-may return a completed MP3/MP4 conversion. SoundCloud progressive tracks.
+allowlisted CDN. Progressive MP4 (often 360p/720p) and AAC/M4A audio; where
+`ffmpeg` is present, separate YouTube video + audio tracks are stream-copied
+into a higher-resolution MP4. The farm may return a completed MP3/MP4
+conversion. SoundCloud progressive tracks.
 Public TikTok / X / Instagram / Facebook embeds when those sites still expose
 a file.
 
@@ -52,7 +54,7 @@ public 9Convert fallback.
 | Deleted / taken down | YouTube returns `ERROR` / `UNPLAYABLE`. Nothing to proxy. |
 | Region-blocked | The VPS IP is not in the allowed country. A PO token does not change geo. |
 | DRM catalogs (Spotify, Deezer, Apple Music, Amazon Music) | Widevine / FairPlay. We do not strip DRM. |
-| Adaptive 1080p/4K mux | We only proxy a **single** progressive file. Combining separate video+audio tracks is not implemented. |
+| Adaptive 1080p/4K mux | Where `ffmpeg` is available (Docker/Render/VPS) we stream-copy the separate video+audio tracks into a fragmented MP4 on the fly. Without ffmpeg (e.g. Vercel) we proxy a **single** progressive file and say so. |
 | Cipher-only / SABR-only formats | We do not execute YouTube player JS or speak SABR. |
 | “Every YouTube video” | False. Music-label blocks, live-offline, kids-mode VR gaps, and BotGuard on a flagged IP still fail. |
 

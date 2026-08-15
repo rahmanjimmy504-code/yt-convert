@@ -56,6 +56,14 @@ describe('qualityDowngradeNote', () => {
     expect(note).toMatch(/360p/);
   });
 
+  it('flips to an informational note when the server can remux', () => {
+    const note = qualityDowngradeNote({ quality: '1080', kind: 'mux', height: 360 }, '1080', true);
+    expect(note).toMatch(/1080p/);
+    expect(note).toMatch(/combined from separate video \+ audio tracks/);
+    expect(note).toMatch(/stream-copied/);
+    expect(note).not.toMatch(/not available yet/);
+  });
+
   it('stays honest when no single-file stream exists to fall back to', () => {
     const note = qualityDowngradeNote({ quality: '1080', kind: 'mux', height: undefined }, '1080');
     expect(note).toMatch(/needs combining/);
