@@ -496,6 +496,12 @@ Recommended production environment variables:
 
 The PO-token variables are an **operator-only, same-egress** path. Do not put only the sidecar on a phone/VPS while leaving extraction and googlevideo on Vercel: that does not satisfy the IP binding. Use the root one-VPS Compose stack, run the phone as the website, or route the website through the phone with `YT_EGRESS_PROXY`. Vercel-only deployments do not need Termux for the public 9Convert/dlsrv fallback.
 
+## Contributing
+
+Contributions are welcome. This project uses the **Developer Certificate of Origin 1.1** — sign off your commits with `git commit -s`, keep TypeScript strict, and run `npm run typecheck && npm test && npm run build` before opening a pull request. AI coding assistants may be used as tools, but a human signs off and takes responsibility for the code.
+
+Read [CONTRIBUTING.md](CONTRIBUTING.md) for the full terms and workflow. Authorship, the copyright holder, and the AI-assisted-authorship attestation are recorded in [AUTHORS](AUTHORS); the contributor and third-party licence audit behind them is in [docs/licensing-audit.md](docs/licensing-audit.md).
+
 ## License
 
 For personal use only.
