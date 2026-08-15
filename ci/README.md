@@ -1,5 +1,11 @@
 # CI extras
 
+Workflows staged here are waiting for a human to move them into
+`.github/workflows/`. The automation account that opens these PRs does not
+hold the GitHub App `workflows` permission, so any push that creates or edits
+a file under `.github/workflows/` is rejected outright.
+
+
 ## `verify-youtube.workflow.yml`
 
 A GitHub Actions workflow that runs the **live** YouTube extraction check
@@ -46,3 +52,52 @@ runners have open egress, so the live check runs reliably there.
 The job fails (exit 1) if extraction stops producing a playable direct URL.
 Read the log to see per-client `playabilityStatus`, direct vs cipher-only
 format counts, the picked MP4/M4A, and the result of a real byte-range GET.
+
+
+---
+
+## `android-debug.workflow.yml`
+
+Builds the Android companion (`android-app/`) and uploads an installable
+**debug APK** as a run artifact.
+
+### Moving it into place
+
+**From a phone / browser:** use the "add the workflow" link in the pull
+request description — it opens GitHub's editor with the path and contents
+prefilled; scroll down and tap **Commit changes**.
+
+**From a shell:**
+
+```bash
+mkdir -p .github/workflows
+git mv ci/android-debug.workflow.yml .github/workflows/android-debug.yml
+git commit -m "Add the Android debug APK workflow"
+git push
+```
+
+### What it does
+
+`npm ci` → `npm run typecheck` → `npm test` → `npm run build` (Vite) →
+`npx cap sync android` → JDK 21 + Android SDK → `./gradlew assembleDebug` →
+uploads `app-debug.apk` (30-day retention) and prints its size in the job
+summary.
+
+### When it runs
+
+- **On pull requests and pushes to `main`** that touch `android-app/**` or the
+  workflow itself — path-filtered, so website-only changes do not spend a
+  10-minute Android build.
+- **Manually:** Actions tab → *Android debug APK* → *Run workflow*. This is how
+  you get a testable APK from any branch without a computer. The button only
+  appears once the workflow exists on the default branch.
+
+### What you get
+
+An **unsigned-for-distribution, debug-signed** APK: fine for sideloading onto
+your own phone (enable "install unknown apps"), not for the Play Store. Its
+applicationId is suffixed `.debug`, so it installs alongside a future signed
+release rather than replacing it.
+
+No signing secrets are needed, and none may be added: an APK is trivially
+unzipped, and this repository is public.

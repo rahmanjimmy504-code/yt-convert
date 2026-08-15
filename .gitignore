@@ -3,6 +3,7 @@
 # dependencies
 /node_modules
 /po-token-server/node_modules
+/android-app/node_modules
 /.pnp
 .pnp.js
 
@@ -38,3 +39,23 @@ next-env.d.ts
 
 # Cobalt API key file (contains a live credential; keys.example.json is the template)
 /keys.json
+
+# Android companion (android-app/): build output. The Capacitor native project
+# itself IS committed; only generated artifacts are ignored.
+/android-app/dist
+/android-app/android/app/src/main/assets/public
+/android-app/android/app/src/main/assets/capacitor.config.json
+/android-app/android/app/src/main/assets/capacitor.plugins.json
+/android-app/android/app/src/main/res/xml/config.xml
+/android-app/android/.gradle
+/android-app/android/build
+/android-app/android/app/build
+/android-app/android/capacitor-cordova-android-plugins
+/android-app/android/local.properties
+*.apk
+*.aab
+
+# Android signing material must never be committed
+*.jks
+*.keystore
+keystore.properties
