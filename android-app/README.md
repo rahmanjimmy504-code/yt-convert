@@ -1,10 +1,10 @@
-# YT Convert — Android companion (scaffold)
+# YT Convert — Android companion (UI parity)
 
-A Capacitor shell that will grow into the Android version of
-[YT Convert](../README.md). **This PR is the scaffold only**: the web bundle
-builds, Capacitor syncs it into a real Android project, and CI produces an
-installable debug APK. There is no converter UI and no download capability
-yet.
+A Capacitor app that is growing into the Android version of
+[YT Convert](../README.md). The scaffold (PR 1) proved the pipeline; this PR
+brings the web bundle to **UI parity with the website** — the same paste box,
+platform detection, format/quality pickers, dark mode, and history — while
+staying honest that on-device extraction is still a later PR.
 
 Licensed **GPL-3.0-or-later**, like the rest of the repository — see
 [`../LICENSE`](../LICENSE).
@@ -17,18 +17,21 @@ Licensed **GPL-3.0-or-later**, like the rest of the repository — see
 | Capacitor 7 Android project (`android/`), appId `io.github.rahmanjimmy504.ytconvert` | Committed |
 | Brand launcher icon (legacy, round, and adaptive) generated from the website mark | Done |
 | Debug `applicationIdSuffix` (`.debug`) so a test build coexists with a release | Done |
-| Debug APK workflow (staged at [`../ci/android-debug.workflow.yml`](../ci/android-debug.workflow.yml)) | Ready to install |
-| Converter UI, extraction, downloads | **Not yet** — see the roadmap below |
+| Debug APK workflow (`.github/workflows/android-debug.yml`) | Live in CI |
+| Converter UI (paste box, platform detection, format/quality, dark mode, history) | **This PR** |
+| Native extraction, downloads, MediaStore | **Not yet** — see the roadmap below |
 
-The in-app screen is a diagnostics card: it reports whether the bundle is
-running in the native shell or a browser, and shows that the extraction plugin
-is absent. That is deliberate — the shell never claims a capability it does
-not have.
+The converter screen is the real UI now: it detects the pasted platform with
+the same rules as the website, shows the YouTube thumbnail for video links,
+and — because on-device extraction is not built yet — offers the on-device
+apps (Seal / YTDLnis / NewPipe) for YouTube rather than claiming a download it
+cannot perform. DRM catalogs (Spotify, Deezer, Apple Music, Amazon Music) are
+honestly reported as not rippable.
 
 ## Roadmap (one PR each, in order)
 
-1. **Capacitor scaffold + debug APK workflow** ← this one
-2. UI parity with the website
+1. Capacitor scaffold + debug APK workflow ✓
+2. UI parity with the website ✓ ← this one
 3. Native progressive MP4 / original-audio MVP
 4. Background downloads + MediaStore
 5. Adaptive MP4/AAC muxing
@@ -50,13 +53,9 @@ cd android && ./gradlew assembleDebug
 Or `npm run apk:debug` from `android-app/` to do all of it in one command.
 
 No Android SDK to hand? Let CI build it: the **Android debug APK** workflow
+([`.github/workflows/android-debug.yml`](../.github/workflows/android-debug.yml))
 runs on every change under `android-app/`, and on demand from the Actions tab,
 and uploads a `yt-convert-debug-apk` artifact.
-
-The workflow file ships at [`../ci/android-debug.workflow.yml`](../ci/android-debug.workflow.yml)
-and has to be moved to `.github/workflows/android-debug.yml` once, by a human —
-the automation account that opened this PR is not allowed to create workflow
-files. See [`../ci/README.md`](../ci/README.md).
 
 ### Web-only development
 
@@ -75,10 +74,14 @@ android-app/
   capacitor.config.ts   appId, appName, webDir
   vite.config.ts        base: './' — required for capacitor:// asset URLs
   src/
-    App.tsx             scaffold screen (diagnostics + roadmap)
+    App.tsx             converter UI (paste, platform, format/quality, history)
     main.tsx            React entry
     index.css           Tailwind 4 + safe-area padding
-    lib/runtime.ts      native-vs-browser detection, plugin availability
+    lib/
+      runtime.ts        native-vs-browser detection, plugin availability
+      platforms.ts      detectPlatform / labels / colors (ported from website)
+      formats.ts        audio-kbps + video-quality options
+      android-download-apps.ts  Seal / YTDLnis / NewPipe intent builder
   android/              Capacitor-generated native project (committed)
 ```
 
