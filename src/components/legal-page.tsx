@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import NextLink from 'next/link';
 import { ArrowLeft } from 'lucide-react';
+import { LICENSE_SPDX, LICENSE_URL, SOURCE_URL } from '@/lib/site';
 
 /**
  * Shared shell for the legal pages (/privacy, /terms). Keeps them visually
@@ -69,7 +70,26 @@ export default function LegalPage({
 
       <footer className="border-t border-gray-200 dark:border-gray-800 py-3 mt-auto">
         <p className="text-center text-[11px] text-gray-400">
-          YT Convert {'\u2014'} For personal use only {'\u00B7'}{' '}
+          {/* Software licence (GPL-3.0-or-later), distinct from the Terms. */}
+          YT Convert {'\u2014'} free software under{' '}
+          <a
+            href={LICENSE_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="hover:text-red-500 underline-offset-2 hover:underline transition-colors"
+          >
+            {LICENSE_SPDX}
+          </a>
+          {' \u00B7 '}
+          <a
+            href={SOURCE_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="hover:text-red-500 underline-offset-2 hover:underline transition-colors"
+          >
+            Source
+          </a>
+          {' \u00B7 '}
           <NextLink href="/faq" className="hover:text-red-500 underline-offset-2 hover:underline transition-colors">FAQ</NextLink>
           {' \u00B7 '}
           <NextLink href="/privacy" className="hover:text-red-500 underline-offset-2 hover:underline transition-colors">Privacy</NextLink>

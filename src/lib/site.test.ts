@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { DEFAULT_SITE_URL, getSiteUrl } from './site';
+import { DEFAULT_SITE_URL, getSiteUrl, LICENSE_SPDX, LICENSE_URL, SOURCE_URL } from './site';
 
 beforeEach(() => {
   vi.unstubAllEnvs();
@@ -30,5 +30,19 @@ describe('getSiteUrl', () => {
   it('strips trailing slashes', () => {
     vi.stubEnv('NEXT_PUBLIC_SITE_URL', 'https://yt-convert.example.com///');
     expect(getSiteUrl()).toBe('https://yt-convert.example.com');
+  });
+});
+
+describe('licence metadata', () => {
+  it('advertises the project as GPL-3.0-or-later', () => {
+    expect(LICENSE_SPDX).toBe('GPL-3.0-or-later');
+  });
+
+  it('points the UI at the source repository', () => {
+    expect(SOURCE_URL).toBe('https://github.com/rahmanjimmy504-code/yt-convert');
+  });
+
+  it('links the licence text inside that repository', () => {
+    expect(LICENSE_URL).toBe(`${SOURCE_URL}/blob/main/LICENSE`);
   });
 });

@@ -500,8 +500,35 @@ The PO-token variables are an **operator-only, same-egress** path. Do not put on
 
 Contributions are welcome. This project uses the **Developer Certificate of Origin 1.1** — sign off your commits with `git commit -s`, keep TypeScript strict, and run `npm run typecheck && npm test && npm run build` before opening a pull request. AI coding assistants may be used as tools, but a human signs off and takes responsibility for the code.
 
-Read [CONTRIBUTING.md](CONTRIBUTING.md) for the full terms and workflow. Authorship, the copyright holder, and the AI-assisted-authorship attestation are recorded in [AUTHORS](AUTHORS); the contributor and third-party licence audit behind them is in [docs/licensing-audit.md](docs/licensing-audit.md).
+Contributions are accepted under the project's own licence (inbound = outbound, GPL-3.0-or-later). Read [CONTRIBUTING.md](CONTRIBUTING.md) for the full terms and workflow. Authorship, the copyright holder, and the AI-assisted-authorship attestation are recorded in [AUTHORS](AUTHORS); the contributor and third-party licence audit behind them is in [docs/licensing-audit.md](docs/licensing-audit.md).
 
 ## License
 
-For personal use only.
+YT Convert is **free software** licensed under the **GNU General Public License, version 3 or (at your option) any later version** — SPDX: `GPL-3.0-or-later`. The full text is in [LICENSE](LICENSE).
+
+```
+Copyright (C) 2025-2026 Jimmy Rahman
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <https://www.gnu.org/licenses/>.
+```
+
+New source files may carry the one-line identifier `SPDX-License-Identifier: GPL-3.0-or-later` instead of the full header.
+
+**The licence covers this software, not your use of the hosted service.** The [Terms of Service](src/app/terms/page.tsx) for the instance we run still ask for personal, non-commercial use of *that deployment* and its bandwidth — a hosting condition, not a restriction on the freedoms the GPL grants you over the code. Run your own instance and those terms are yours to set.
+
+Downloading media remains subject to the source platform's terms and to copyright law; see [docs/limitations.md](docs/limitations.md).
+
+### Third-party components
+
+Dependencies, the vendored Geist font (SIL OFL 1.1), and third-party trademarks keep their own licences — see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). The contributor and third-party licence audit behind this relicense is in [docs/licensing-audit.md](docs/licensing-audit.md); authorship and the copyright holder are recorded in [AUTHORS](AUTHORS).

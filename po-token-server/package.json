@@ -2,6 +2,7 @@
   "name": "yt-convert-po-token-server",
   "version": "2.0.0",
   "private": true,
+  "license": "GPL-3.0-or-later",
   "description": "Authenticated BgUtils sidecar that mints YouTube WebPO tokens for yt-convert. The main app never performs BotGuard attestation itself.",
   "type": "module",
   "main": "server.js",

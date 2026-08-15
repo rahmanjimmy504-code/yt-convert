@@ -14,9 +14,14 @@ By adding a `Signed-off-by` line to a commit, you certify the DCO
 reproduced in [§3](#3-developer-certificate-of-origin-11) below.
 
 **Inbound = outbound.** Your contribution is offered under the same licence
-as the project itself, as stated in the `LICENSE` file (or, until a
-`LICENSE` file exists, in the README's *License* section). Do not submit
-code you cannot license on those terms.
+as the project itself — **GPL-3.0-or-later**, the full text of which is in
+[`LICENSE`](LICENSE). Do not submit code you cannot license on those terms.
+
+New source files may carry the SPDX one-liner instead of a full GPL header:
+
+```ts
+// SPDX-License-Identifier: GPL-3.0-or-later
+```
 
 ### Signing off
 
@@ -102,9 +107,11 @@ licence is compatible with this project's. New dependencies and bundled
 assets must be added to `THIRD_PARTY_NOTICES.md` in the same pull request,
 with their licence and copyright notice.
 
-Avoid dependencies that are copyleft in a way that would restrict this
-project, and avoid third-party logos or trademarks beyond nominative
-identification of a supported platform.
+Dependencies must be **GPL-3.0-or-later compatible**: MIT, ISC, Apache-2.0,
+BSD-2/3-Clause, MPL-2.0, 0BSD, and LGPL are fine; proprietary,
+non-commercial-only, or GPL-incompatible licences (for example the original
+4-clause BSD, or CC BY-NC) are not. Avoid third-party logos or trademarks
+beyond nominative identification of a supported platform.
 
 ## 5. Development workflow
 

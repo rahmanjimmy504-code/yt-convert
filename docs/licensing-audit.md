@@ -1,6 +1,6 @@
 # YT Convert — Contributor & Third-Party Licence Audit
 
-Status: **CLEARED — see [§7 Resolution](#7-resolution-2026-08-15)**
+Status: **CLEARED — blocker resolved, project relicensed to GPL-3.0-or-later (see [§7](#7-resolution-2026-08-15))**
 Prepared: 2026-08-15
 Updated: 2026-08-15 (blocker cleared by owner attestation)
 Branch: `arena/01a00691-yt-convert` (audit), `arena/01a00699-yt-convert` (resolution)
@@ -188,4 +188,12 @@ The [§1](#1-contributors) blocker was cleared using **option 1 of [§1.4](#14-h
 
 Because no other person or entity has contributed copyrightable material to this repository, there is no third party whose permission is missing. The remaining §2–§4 findings were already PASS, subject to the notice obligations now discharged in `THIRD_PARTY_NOTICES.md`.
 
-**Consequence: [§6](#6-what-the-still-pending-relicense-pr-must-contain) is unblocked.** Items 5 (`CONTRIBUTING.md` + `AUTHORS`) landed with this resolution; items 1–4 and 6 land in the separate GPL-3.0-or-later relicense PR.
+**Consequence: [§6](#6-what-the-still-pending-relicense-pr-must-contain) is unblocked and has now been carried out.** Item 5 (`CONTRIBUTING.md` + `AUTHORS`) landed with this resolution; items 1–4 and 6 landed in the separate GPL-3.0-or-later relicense PR that followed:
+
+| §6 item | Delivered as |
+|---|---|
+| 1. Replace the `For personal use only` notice | README *License* section; footers in `src/app/page.tsx`, `src/app/faq/page.tsx`, `src/components/legal-page.tsx` |
+| 2. Full GPL-3.0 text + SPDX | `LICENSE` (verbatim, 674 lines); SPDX `GPL-3.0-or-later` in package metadata and `src/lib/site.ts` |
+| 3. Package metadata | `package.json` (`license`, `private: false`) and `po-token-server/package.json` (`license`, stays `private`) |
+| 4. Third-party notices | `THIRD_PARTY_NOTICES.md` (deps + lockfile inventory, Geist OFL 1.1, Snapchat trademark) |
+| 6. Legal-page copy | `src/app/terms/page.tsx` — service "personal, non-commercial use" kept, with a new *Software licence* section stating it is a hosting condition, not the code's licence |
