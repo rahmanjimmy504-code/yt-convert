@@ -37,6 +37,7 @@
   ],
   "exclude": [
     "node_modules",
-    "po-token-server"
+    "po-token-server",
+    "android-app"
   ]
 }

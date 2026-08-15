@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- YT Convert brand red, sampled from the website's app mark. -->
+    <color name="ic_launcher_background">#E83838</color>
+</resources>

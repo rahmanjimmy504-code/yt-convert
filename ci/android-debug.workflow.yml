@@ -1,0 +1,95 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: Android debug APK
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'android-app/**'
+      - '.github/workflows/android-debug.yml'
+  pull_request:
+    paths:
+      - 'android-app/**'
+      - '.github/workflows/android-debug.yml'
+  # Lets a maintainer produce an installable APK from any branch on demand.
+  workflow_dispatch:
+
+# A new push supersedes an in-flight build of the same ref.
+concurrency:
+  group: android-debug-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  debug-apk:
+    name: Build unsigned debug APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: android-app
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: android-app/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type-check
+        run: npm run typecheck
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build web bundle
+        run: npm run build
+
+      - name: Setup JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          build-root-directory: android-app/android
+
+      - name: Sync web assets into the native project
+        run: npx cap sync android
+
+      - name: Assemble debug APK
+        working-directory: android-app/android
+        run: ./gradlew --no-daemon assembleDebug
+
+      - name: Report APK size
+        working-directory: android-app/android
+        run: |
+          apk=app/build/outputs/apk/debug/app-debug.apk
+          ls -lh "$apk"
+          echo "### Debug APK" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "\`$(basename "$apk")\` — $(du -h "$apk" | cut -f1)" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Debug-signed with the throwaway Android debug key: installable for testing, **not** for distribution." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: yt-convert-debug-apk
+          path: android-app/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 30
