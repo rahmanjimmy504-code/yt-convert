@@ -2,6 +2,8 @@ ext {
     minSdkVersion = 23
     compileSdkVersion = 35
     targetSdkVersion = 35
+    // In sync with the kotlin-gradle-plugin classpath in build.gradle.
+    kotlinVersion = '1.9.25'
     androidxActivityVersion = '1.9.2'
     androidxAppCompatVersion = '1.7.0'
     androidxCoordinatorLayoutVersion = '1.2.0'

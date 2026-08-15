@@ -29,10 +29,23 @@ export function describeRuntime(): RuntimeInfo {
 }
 
 /**
- * Whether a named Capacitor plugin is registered. The extraction plugin lands
- * in a later PR; until then the UI must degrade honestly instead of pretending
- * a download will work.
+ * Whether a named Capacitor plugin is registered. The UI must degrade
+ * honestly instead of pretending a download will work when a plugin is
+ * missing (e.g. a dev-server browser session).
  */
 export function hasPlugin(name: string): boolean {
   return Capacitor.isPluginAvailable(name);
+}
+
+/** Plugin name of the on-device YouTube extractor (Kotlin, in android/). */
+export const EXTRACTOR_PLUGIN_NAME = 'YTExtractor';
+
+/**
+ * True only inside the Capacitor shell AND with the native YTExtractor
+ * plugin registered. The real download button gates on exactly this: a
+ * browser preview or a shell without the plugin never claims a download it
+ * cannot perform.
+ */
+export function extractorReady(): boolean {
+  return Capacitor.isNativePlatform() && Capacitor.isPluginAvailable(EXTRACTOR_PLUGIN_NAME);
 }

@@ -38,4 +38,10 @@
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Only needed to save downloads on Android 6–9 (API 23–28). From
+         Android 10 (API 29) the DownloadManager writes to the public
+         Downloads directory via scoped storage without any permission. -->
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
 </manifest>

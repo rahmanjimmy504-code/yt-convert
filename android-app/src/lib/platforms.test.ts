@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   PLATFORM_KEYS,
   canConvertPlatform,
+  canExtractOnDevice,
   convertUnavailableReason,
   detectPlatform,
   extractYouTubeId,
@@ -10,6 +11,25 @@ import {
   platformLabel,
   type PlatformKey,
 } from './platforms';
+
+describe('canExtractOnDevice', () => {
+  it('is true only for the platforms the native extractor handles in this release', () => {
+    expect(canExtractOnDevice('youtube')).toBe(true);
+    expect(canExtractOnDevice('youtubemusic')).toBe(true);
+  });
+
+  it('is false for every other platform — even convertible ones', () => {
+    const rest = PLATFORM_KEYS.filter(p => p !== 'youtube' && p !== 'youtubemusic');
+    for (const p of rest) expect(canExtractOnDevice(p)).toBe(false);
+  });
+
+  it('never claims extraction for DRM catalogs', () => {
+    for (const p of ['spotify', 'deezer', 'applemusic', 'amazonmusic'] as PlatformKey[]) {
+      expect(canConvertPlatform(p)).toBe(false);
+      expect(canExtractOnDevice(p)).toBe(false);
+    }
+  });
+});
 
 describe('detectPlatform', () => {
   it('returns null for empty input', () => {

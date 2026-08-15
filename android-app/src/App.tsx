@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { describeRuntime, hasPlugin } from './lib/runtime';
+import { describeRuntime, extractorReady } from './lib/runtime';
 import {
   detectPlatform,
   extractYouTubeId,
   platformColor,
   platformLabel,
   canConvertPlatform,
+  canExtractOnDevice,
   convertUnavailableReason,
   type FormatKey,
   type PlatformKey,
@@ -17,12 +18,14 @@ import {
   buildAndroidDownloadIntent,
   type AndroidDownloadApp,
 } from './lib/android-download-apps';
+import {
+  YTExtractor,
+  describeDownloadedFile,
+  describeExtractionFailure,
+} from './lib/yt-extractor';
 
 const SOURCE_URL = 'https://github.com/rahmanjimmy504-code/yt-convert';
 const LICENSE_URL = `${SOURCE_URL}/blob/main/LICENSE`;
-
-/** Ships in a later PR; the UI must not pretend a download will work. */
-const EXTRACTOR_PLUGIN = 'YTExtractor';
 
 type Phase = 'input' | 'ready' | 'error';
 
@@ -196,7 +199,7 @@ async function copyText(t: string): Promise<boolean> {
 
 const TIPS = [
   'Paste any link from YouTube, SoundCloud, X, Instagram, TikTok or Facebook.',
-  'On-device extraction is coming — until then, use a free Android app below for YouTube.',
+  'YouTube downloads run on this phone over your own connection — that usually clears the bot check.',
   'DRM catalogs (Spotify, Deezer, Apple Music, Amazon Music) are never ripped.',
   'Your link stays on this device: there is no server in the middle.',
 ];
@@ -213,7 +216,10 @@ const FORMAT_LABELS: Record<FormatKey, string> = { mp3: 'Audio', mp4: 'Video' };
 
 export default function App() {
   const runtime = describeRuntime();
-  const extractorReady = hasPlugin(EXTRACTOR_PLUGIN);
+  // True only inside the Capacitor shell with the Kotlin YTExtractor plugin
+  // registered. The real download button gates on this — a browser preview or
+  // a shell without the plugin never claims a download it cannot perform.
+  const nativeReady = extractorReady();
 
   const [mounted, setMounted] = useState(false);
   const [url, setUrl] = useState('');
@@ -227,6 +233,9 @@ export default function App() {
   const [tipIdx, setTipIdx] = useState(0);
   const [phIdx, setPhIdx] = useState(0);
   const [launched, setLaunched] = useState<{ name: string; copied: boolean } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [nativeStatus, setNativeStatus] = useState('');
+  const [nativeError, setNativeError] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -290,6 +299,8 @@ export default function App() {
     }
     setError('');
     setLaunched(null);
+    setNativeStatus('');
+    setNativeError('');
     recordHistory(u, plat);
     setPhase('ready');
   }, [url, recordHistory]);
@@ -312,6 +323,8 @@ export default function App() {
     setPhase('input');
     setError('');
     setLaunched(null);
+    setNativeStatus('');
+    setNativeError('');
     inputRef.current?.focus();
   }, []);
 
@@ -332,6 +345,8 @@ export default function App() {
 
   const handleFormatChange = useCallback((f: FormatKey) => {
     setFormat(f);
+    setNativeStatus('');
+    setNativeError('');
     sSet('yt-convert-android-format', f);
   }, []);
   const handleAudioQualityChange = useCallback((q: string) => {
@@ -370,6 +385,87 @@ export default function App() {
     },
     [url],
   );
+
+  /**
+   * The real download path: native Innertube extraction over the phone's own
+   * connection, then the system DownloadManager saves the allowlist-checked
+   * stream into Downloads/YTConvert. Only reachable when the YTExtractor
+   * plugin is registered (nativeReady) — otherwise the UI shows the honest
+   * free-app handoffs instead.
+   */
+  const handleNativeDownload = useCallback(async () => {
+    const u = url.trim();
+    if (!u || busy) return;
+    setBusy(true);
+    setNativeError('');
+    setNativeStatus('');
+    try {
+      const stream = await YTExtractor.extract({
+        url: u,
+        format: format === 'mp3' ? 'audio' : 'video',
+        quality: format === 'mp3' ? audioQuality : videoQuality,
+      });
+      const saved = await YTExtractor.download({
+        url: stream.url,
+        title: stream.title,
+        extension: stream.extension,
+        mimeType: stream.mimeType,
+      });
+      setNativeStatus(describeDownloadedFile(stream, saved));
+    } catch (err) {
+      setNativeError(describeExtractionFailure(err));
+    } finally {
+      setBusy(false);
+    }
+  }, [url, format, audioQuality, videoQuality, busy]);
+
+  /**
+   * The honest free-app handoff panel (Seal / YTDLnis / NewPipe). Shown when
+   * the native extractor is absent for a YouTube link, or when a native
+   * extraction just failed and the visitor still wants their file.
+   */
+  const renderFreeAppsPanel = (lead: string) =>
+    videoId ? (
+      <div className="border-t border-red-200/80 dark:border-red-900 pt-3 space-y-2.5">
+        <div className="flex items-center gap-2 flex-wrap">
+          <p className="text-xs font-semibold">Download with a free Android app</p>
+          <span className="text-[9px] font-bold tracking-wide px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">
+            ON DEVICE
+          </span>
+        </div>
+        <p className="text-[11px] leading-relaxed text-gray-500 dark:text-gray-400">{lead}</p>
+        <div className="grid grid-cols-1 gap-2">
+          {ANDROID_DOWNLOAD_APPS.map(app => (
+            <button
+              key={app.name}
+              type="button"
+              onClick={() => openAndroidDownloadApp(app)}
+              className="min-h-14 rounded-lg border border-emerald-200 dark:border-emerald-900 bg-white dark:bg-gray-900 px-3 py-2 text-left hover:border-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 transition-colors"
+              title={`Open ${app.name} on Android or visit its official install page`}
+            >
+              <span className="flex items-center justify-between gap-2 text-xs font-semibold text-gray-800 dark:text-gray-200">
+                {app.name}
+                <ExternalLinkIcon className="text-emerald-600 flex-shrink-0" />
+              </span>
+              <span className="block mt-0.5 text-[10px] leading-snug text-gray-500 dark:text-gray-400">
+                {app.description}
+              </span>
+            </button>
+          ))}
+        </div>
+        <p className="text-[10px] text-gray-400">
+          Choose audio/video and quality inside the app. NewPipe audio downloads may use M4A or WebM rather than
+          MP3.
+        </p>
+        {launched && (
+          <p role="status" aria-live="polite" className="text-xs text-green-700 dark:text-green-400">
+            {launched.copied
+              ? `Opened ${launched.name}. The link is also on your clipboard.`
+              : `Opened ${launched.name}.`}
+          </p>
+        )}
+      </div>
+    ) : null;
 
   if (!mounted) {
     return (
@@ -598,64 +694,55 @@ export default function App() {
                 </div>
               )}
 
-              {/* Honest capability status. Native extraction lands in a later
-                  PR; until the plugin is present the app must not claim a
-                  download it cannot perform. */}
+              {/* Honest capability status. The real download button exists only
+                  when the native YTExtractor plugin is registered AND the
+                  platform is in this release's on-device scope (YouTube);
+                  everything else degrades instead of pretending. */}
               {!canConvertPlatform(dp) ? (
                 <p className="flex items-start gap-1.5 text-[11px] text-gray-500 dark:text-gray-400">
                   <InfoIcon className="mt-0.5 flex-shrink-0 text-gray-400" />
                   <span>{convertUnavailableReason(dp)}</span>
                 </p>
-              ) : extractorReady ? (
-                <button
-                  type="button"
-                  className="w-full h-11 rounded-xl bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white text-sm font-semibold shadow-lg shadow-red-500/20 transition-all flex items-center justify-center gap-2"
-                >
-                  <DownloadIcon size={16} />
-                  {format === 'mp3' ? 'Download audio' : 'Download video'}
-                </button>
-              ) : videoId ? (
-                <div className="border-t border-red-200/80 dark:border-red-900 pt-3 space-y-2.5">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <p className="text-xs font-semibold">Download with a free Android app</p>
-                    <span className="text-[9px] font-bold tracking-wide px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">
-                      ON DEVICE
+              ) : canExtractOnDevice(dp) && nativeReady ? (
+                <div className="space-y-2.5">
+                  <button
+                    type="button"
+                    onClick={() => void handleNativeDownload()}
+                    disabled={busy}
+                    aria-busy={busy}
+                    className="w-full h-11 rounded-xl bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white text-sm font-semibold shadow-lg shadow-red-500/20 disabled:opacity-60 disabled:cursor-wait transition-all flex items-center justify-center gap-2"
+                  >
+                    <DownloadIcon size={16} className={busy ? 'animate-pulse' : undefined} />
+                    {busy ? 'Extracting…' : format === 'mp3' ? 'Download audio' : 'Download video'}
+                  </button>
+                  <p className="flex items-start gap-1.5 text-[11px] text-gray-500 dark:text-gray-400">
+                    <InfoIcon className="mt-0.5 flex-shrink-0 text-gray-400" />
+                    <span>
+                      {format === 'mp3'
+                        ? 'Runs on this phone over your own connection. Audio is saved as the original AAC/M4A track — there is no MP3 transcode on-device.'
+                        : 'Runs on this phone over your own connection. Progressive MP4 up to the single-file ceiling — HD muxing arrives in a later release.'}
                     </span>
-                  </div>
-                  <p className="text-[11px] leading-relaxed text-gray-500 dark:text-gray-400">
-                    On-device extraction arrives in the next release. Until then, these free apps download over your
-                    own connection — tap one to open it with this video; if it is not installed, Android opens its
-                    official download page. The link is copied as a fallback.
                   </p>
-                  <div className="grid grid-cols-1 gap-2">
-                    {ANDROID_DOWNLOAD_APPS.map(app => (
-                      <button
-                        key={app.name}
-                        type="button"
-                        onClick={() => openAndroidDownloadApp(app)}
-                        className="min-h-14 rounded-lg border border-emerald-200 dark:border-emerald-900 bg-white dark:bg-gray-900 px-3 py-2 text-left hover:border-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 transition-colors"
-                        title={`Open ${app.name} on Android or visit its official install page`}
-                      >
-                        <span className="flex items-center justify-between gap-2 text-xs font-semibold text-gray-800 dark:text-gray-200">
-                          {app.name}
-                          <ExternalLinkIcon className="text-emerald-600 flex-shrink-0" />
-                        </span>
-                        <span className="block mt-0.5 text-[10px] leading-snug text-gray-500 dark:text-gray-400">
-                          {app.description}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                  <p className="text-[10px] text-gray-400">
-                    Choose audio/video and quality inside the app. NewPipe audio downloads may use M4A or WebM rather
-                    than MP3.
-                  </p>
-                  {launched && (
+                  {nativeStatus && (
                     <p role="status" aria-live="polite" className="text-xs text-green-700 dark:text-green-400">
-                      {launched.copied
-                        ? `Opened ${launched.name}. The link is also on your clipboard.`
-                        : `Opened ${launched.name}.`}
+                      {nativeStatus}
                     </p>
+                  )}
+                  {nativeError && (
+                    <div className="space-y-3">
+                      <p role="alert" className="text-xs text-red-600 dark:text-red-400">
+                        {nativeError}
+                      </p>
+                      {renderFreeAppsPanel(
+                        'You can still get this video: these free apps download over your own connection — tap one to open it with this video; if it is not installed, Android opens its official download page. The link is copied as a fallback.',
+                      )}
+                    </div>
+                  )}
+                </div>
+              ) : canExtractOnDevice(dp) ? (
+                <div className="space-y-3">
+                  {renderFreeAppsPanel(
+                    'On-device extraction arrives in the next release. Until then, these free apps download over your own connection — tap one to open it with this video; if it is not installed, Android opens its official download page. The link is copied as a fallback.',
                   )}
                 </div>
               ) : (
