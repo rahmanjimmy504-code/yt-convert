@@ -27,7 +27,9 @@ echo "== yt-convert on Termux (no VPS) =="
 
 echo "[1/6] packages"
 pkg update -y
-pkg install -y git nodejs-lts openssh cloudflared || pkg install -y git nodejs openssh
+# ffmpeg enables the HD mux: YouTube's >360p tracks are separate video +
+# audio streams, remuxed on the fly with a stream copy (see src/lib/ffmpeg.ts).
+pkg install -y git nodejs-lts openssh cloudflared ffmpeg || pkg install -y git nodejs openssh ffmpeg
 if ! command -v cloudflared >/dev/null 2>&1; then
   echo "cloudflared is missing. pkg install cloudflared   or download the arm64 binary from Cloudflare."
   exit 1

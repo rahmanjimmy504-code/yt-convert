@@ -37,6 +37,17 @@ ones, which is fine.
 Do **not** set `YT_EGRESS_PROXY` in this mode. Everything is already on the
 phone.
 
+## HD muxing works on this path
+
+The script installs `ffmpeg` from Termux's own package repository, so the
+free phone-as-website path gets the same HD muxing as the Docker
+(Render / VPS / Compose) deployments: YouTube's separate >360p video and
+audio tracks are stream-copied into one MP4 on the fly — no re-encode, no
+extra file stored. Muxing itself is near-zero CPU; the usual phone limits
+below (RAM for the first build, battery, mobile data) still apply. If ffmpeg
+is ever missing, the site self-disables muxing and honestly serves the
+single-file stream instead.
+
 ## What does not work
 
 | Setup | Why it fails |

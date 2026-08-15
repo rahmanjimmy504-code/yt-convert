@@ -15,6 +15,7 @@ just take the first one.
 | Always on                | sleeps after 15 min idle | ✗ phone must stay awake | ✓ |
 | Direct YouTube downloads | ✗ usually bot-blocked | ✓ **usually works** | ✗ usually blocked |
 | Site still useful?       | ✓ **yes** — see below | ✓ yes | ✓ yes |
+| HD (>360p) muxing        | ✓ ffmpeg in the Docker image | ✓ the script installs ffmpeg | ✓ ffmpeg in the Docker image |
 | Uses your mobile data    | no | ✗ **yes, every download** | no |
 
 **Start with A.** No card, no terminal, about 10 minutes.
@@ -169,6 +170,10 @@ bash ~/termux-site.sh
 
 **Catches:** the address changes every restart, downloads come out of your
 mobile data, and the phone must stay awake.
+
+**HD muxing included:** the script installs `ffmpeg`, so requests above the
+360p single-file ceiling are stream-copied into one HD MP4 on the fly, just
+like the Docker deployments — no re-encode, no extra file stored.
 
 **Best of both:** run Render for the permanent address and use your phone as
 the extraction IP via `YT_EGRESS_PROXY` (see
