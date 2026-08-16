@@ -1,0 +1,32 @@
+{
+  // Cloudflare Workers configuration for the OpenNext build (`.open-next/`).
+  // Deployed with `npm run cf:deploy`; previewed locally with `npm run cf:preview`.
+  // See docs/setup-cloudflare.md and https://opennext.js.org/cloudflare.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "yt-convert",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2025-04-14",
+  "compatibility_flags": [
+    // Expose Node.js APIs to the app (required by OpenNext).
+    "nodejs_compat",
+    // Require fetch() URLs to be full, public URLs (OpenNext recommendation).
+    "global_fetch_strictly_public"
+  ],
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+  "services": [
+    {
+      // Self-reference so OpenNext's cache can re-enter this Worker. The
+      // service name must match the worker "name" above.
+      "binding": "WORKER_SELF_REFERENCE",
+      "service": "yt-convert"
+    }
+  ]
+  // Runtime secrets (CAPTCHA_SECRET, CONVERT_TICKET_SECRET, ADMIN_TOKEN, …)
+  // are NOT listed here: they go in .dev.vars for local preview and are
+  // uploaded as encrypted secrets by the deploy workflow. Build-time
+  // NEXT_PUBLIC_* values are inlined during `npm run cf:build`, so they are
+  // supplied in the build environment instead.
+}

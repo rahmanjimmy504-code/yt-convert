@@ -438,9 +438,11 @@ On Android: Chrome menu → "Install app" / "Add to Home screen". On iOS: Share 
 
 ## Deployment
 
-The project is designed for **Vercel** (zero-config Next.js hosting). Push to your repository and import it in the Vercel dashboard — `next build` and `next start` are already wired up.
-
-The default live site is at **https://yt-convert-xi.vercel.app/**.
+The forward path is **Cloudflare Workers** (free tier, no credit card) via the
+OpenNext adapter — see [docs/setup-cloudflare.md](docs/setup-cloudflare.md) for
+the Termux, local-CLI, and GitHub Actions routes. The project also runs
+zero-config on **Vercel**, on **Render** via `render.yaml`, on any Docker host,
+or on your own hardware ([docs/setup-home-server.md](docs/setup-home-server.md)).
 
 ### One-VPS Docker (recommended for YouTube)
 
@@ -460,7 +462,8 @@ The default live site is at **https://yt-convert-xi.vercel.app/**.
 > **Want no request meter at all?** [docs/setup-home-server.md](docs/setup-home-server.md)
 > covers running the same Compose stack on your own always-on hardware — a
 > consumer IP plus ffmpeg HD muxing, with no per-request quota, bandwidth
-> bill, or sleep timer.
+> bill, or sleep timer. **Moving off Vercel?** [docs/setup-cloudflare.md](docs/setup-cloudflare.md)
+> is the forward path (Cloudflare Workers free plan).
 
 ```bash
 cp .env.example .env   # set AUTH_TOKEN, CONVERT_TICKET_SECRET, SITE_ADDRESS

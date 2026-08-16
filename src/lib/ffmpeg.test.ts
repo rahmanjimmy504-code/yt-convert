@@ -1,6 +1,21 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { describe, expect, it } from 'vitest';
-import { muxArgs, muxingEnabled } from './ffmpeg';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { isSubprocessUnavailable, muxArgs, muxingEnabled } from './ffmpeg';
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+describe('isSubprocessUnavailable', () => {
+  it('is false on Node (no Workers navigator)', () => {
+    expect(isSubprocessUnavailable()).toBe(false);
+  });
+
+  it('is true when the Workers runtime user agent is present', () => {
+    vi.stubGlobal('navigator', { userAgent: 'Cloudflare-Workers' });
+    expect(isSubprocessUnavailable()).toBe(true);
+  });
+});
 
 describe('muxingEnabled', () => {
   it('is true only when ffmpeg is present and not disabled', () => {
