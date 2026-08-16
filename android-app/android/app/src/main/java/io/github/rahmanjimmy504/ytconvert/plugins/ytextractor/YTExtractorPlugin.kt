@@ -309,7 +309,7 @@ class YTExtractorPlugin : Plugin() {
 
     @PluginMethod
     fun cancelDownload(call: PluginCall) {
-        val id = call.getLong("downloadId", -1L)
+        val id = call.getLong("downloadId") ?: -1L
         if (id < 0) {
             call.reject("Missing downloadId.")
             return

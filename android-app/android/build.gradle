@@ -28,29 +28,6 @@ allprojects {
     }
 }
 
-// TEMPORARY CI diagnostics: surface failing-task errors as GitHub workflow
-// annotations (readable via the Checks API) while job-log download is not
-// available to the maintainer's tooling. Remove once the build is green.
-gradle.taskGraph.afterTask { task ->
-    def failure = task.state.failure
-    if (failure != null) {
-        def sb = new StringBuilder()
-        sb.append(task.path).append(' failed: ').append(failure.toString())
-        def cause = failure.cause
-        def depth = 0
-        while (cause != null && depth < 3) {
-            sb.append('%0Acaused by: ').append(cause.toString())
-            cause = cause.cause
-            depth++
-        }
-        def msgLines = (failure.message ?: '').readLines().take(40)
-        if (msgLines) {
-            sb.append('%0Amessage:%0A').append(msgLines.join('%0A'))
-        }
-        println('::error title=Gradle task failure::' + sb.toString())
-    }
-}
-
 task clean(type: Delete) {
     delete rootProject.buildDir
 }
