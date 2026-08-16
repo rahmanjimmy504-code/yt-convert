@@ -271,6 +271,7 @@ object Innertube {
                         height = item.optInt("height", 0),
                         itag = item.optInt("itag", 0),
                         sourceClient = sourceClient,
+                        contentLength = item.optString("contentLength", "").toLongOrNull() ?: -1L,
                     ),
                 )
             }

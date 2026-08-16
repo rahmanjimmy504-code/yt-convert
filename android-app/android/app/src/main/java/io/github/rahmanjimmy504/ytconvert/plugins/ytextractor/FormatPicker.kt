@@ -5,10 +5,10 @@ package io.github.rahmanjimmy504.ytconvert.plugins.ytextractor
  * Pure format selection, ported from the website's src/lib/youtube-formats.ts
  * so the companion picks streams with the same rules as the server.
  *
- * MVP scope: progressive MP4 video and ORIGINAL audio (the best audio-only
- * track, usually AAC in M4A). There is no on-device transcode and no remux
- * yet — adaptive HD muxing arrives in a later roadmap step. Everything here
- * is deterministic and side-effect free so it can be unit-tested on the JVM.
+ * Scope: progressive MP4 video, ORIGINAL audio (usually AAC in M4A), and a
+ * stream-copy plan for adaptive H.264 MP4 + AAC. Selection stays deterministic
+ * and side-effect free so it can be unit-tested on the JVM; OnDeviceMuxer does
+ * the actual no-reencode container work.
  */
 
 /** One playable stream as reported by Innertube (direct-URL entries only). */
@@ -23,6 +23,8 @@ data class PlayerFormat(
     val itag: Int,
     /** Innertube client that minted this URL (diagnostics only). */
     val sourceClient: String,
+    /** CDN payload length from Innertube, or -1 when omitted. */
+    val contentLength: Long = -1L,
 )
 
 /** What it takes to honour a video quality request with the formats on hand. */
@@ -147,9 +149,9 @@ object FormatPicker {
         usable(formats).maxOfOrNull { it.height } ?: 0
 
     /**
-     * Port of planVideoDownload(): would the requested quality need a remux of
-     * separate video + audio tracks? The MVP cannot remux on-device yet, so the
-     * UI uses this to warn honestly before downloading the progressive stream.
+     * Port of planVideoDownload(): use a single progressive file when it meets
+     * the request, otherwise pair compatible H.264 video-only MP4 and AAC/M4A
+     * tracks for OnDeviceMuxer. Never promise a silent or incompatible file.
      */
     fun planVideoDownload(formats: List<PlayerFormat>, quality: String): VideoPlan? {
         val usableFormats = usable(formats)
@@ -165,17 +167,16 @@ object FormatPicker {
             return VideoPlan.Progressive(progressivePick)
         }
 
-        // Mux path: best video-only avc1 MP4 at or below the target (avc1 over
-        // vp9/av01 so a future stream-copy remux stays valid in MP4) + best AAC.
+        // Mux path is deliberately strict: MediaMuxer emits an MP4, so only
+        // H.264/avc1 video and AAC/M4A audio are compatible. VP9/AV1 or Opus
+        // must fall back to progressive rather than fail halfway through.
         val videoOnly = usableFormats.filter { isVideoOnlyMp4(it) }
         val avc1 = videoOnly.filter { Regex("avc1", RegexOption.IGNORE_CASE).containsMatchIn(it.mimeType) }
-        val videoPool = if (avc1.isNotEmpty()) avc1 else videoOnly
-        val videoPick = if (videoPool.isNotEmpty()) pickClosestHeight(videoPool, target) else null
+        val videoPick = if (avc1.isNotEmpty()) pickClosestHeight(avc1, target) else null
 
         val audioOnly = usableFormats.filter { isAudioOnly(it) }
         val m4a = audioOnly.filter { isM4a(it) }
-        val audioPool = if (m4a.isNotEmpty()) m4a else audioOnly
-        val audioPick = audioPool.maxByOrNull { it.bitrate }
+        val audioPick = m4a.maxByOrNull { it.bitrate }
 
         if (videoPick != null && audioPick != null) {
             return VideoPlan.Mux(videoPick, audioPick)

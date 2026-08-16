@@ -23,6 +23,15 @@ class DownloadJobTest {
     }
 
     @Test
+    fun adaptiveAudioUrlMarksAMuxJob() {
+        val progressive = DownloadJob(1, "video", "file.mp4", "video/mp4", "File")
+        val adaptive = progressive.copy(audioUrl = "audio", expectedBytes = 1234)
+        assertEquals(false, progressive.muxing)
+        assertEquals(true, adaptive.muxing)
+        assertEquals(1234L, adaptive.expectedBytes)
+    }
+
+    @Test
     fun humanBytesUsesReadableUnits() {
         assertEquals("0 B", DownloadJob.humanBytes(0))
         assertEquals("512 B", DownloadJob.humanBytes(512))

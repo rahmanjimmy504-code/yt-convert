@@ -60,12 +60,13 @@ describe('describeDownloadedFile', () => {
     mimeType: 'video/mp4',
     extension: 'mp4',
     sourceClient: 'ANDROID_MUSIC',
+    muxing: false,
   };
 
   it('names the destination folder and mentions the background service', () => {
     const msg = describeDownloadedFile(
       { ...base, title: 'Me at the zoo', qualityLabel: '360p' },
-      { downloadId: 42, filename: 'Me at the zoo.mp4' },
+      { downloadId: 42, filename: 'Me at the zoo.mp4', muxing: false },
     );
     expect(msg).toContain('Me at the zoo');
     expect(msg).toContain('360p');
@@ -76,7 +77,7 @@ describe('describeDownloadedFile', () => {
   it('reports audio bitrate when no quality label exists', () => {
     const msg = describeDownloadedFile(
       { ...base, title: 'Track', mimeType: 'audio/mp4', extension: 'm4a', bitrate: 129000 },
-      { downloadId: 1, filename: 'Track.m4a' },
+      { downloadId: 1, filename: 'Track.m4a', muxing: false },
     );
     expect(msg).toContain('129 kbps');
   });
@@ -90,6 +91,7 @@ describe('progress wording', () => {
     receivedBytes: 0,
     totalBytes: -1,
     percent: -1,
+    muxing: false,
   } as const;
 
   it('formats byte counts like the Kotlin side', () => {
@@ -115,5 +117,18 @@ describe('progress wording', () => {
     const line = describeProgressLine({ ...event, state: 'progress', receivedBytes: 2048 });
     expect(line).toBe('Downloading… 2.0 KB');
     expect(line).not.toContain('%');
+  });
+
+  it('labels adaptive progress as on-device combining', () => {
+    const line = describeProgressLine({
+      ...event,
+      state: 'progress',
+      muxing: true,
+      percent: 25,
+      receivedBytes: 250000,
+      totalBytes: 1000000,
+    });
+    expect(line).toContain('Combining on device');
+    expect(line).toContain('25%');
   });
 });
