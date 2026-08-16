@@ -81,16 +81,6 @@ describe('describeDownloadedFile', () => {
     );
     expect(msg).toContain('129 kbps');
   });
-
-  it('explains the audio-only M4A extraction for a combined-stream fallback', () => {
-    const msg = describeDownloadedFile(
-      { ...base, title: 'Label track', mimeType: 'audio/mp4', extension: 'm4a', extractAudio: true },
-      { downloadId: 2, filename: 'Label track.m4a', muxing: false, extractAudio: true },
-    );
-    expect(msg).toContain('Label track.m4a');
-    expect(msg).toContain('audio-only M4A');
-    expect(msg).toContain('no re-encoding');
-  });
 });
 
 describe('progress wording', () => {
@@ -102,7 +92,6 @@ describe('progress wording', () => {
     totalBytes: -1,
     percent: -1,
     muxing: false,
-    extractAudio: false,
   } as const;
 
   it('formats byte counts like the Kotlin side', () => {
@@ -141,45 +130,5 @@ describe('progress wording', () => {
     });
     expect(line).toContain('Combining on device');
     expect(line).toContain('25%');
-  });
-
-  it('labels audio-only extraction as saving audio when the length is unknown', () => {
-    // The combined source length includes discarded video, so the service
-    // reports an indeterminate total; the line must still say what is
-    // happening — saving audio, never "Downloading" a video.
-    const line = describeProgressLine({
-      ...event,
-      state: 'progress',
-      extractAudio: true,
-      receivedBytes: 131072,
-    });
-    expect(line).toBe('Saving audio… 128.0 KB');
-    expect(line).not.toContain('%');
-    expect(line).not.toContain('Downloading');
-  });
-
-  it('labels audio-only extraction with a percentage when a total is known', () => {
-    const line = describeProgressLine({
-      ...event,
-      state: 'progress',
-      extractAudio: true,
-      percent: 50,
-      receivedBytes: 500000,
-      totalBytes: 1000000,
-    });
-    expect(line).toContain('Saving audio');
-    expect(line).toContain('50%');
-  });
-
-  it('never shows combining copy for an audio-only extraction', () => {
-    const line = describeProgressLine({
-      ...event,
-      state: 'progress',
-      extractAudio: true,
-      muxing: true,
-      receivedBytes: 2048,
-    });
-    expect(line).toContain('Saving audio');
-    expect(line).not.toContain('Combining on device');
   });
 });

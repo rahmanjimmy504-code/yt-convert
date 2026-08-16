@@ -27,9 +27,7 @@ import java.util.concurrent.atomic.AtomicInteger
  * Storage: MediaStore.Downloads on API 29+ (scoped storage, no permission),
  * plain Downloads/YTConvert file on API 23–28 (permission requested by the
  * plugin before the service starts). Adaptive H.264/AAC jobs are stream-copy
- * muxed directly into that same final target by OnDeviceMuxer, and a
- * combined-stream audio download has only its AAC track stream-copied into an
- * audio-only M4A (never the whole video).
+ * muxed directly into that same final target by OnDeviceMuxer.
  *
  * Progress flows two ways: the notification, and DownloadProgressBroadcaster
  * → YTExtractorPlugin → the WebView's downloadProgress listener.
@@ -42,7 +40,6 @@ class DownloadService : Service() {
         const val EXTRA_URL = "yt-convert-download-url"
         const val EXTRA_AUDIO_URL = "yt-convert-download-audio-url"
         const val EXTRA_EXPECTED_BYTES = "yt-convert-download-expected-bytes"
-        const val EXTRA_EXTRACT_AUDIO = "yt-convert-download-extract-audio"
         const val EXTRA_FILENAME = "yt-convert-download-filename"
         const val EXTRA_MIME = "yt-convert-download-mime"
         const val EXTRA_TITLE = "yt-convert-download-title"
@@ -83,7 +80,6 @@ class DownloadService : Service() {
                 title = it.getStringExtra(EXTRA_TITLE) ?: filename,
                 audioUrl = it.getStringExtra(EXTRA_AUDIO_URL)?.ifBlank { null },
                 expectedBytes = it.getLongExtra(EXTRA_EXPECTED_BYTES, -1L),
-                extractAudio = it.getBooleanExtra(EXTRA_EXTRACT_AUDIO, false),
             )
         }
         if (job == null) {
@@ -131,22 +127,7 @@ class DownloadService : Service() {
                 }
             }
 
-            val transfer = if (job.extractAudio) {
-                // Audio-only remux of a combined progressive MP4: stream-copy
-                // just its AAC track into an audio-only M4A. Runs before the
-                // adaptive two-track branch so an extractAudio job can never
-                // fall through to saving the whole video file.
-                val copied = OnDeviceMuxer.extractAudio(
-                    context = this,
-                    target = target,
-                    sourceUrl = job.url,
-                    isCancelled = { cancelFlag.get() },
-                    onProgress = publishProgress,
-                )
-                // Indeterminate total: the combined source length includes
-                // the discarded video bytes.
-                TransferResult(copied, -1L)
-            } else if (job.muxing) {
+            val transfer = if (job.muxing) {
                 val audioUrl = job.audioUrl
                     ?: throw IllegalStateException("The adaptive audio track is missing.")
                 val copied = OnDeviceMuxer.mux(
@@ -297,11 +278,7 @@ class DownloadService : Service() {
         total: Long,
     ): android.app.Notification {
         val builder = baseBuilder(job, ongoing = true)
-        val action = when {
-            job.extractAudio -> "Saving audio"
-            job.muxing -> "Combining on device"
-            else -> "Downloading"
-        }
+        val action = if (job.muxing) "Combining on device" else "Downloading"
         if (percent in 0..100 && total > 0) {
             builder.setProgress(100, percent, false)
             builder.setContentText(
