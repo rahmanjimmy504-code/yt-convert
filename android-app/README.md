@@ -1,10 +1,11 @@
-# YT Convert — Android companion (on-device extraction MVP)
+# YT Convert — Android companion (background downloads + MediaStore)
 
 A Capacitor app that is growing into the Android version of
 [YT Convert](../README.md). The scaffold (step 1) proved the pipeline, step 2
-brought UI parity with the website, and this step ships the **native
-YTExtractor plugin**: YouTube extraction runs on the phone, over the phone's
-own connection, with no server in the middle.
+brought UI parity with the website, step 3 shipped the native YTExtractor
+plugin, and this step makes downloads **background-first**: a data-sync
+foreground service streams the file with live progress while saving to
+MediaStore (scoped storage).
 
 Licensed **GPL-3.0-or-later**, like the rest of the repository — see
 [`../LICENSE`](../LICENSE).
@@ -20,9 +21,9 @@ Licensed **GPL-3.0-or-later**, like the rest of the repository — see
 | Debug APK workflow (`.github/workflows/android-debug.yml`), now incl. Kotlin unit tests | Live in CI |
 | Converter UI (paste box, platform detection, format/quality, dark mode, history) | Done |
 | Kotlin plugin support in Gradle + `YTExtractor` Capacitor plugin | **This PR** |
-| Native progressive MP4 / original-audio download via system DownloadManager | **This PR** |
-| Background downloads + MediaStore (foreground service, progress) | **Next** |
-| Adaptive MP4/AAC muxing on-device (HD >360p) | After that |
+| Native progressive MP4 / original-audio extraction | Done |
+| Background downloads + MediaStore (foreground service, progress, cancel) | **This PR** |
+| Adaptive MP4/AAC muxing on-device (HD >360p) | **Next** |
 
 ## How the on-device extractor works (step 3)
 
@@ -43,10 +44,26 @@ Licensed **GPL-3.0-or-later**, like the rest of the repository — see
    there is no MP3 transcode on-device, and the UI says so). Requests above
    the progressive ceiling honestly say that HD muxing arrives in a later
    release and deliver the closest single-file stream.
-4. `YTExtractor.download(...)` saves the stream through Android's system
-   **DownloadManager** (visible notification, completion handling) into
-   `Downloads/YTConvert/`. On Android 6–9 the storage permission is requested
-   at download time; Android 10+ needs none (scoped storage).
+4. `YTExtractor.download(...)` starts **DownloadService** — a data-sync
+   **foreground service** — which streams the file into **MediaStore**:
+   `MediaStore.Downloads` (Download/YTConvert, written `IS_PENDING` until
+   complete) on Android 10+, a plain `Downloads/YTConvert` file on Android
+   6–9 (storage permission requested first; Android 10+ needs none).
+   Downloads survive the app being backgrounded or the screen turning off.
+5. Progress flows two ways: the required foreground-service notification
+   (percent + bytes), and a `downloadProgress` Capacitor listener the UI
+   renders as a progress bar with a **Cancel** action. Cancelled/failed
+   downloads discard the partial file; a re-download replaces an existing
+   entry with the same filename.
+
+### Permissions, honestly
+
+- `FOREGROUND_SERVICE` / `FOREGROUND_SERVICE_DATA_SYNC` — the background
+  download itself (the visible notification is Android's receipt for it).
+- `POST_NOTIFICATIONS` (Android 13+) — requested at download time; a denial
+  only hides the completion/cancelled notices, never blocks the download.
+- `WRITE_EXTERNAL_STORAGE` (Android 6–9 only, `maxSdkVersion=28`) — writing
+  to the public Downloads folder before scoped storage existed.
 
 ### Security invariants kept from the website
 
@@ -66,8 +83,8 @@ Licensed **GPL-3.0-or-later**, like the rest of the repository — see
 
 1. Capacitor scaffold + debug APK workflow ✓
 2. UI parity with the website ✓
-3. Native progressive MP4 / original-audio MVP ✓ ← this one
-4. Background downloads + MediaStore (foreground service, progress)
+3. Native progressive MP4 / original-audio MVP ✓
+4. Background downloads + MediaStore (foreground service, progress) ✓ ← this one
 5. Adaptive MP4/AAC muxing on-device (HD >360p)
 
 ## Build it yourself
@@ -123,11 +140,13 @@ android-app/
     app/src/main/java/io/github/rahmanjimmy504/ytconvert/
       MainActivity.java                 registers YTExtractorPlugin
       plugins/ytextractor/
-        YTExtractorPlugin.kt            Capacitor plugin (extract/download/ping)
+        YTExtractorPlugin.kt            Capacitor plugin (extract/download/cancel/ping)
         Innertube.kt                    client table + player loop (extract.ts port)
         FormatPicker.kt                 stream selection (youtube-formats.ts port)
         MediaHosts.kt                   on-device SSRF allowlist
-        Downloader.kt                   DownloadManager enqueue
+        DownloadService.kt              data-sync foreground service + notifications
+        MediaStoreSaver.kt              MediaStore.Downloads / legacy file targets
+        DownloadJob.kt                  job data + progress broadcaster
     app/src/test/java/…/ytextractor/    JVM unit tests (picker, allowlist, parity)
 ```
 
@@ -149,10 +168,10 @@ android-app/
 
 ## Notes for the next PR
 
-- `minSdk` is 23 and `targetSdk`/`compileSdk` are 35 (see
-  `android/variables.gradle`). The background-download step replaces the
-  plain DownloadManager path with a foreground service + MediaStore
-  (`MediaStore.Downloads` on API 29+; keep the scoped-storage behaviour for
-  API 29+ in mind — no `requestLegacyExternalStorage` escape hatch).
-- The plugin's `ping()` reports `muxing: false` until the on-device adaptive
-  remux step lands.
+- `minSdk` is 23 and `targetSdk`/`compileSdk` are 35 (re-checked from
+  `android/variables.gradle` for this step). MediaStore.Downloads is API 29+;
+  Android 6–9 keep the permission-gated file path. No
+  `requestLegacyExternalStorage` escape hatch anywhere.
+- The on-device muxing step mirrors the website's `src/lib/ffmpeg.ts`
+  approach (fragmented MP4, stream copy, no re-encode): the plugin's
+  `ping()` reports `muxing: false` until it lands.

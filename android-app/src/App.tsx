@@ -22,6 +22,8 @@ import {
   YTExtractor,
   describeDownloadedFile,
   describeExtractionFailure,
+  describeProgressLine,
+  type DownloadProgressEvent,
 } from './lib/yt-extractor';
 
 const SOURCE_URL = 'https://github.com/rahmanjimmy504-code/yt-convert';
@@ -236,6 +238,8 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [nativeStatus, setNativeStatus] = useState('');
   const [nativeError, setNativeError] = useState('');
+  const [downloadEvent, setDownloadEvent] = useState<DownloadProgressEvent | null>(null);
+  const activeDownloadId = useRef<number | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -261,6 +265,47 @@ export default function App() {
     const i = setInterval(() => setTipIdx(t => (t + 1) % TIPS.length), 5000);
     return () => clearInterval(i);
   }, []);
+
+  // Background-download progress from the native foreground service. Only the
+  // download this session started is shown; terminal states flip into the
+  // status/error rows below the button.
+  useEffect(() => {
+    if (!nativeReady) return;
+    let disposed = false;
+    let handle: { remove: () => Promise<void> } | null = null;
+    YTExtractor.addListener('downloadProgress', event => {
+      if (disposed || event.downloadId !== activeDownloadId.current) return;
+      if (event.state === 'progress') {
+        setDownloadEvent(event);
+        return;
+      }
+      setDownloadEvent(null);
+      activeDownloadId.current = null;
+      if (event.state === 'completed') {
+        setNativeError('');
+        setNativeStatus(`Saved \u201c${event.title}\u201d to Downloads/YTConvert.`);
+      } else if (event.state === 'cancelled') {
+        setNativeError('');
+        setNativeStatus('Download cancelled.');
+      } else {
+        setNativeStatus('');
+        setNativeError(
+          event.error || 'The background download failed. Try again, or use one of the free Android apps below.',
+        );
+      }
+    })
+      .then(h => {
+        if (disposed) void h.remove();
+        else handle = h;
+      })
+      .catch(() => {
+        /* no plugin in this shell — nothing to subscribe to */
+      });
+    return () => {
+      disposed = true;
+      if (handle) void handle.remove();
+    };
+  }, [nativeReady]);
   useEffect(() => {
     const i = setInterval(() => setPhIdx(p => (p + 1) % PLACEHOLDERS.length), 4000);
     return () => clearInterval(i);
@@ -301,6 +346,7 @@ export default function App() {
     setLaunched(null);
     setNativeStatus('');
     setNativeError('');
+    setDownloadEvent(null);
     recordHistory(u, plat);
     setPhase('ready');
   }, [url, recordHistory]);
@@ -325,6 +371,7 @@ export default function App() {
     setLaunched(null);
     setNativeStatus('');
     setNativeError('');
+    setDownloadEvent(null);
     inputRef.current?.focus();
   }, []);
 
@@ -347,6 +394,7 @@ export default function App() {
     setFormat(f);
     setNativeStatus('');
     setNativeError('');
+    setDownloadEvent(null);
     sSet('yt-convert-android-format', f);
   }, []);
   const handleAudioQualityChange = useCallback((q: string) => {
@@ -399,25 +447,46 @@ export default function App() {
     setBusy(true);
     setNativeError('');
     setNativeStatus('');
+    setDownloadEvent(null);
     try {
       const stream = await YTExtractor.extract({
         url: u,
         format: format === 'mp3' ? 'audio' : 'video',
         quality: format === 'mp3' ? audioQuality : videoQuality,
       });
-      const saved = await YTExtractor.download({
+      const started = await YTExtractor.download({
         url: stream.url,
         title: stream.title,
         extension: stream.extension,
         mimeType: stream.mimeType,
       });
-      setNativeStatus(describeDownloadedFile(stream, saved));
+      activeDownloadId.current = started.downloadId;
+      // Seed the progress row; real events from the foreground service
+      // replace it as the bytes arrive.
+      setDownloadEvent({
+        downloadId: started.downloadId,
+        state: 'progress',
+        filename: started.filename,
+        title: stream.title,
+        receivedBytes: 0,
+        totalBytes: -1,
+        percent: -1,
+      });
+      setNativeStatus(describeDownloadedFile(stream, started));
     } catch (err) {
       setNativeError(describeExtractionFailure(err));
     } finally {
       setBusy(false);
     }
   }, [url, format, audioQuality, videoQuality, busy]);
+
+  const handleCancelDownload = useCallback(() => {
+    const id = activeDownloadId.current;
+    if (id == null) return;
+    void YTExtractor.cancelDownload({ downloadId: id }).catch(() => {
+      /* a cancel that arrives after completion is harmless */
+    });
+  }, []);
 
   /**
    * The honest free-app handoff panel (Seal / YTDLnis / NewPipe). Shown when
@@ -723,6 +792,39 @@ export default function App() {
                         : 'Runs on this phone over your own connection. Progressive MP4 up to the single-file ceiling — HD muxing arrives in a later release.'}
                     </span>
                   </p>
+                  {downloadEvent && downloadEvent.state === 'progress' && (
+                    <div className="space-y-1.5 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/60 p-2.5">
+                      <div className="flex items-center justify-between gap-2 text-[11px] text-gray-500 dark:text-gray-400">
+                        <span className="truncate">{describeProgressLine(downloadEvent)}</span>
+                        <button
+                          type="button"
+                          onClick={handleCancelDownload}
+                          className="shrink-0 font-medium text-red-500 hover:text-red-600 transition-colors"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                      <div
+                        role="progressbar"
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                        aria-valuenow={downloadEvent.percent >= 0 ? downloadEvent.percent : undefined}
+                        aria-label="Download progress"
+                        className="h-1.5 rounded-full bg-gray-200 dark:bg-gray-700 overflow-hidden"
+                      >
+                        <div
+                          className={
+                            'h-full bg-gradient-to-r from-red-500 to-red-600 transition-all ' +
+                            (downloadEvent.percent >= 0 ? '' : 'w-full animate-pulse')
+                          }
+                          style={downloadEvent.percent >= 0 ? { width: `${downloadEvent.percent}%` } : undefined}
+                        />
+                      </div>
+                      <p className="text-[10px] text-gray-400">
+                        Continues in the background — you can leave this screen; the notification shows progress.
+                      </p>
+                    </div>
+                  )}
                   {nativeStatus && (
                     <p role="status" aria-live="polite" className="text-xs text-green-700 dark:text-green-400">
                       {nativeStatus}

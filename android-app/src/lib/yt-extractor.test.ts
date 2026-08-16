@@ -10,6 +10,8 @@ const {
   EXTRACTOR_PLUGIN,
   describeExtractionFailure,
   describeDownloadedFile,
+  describeProgressLine,
+  humanBytes,
 } = await import('./yt-extractor');
 
 describe('plugin registration', () => {
@@ -60,15 +62,15 @@ describe('describeDownloadedFile', () => {
     sourceClient: 'ANDROID_MUSIC',
   };
 
-  it('names the file and the destination folder', () => {
+  it('names the destination folder and mentions the background service', () => {
     const msg = describeDownloadedFile(
       { ...base, title: 'Me at the zoo', qualityLabel: '360p' },
       { downloadId: 42, filename: 'Me at the zoo.mp4' },
     );
     expect(msg).toContain('Me at the zoo');
     expect(msg).toContain('360p');
-    expect(msg).toContain('Me at the zoo.mp4');
     expect(msg).toContain('Downloads/YTConvert');
+    expect(msg).toContain('background');
   });
 
   it('reports audio bitrate when no quality label exists', () => {
@@ -77,6 +79,41 @@ describe('describeDownloadedFile', () => {
       { downloadId: 1, filename: 'Track.m4a' },
     );
     expect(msg).toContain('129 kbps');
-    expect(msg).toContain('Track.m4a');
+  });
+});
+
+describe('progress wording', () => {
+  const event = {
+    downloadId: 7,
+    filename: 'Me at the zoo.mp4',
+    title: 'Me at the zoo',
+    receivedBytes: 0,
+    totalBytes: -1,
+    percent: -1,
+  } as const;
+
+  it('formats byte counts like the Kotlin side', () => {
+    expect(humanBytes(0)).toBe('0 B');
+    expect(humanBytes(512)).toBe('512 B');
+    expect(humanBytes(1024)).toBe('1.0 KB');
+    expect(humanBytes(1572864)).toBe('1.5 MB');
+    expect(humanBytes(-1)).toBe('');
+  });
+
+  it('shows a real percentage once the length is known', () => {
+    const line = describeProgressLine({
+      ...event,
+      state: 'progress',
+      percent: 42,
+      receivedBytes: 420000,
+      totalBytes: 1000000,
+    });
+    expect(line).toBe('42% · 410.2 KB of 976.6 KB');
+  });
+
+  it('stays honest when the length is unknown', () => {
+    const line = describeProgressLine({ ...event, state: 'progress', receivedBytes: 2048 });
+    expect(line).toBe('Downloading… 2.0 KB');
+    expect(line).not.toContain('%');
   });
 });

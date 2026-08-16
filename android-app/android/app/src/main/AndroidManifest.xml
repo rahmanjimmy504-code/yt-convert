@@ -33,15 +33,30 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths"></meta-data>
         </provider>
+
+        <!-- Background downloads: a data-sync foreground service streams the
+             file into MediaStore.Downloads with a visible progress
+             notification (the honest "using your connection" indicator). -->
+        <service
+            android:name=".plugins.ytextractor.DownloadService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
     </application>
 
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- Only needed to save downloads on Android 6–9 (API 23–28). From
-         Android 10 (API 29) the DownloadManager writes to the public
-         Downloads directory via scoped storage without any permission. -->
+         Android 10 (API 29) the app writes to MediaStore.Downloads via
+         scoped storage without any permission. -->
     <uses-permission
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28" />
+    <!-- Background downloads run as a data-sync foreground service. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- Android 13+ asks before an app may post notifications. The
+         foreground-service progress notification shows either way; this only
+         governs the completion/cancelled notices after the service stops. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 </manifest>

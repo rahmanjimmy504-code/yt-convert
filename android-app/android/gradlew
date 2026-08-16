@@ -249,4 +249,21 @@ eval "set -- $(
         tr '\n' ' '
     )" '"$@"'
 
-exec "$JAVACMD" "$@"
+# --- TEMPORARY CI diagnostics -----------------------------------------------
+# Job-log download is unavailable to the maintainer's tooling, so on failure
+# re-emit the build's own error lines (Kotlin "e: ..." diagnostics, failed
+# tasks, "What went wrong") as GitHub workflow annotations, which ARE visible
+# via the Checks API. Remove this block once the build is green.
+YT_LOG="$(mktemp)"
+YT_RC="$(mktemp)"
+( "$JAVACMD" "$@" 2>&1; echo $? > "$YT_RC" ) | tee "$YT_LOG"
+status=$(cat "$YT_RC")
+if [ "$status" -ne 0 ]; then
+    YT_ERR=$(grep -aE '^e: |^> Task .* FAILED|What went wrong:|Execution failed|error:' "$YT_LOG" | head -c 4000)
+    if [ -n "$YT_ERR" ]; then
+        printf '::error title=Gradle failure details::%s\n' \
+            "$(printf '%s' "$YT_ERR" | sed -e ':a' -e 'N' -e '$!ba' -e 's/\n/%0A/g')"
+    fi
+fi
+rm -f "$YT_LOG" "$YT_RC"
+exit "$status"
