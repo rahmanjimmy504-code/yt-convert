@@ -26,7 +26,8 @@ import java.util.concurrent.atomic.AtomicInteger
  *
  * Storage: MediaStore.Downloads on API 29+ (scoped storage, no permission),
  * plain Downloads/YTConvert file on API 23–28 (permission requested by the
- * plugin before the service starts).
+ * plugin before the service starts). Adaptive H.264/AAC jobs are stream-copy
+ * muxed directly into that same final target by OnDeviceMuxer.
  *
  * Progress flows two ways: the notification, and DownloadProgressBroadcaster
  * → YTExtractorPlugin → the WebView's downloadProgress listener.
@@ -37,6 +38,8 @@ class DownloadService : Service() {
         const val CHANNEL_ID = "yt-convert-downloads"
         const val EXTRA_ID = "yt-convert-download-id"
         const val EXTRA_URL = "yt-convert-download-url"
+        const val EXTRA_AUDIO_URL = "yt-convert-download-audio-url"
+        const val EXTRA_EXPECTED_BYTES = "yt-convert-download-expected-bytes"
         const val EXTRA_FILENAME = "yt-convert-download-filename"
         const val EXTRA_MIME = "yt-convert-download-mime"
         const val EXTRA_TITLE = "yt-convert-download-title"
@@ -75,6 +78,8 @@ class DownloadService : Service() {
                 filename = filename,
                 mimeType = it.getStringExtra(EXTRA_MIME) ?: "",
                 title = it.getStringExtra(EXTRA_TITLE) ?: filename,
+                audioUrl = it.getStringExtra(EXTRA_AUDIO_URL)?.ifBlank { null },
+                expectedBytes = it.getLongExtra(EXTRA_EXPECTED_BYTES, -1L),
             )
         }
         if (job == null) {
@@ -85,7 +90,7 @@ class DownloadService : Service() {
         ensureChannel()
         // A foreground service must present itself immediately; the real
         // progress updates replace this initial notification.
-        startForegroundCompat(notificationIdFor(job.id), progressNotification(job, 0, -1, 0L, 0L))
+        startForegroundCompat(notificationIdFor(job.id), progressNotification(job, 0, 0L, -1L))
         activeJobs.incrementAndGet()
         cancelFlags[job.id] = AtomicBoolean(false)
 
@@ -93,18 +98,83 @@ class DownloadService : Service() {
         return START_NOT_STICKY
     }
 
+    private data class TransferResult(val received: Long, val total: Long)
+
     private fun runDownload(job: DownloadJob) {
         val notificationId = notificationIdFor(job.id)
         val cancelFlag = cancelFlags[job.id] ?: AtomicBoolean(false)
         var target: MediaStoreSaver.Target? = null
-        var conn: HttpURLConnection? = null
         try {
-            // Defense in depth: the URL was allowlist-checked by the plugin,
-            // and is re-checked here where the network actually happens.
-            if (!MediaHosts.isAllowedMediaUrl(job.url)) {
+            // Defense in depth: every URL was allowlist-checked by the plugin,
+            // and both adaptive tracks are re-checked where network I/O occurs.
+            if (!MediaHosts.isAllowedMediaUrl(job.url) ||
+                (job.audioUrl != null && !MediaHosts.isAllowedMediaUrl(job.audioUrl))
+            ) {
                 throw SecurityException("Refusing to download a host outside the on-device allowlist.")
             }
 
+            target = MediaStoreSaver.createTarget(this, job.filename, job.mimeType)
+                ?: throw IllegalStateException("Could not create a file in Downloads/YTConvert.")
+
+            var lastNotifyAt = 0L
+            val publishProgress: (Long, Long) -> Unit = { received, total ->
+                val now = System.currentTimeMillis()
+                if (now - lastNotifyAt >= PROGRESS_NOTIFY_MIN_INTERVAL_MS) {
+                    lastNotifyAt = now
+                    val percent = DownloadJob.progressPercent(received, total)
+                    notify(notificationId, progressNotification(job, percent, received, total))
+                    DownloadProgressBroadcaster.publish(job, DownloadState.PROGRESS, received, total)
+                }
+            }
+
+            val transfer = if (job.muxing) {
+                val audioUrl = job.audioUrl
+                    ?: throw IllegalStateException("The adaptive audio track is missing.")
+                val copied = OnDeviceMuxer.mux(
+                    context = this,
+                    target = target,
+                    videoUrl = job.url,
+                    audioUrl = audioUrl,
+                    expectedBytes = job.expectedBytes,
+                    isCancelled = { cancelFlag.get() },
+                    onProgress = publishProgress,
+                )
+                TransferResult(copied, job.expectedBytes)
+            } else {
+                downloadSingleTrack(job, target, cancelFlag, publishProgress)
+            }
+
+            val finalSize = MediaStoreSaver.size(this, target).let {
+                if (it > 0L) it else transfer.received
+            }
+            MediaStoreSaver.publish(this, target)
+            DownloadProgressBroadcaster.publish(job, DownloadState.COMPLETED, finalSize, finalSize)
+            notify(notificationId, completedNotification(job, finalSize))
+        } catch (cancelled: OnDeviceMuxer.CancelledException) {
+            target?.let { MediaStoreSaver.discard(this, it) }
+            DownloadProgressBroadcaster.publish(job, DownloadState.CANCELLED, 0, -1)
+            notify(notificationId, cancelledNotification(job))
+        } catch (e: Exception) {
+            target?.let { MediaStoreSaver.discard(this, it) }
+            val message = e.message ?: "Unknown download error"
+            DownloadProgressBroadcaster.publish(job, DownloadState.FAILED, 0, -1, message)
+            notify(notificationId, failedNotification(job, message))
+        } finally {
+            cancelFlags.remove(job.id)
+            activeJobs.decrementAndGet()
+            stopSelfIfIdle()
+        }
+    }
+
+    /** Existing zero-copy single-stream path for progressive video/original audio. */
+    private fun downloadSingleTrack(
+        job: DownloadJob,
+        target: MediaStoreSaver.Target,
+        cancelFlag: AtomicBoolean,
+        onProgress: (Long, Long) -> Unit,
+    ): TransferResult {
+        var conn: HttpURLConnection? = null
+        try {
             conn = URL(job.url).openConnection() as HttpURLConnection
             conn.requestMethod = "GET"
             conn.connectTimeout = CONNECT_TIMEOUT_MS
@@ -121,56 +191,28 @@ class DownloadService : Service() {
             } else {
                 conn.contentLength.toLong()
             }
-
-            target = MediaStoreSaver.createTarget(this, job.filename, job.mimeType)
-                ?: throw IllegalStateException("Could not create a file in Downloads/YTConvert.")
             val output = MediaStoreSaver.openOutput(this, target)
                 ?: throw IllegalStateException("Could not open the destination for writing.")
 
             val input: InputStream = conn.inputStream
             var received = 0L
-            var lastNotifyAt = 0L
             val buffer = ByteArray(BUFFER_SIZE)
-
             output.use { out ->
                 input.use { stream ->
                     while (true) {
-                        if (cancelFlag.get()) {
-                            throw CancellationException("Download cancelled.")
-                        }
+                        if (cancelFlag.get()) throw OnDeviceMuxer.CancelledException()
                         val read = stream.read(buffer)
                         if (read < 0) break
                         out.write(buffer, 0, read)
                         received += read
-                        val now = System.currentTimeMillis()
-                        if (now - lastNotifyAt >= PROGRESS_NOTIFY_MIN_INTERVAL_MS) {
-                            lastNotifyAt = now
-                            val percent = DownloadJob.progressPercent(received, total)
-                            notify(notificationId, progressNotification(job, percent, total, received, total))
-                            DownloadProgressBroadcaster.publish(job, DownloadState.PROGRESS, received, total)
-                        }
+                        onProgress(received, total)
                     }
                 }
                 out.flush()
             }
-
-            MediaStoreSaver.publish(this, target)
-            DownloadProgressBroadcaster.publish(job, DownloadState.COMPLETED, received, total)
-            notify(notificationId, completedNotification(job, received))
-        } catch (cancelled: CancellationException) {
-            target?.let { MediaStoreSaver.discard(this, it) }
-            DownloadProgressBroadcaster.publish(job, DownloadState.CANCELLED, 0, -1)
-            notify(notificationId, cancelledNotification(job))
-        } catch (e: Exception) {
-            target?.let { MediaStoreSaver.discard(this, it) }
-            val message = e.message ?: "Unknown download error"
-            DownloadProgressBroadcaster.publish(job, DownloadState.FAILED, 0, -1, message)
-            notify(notificationId, failedNotification(job, message))
+            return TransferResult(received, total)
         } finally {
             conn?.disconnect()
-            cancelFlags.remove(job.id)
-            activeJobs.decrementAndGet()
-            stopSelfIfIdle()
         }
     }
 
@@ -232,19 +274,19 @@ class DownloadService : Service() {
     private fun progressNotification(
         job: DownloadJob,
         percent: Int,
-        max: Long,
         received: Long,
         total: Long,
     ): android.app.Notification {
         val builder = baseBuilder(job, ongoing = true)
+        val action = if (job.muxing) "Combining on device" else "Downloading"
         if (percent in 0..100 && total > 0) {
             builder.setProgress(100, percent, false)
             builder.setContentText(
-                "$percent% \u00b7 ${DownloadJob.humanBytes(received)} of ${DownloadJob.humanBytes(total)}",
+                "$action \u00b7 $percent% \u00b7 ${DownloadJob.humanBytes(received)} of ${DownloadJob.humanBytes(total)}",
             )
         } else {
             builder.setProgress(0, 0, true)
-            builder.setContentText("Downloading\u2026 ${DownloadJob.humanBytes(received)}")
+            builder.setContentText("$action\u2026 ${DownloadJob.humanBytes(received)}")
         }
         return builder.build()
     }
@@ -273,6 +315,4 @@ class DownloadService : Service() {
         }
     }
 
-    /** Local cancellation marker (java.util.concurrent has no CancellationException). */
-    private class CancellationException(message: String) : Exception(message)
 }

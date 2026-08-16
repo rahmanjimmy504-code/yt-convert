@@ -3,10 +3,14 @@ package io.github.rahmanjimmy504.ytconvert.plugins.ytextractor
 
 import android.content.ContentValues
 import android.content.Context
+import android.media.MediaMuxer
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
+import android.os.ParcelFileDescriptor
 import android.provider.MediaStore
+import android.provider.OpenableColumns
+import java.io.Closeable
 import java.io.File
 import java.io.OutputStream
 
@@ -29,6 +33,23 @@ object MediaStoreSaver {
 
     /** Opaque write target: exactly one of uri (29+) / file (23–28) is set. */
     data class Target(val uri: Uri?, val file: File?)
+
+    /**
+     * MediaMuxer plus the descriptor that must stay open for its lifetime.
+     * close() releases the muxer before closing the MediaStore descriptor.
+     */
+    class MuxerHandle(
+        val muxer: MediaMuxer,
+        private val descriptor: ParcelFileDescriptor?,
+    ) : Closeable {
+        override fun close() {
+            try {
+                muxer.release()
+            } finally {
+                descriptor?.close()
+            }
+        }
+    }
 
     fun createTarget(context: Context, filename: String, mimeType: String): Target? {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -61,6 +82,48 @@ object MediaStoreSaver {
             else target.file?.outputStream()
         } catch (_: Exception) {
             null
+        }
+    }
+
+    /**
+     * Open the final target as a seekable MP4 output. MediaStore targets only
+     * exist on API 29+, where MediaMuxer's FileDescriptor constructor is
+     * available; API 23–28 use the final public Downloads file path directly.
+     */
+    fun openMuxer(context: Context, target: Target): MuxerHandle? {
+        return try {
+            if (target.uri != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val descriptor = context.contentResolver.openFileDescriptor(target.uri, "rw") ?: return null
+                try {
+                    MuxerHandle(
+                        MediaMuxer(descriptor.fileDescriptor, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4),
+                        descriptor,
+                    )
+                } catch (e: Exception) {
+                    descriptor.close()
+                    throw e
+                }
+            } else {
+                val path = target.file?.absolutePath ?: return null
+                MuxerHandle(MediaMuxer(path, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4), null)
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /** Final target size after the writer/muxer has closed, or -1 if unknown. */
+    fun size(context: Context, target: Target): Long {
+        target.file?.let { return if (it.exists()) it.length() else -1L }
+        val uri = target.uri ?: return -1L
+        return try {
+            context.contentResolver.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)?.use { cursor ->
+                if (!cursor.moveToFirst()) return@use -1L
+                val index = cursor.getColumnIndex(OpenableColumns.SIZE)
+                if (index < 0 || cursor.isNull(index)) -1L else cursor.getLong(index)
+            } ?: -1L
+        } catch (_: Exception) {
+            -1L
         }
     }
 

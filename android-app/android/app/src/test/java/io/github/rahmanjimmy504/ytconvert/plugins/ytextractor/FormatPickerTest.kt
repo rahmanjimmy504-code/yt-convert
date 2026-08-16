@@ -29,6 +29,7 @@ private fun fmt(
 private val PROGRESSIVE_360 = fmt(18, "video/mp4; codecs=\"avc1.42001E, mp4a.40.2\"", height = 360, bitrate = 500_000, audioQuality = "AUDIO_QUALITY_MEDIUM", qualityLabel = "360p")
 private val PROGRESSIVE_720 = fmt(22, "video/mp4; codecs=\"avc1.64001F, mp4a.40.2\"", height = 720, bitrate = 1_200_000, audioQuality = "AUDIO_QUALITY_MEDIUM", qualityLabel = "720p")
 private val VIDEO_1080 = fmt(137, "video/mp4; codecs=\"avc1.640028\"", height = 1080, bitrate = 4_000_000)
+private val VIDEO_VP9_1080 = fmt(248, "video/mp4; codecs=\"vp09.00.40.08\"", height = 1080, bitrate = 3_000_000)
 private val AUDIO_AAC_128 = fmt(140, "audio/mp4; codecs=\"mp4a.40.2\"", bitrate = 129_000, audioQuality = "AUDIO_QUALITY_MEDIUM")
 private val AUDIO_OPUS_160 = fmt(251, "audio/webm; codecs=\"opus\"", bitrate = 160_000, audioQuality = "AUDIO_QUALITY_MEDIUM")
 
@@ -104,6 +105,24 @@ class FormatPickerTest {
     @Test
     fun planFallsBackToProgressiveWhenNoAudioTrack() {
         val plan = FormatPicker.planVideoDownload(listOf(PROGRESSIVE_360, VIDEO_1080), "1080")
+        assertTrue(plan is VideoPlan.Progressive)
+    }
+
+    @Test
+    fun planFallsBackWhenOnlyOpusAudioIsAvailable() {
+        val plan = FormatPicker.planVideoDownload(
+            listOf(PROGRESSIVE_360, VIDEO_1080, AUDIO_OPUS_160),
+            "1080",
+        )
+        assertTrue(plan is VideoPlan.Progressive)
+    }
+
+    @Test
+    fun planFallsBackWhenOnlyVp9VideoIsAvailable() {
+        val plan = FormatPicker.planVideoDownload(
+            listOf(PROGRESSIVE_360, VIDEO_VP9_1080, AUDIO_AAC_128),
+            "1080",
+        )
         assertTrue(plan is VideoPlan.Progressive)
     }
 

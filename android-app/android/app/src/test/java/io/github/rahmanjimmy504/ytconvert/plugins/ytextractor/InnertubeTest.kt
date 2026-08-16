@@ -77,7 +77,7 @@ class InnertubeTest {
               "adaptiveFormats": [
                 { "itag": 140, "url": "https://rr---sn-test.googlevideo.com/videoplayback?itag=140",
                   "mimeType": "audio/mp4", "audioQuality": "AUDIO_QUALITY_MEDIUM",
-                  "bitrate": 129000 }
+                  "bitrate": 129000, "contentLength": "1234567" }
               ]
             }
             """.trimIndent(),
@@ -87,6 +87,8 @@ class InnertubeTest {
         assertEquals(listOf(18, 140), formats.map { it.itag })
         assertEquals("360p", formats[0].qualityLabel)
         assertEquals(129000L, formats[1].bitrate)
+        assertEquals(1234567L, formats[1].contentLength)
+        assertEquals(-1L, formats[0].contentLength)
         assertEquals("ANDROID_MUSIC", formats[0].sourceClient)
     }
 

@@ -436,10 +436,10 @@ export default function App() {
 
   /**
    * The real download path: native Innertube extraction over the phone's own
-   * connection, then the system DownloadManager saves the allowlist-checked
-   * stream into Downloads/YTConvert. Only reachable when the YTExtractor
-   * plugin is registered (nativeReady) — otherwise the UI shows the honest
-   * free-app handoffs instead.
+   * connection, then the foreground service saves one allowlist-checked stream
+   * or combines an adaptive H.264/AAC pair directly in Downloads/YTConvert.
+   * Only reachable when YTExtractor is registered (nativeReady); otherwise the
+   * UI shows the honest free-app handoffs instead.
    */
   const handleNativeDownload = useCallback(async () => {
     const u = url.trim();
@@ -456,6 +456,8 @@ export default function App() {
       });
       const started = await YTExtractor.download({
         url: stream.url,
+        audioUrl: stream.audioUrl,
+        totalBytes: stream.totalBytes,
         title: stream.title,
         extension: stream.extension,
         mimeType: stream.mimeType,
@@ -469,8 +471,9 @@ export default function App() {
         filename: started.filename,
         title: stream.title,
         receivedBytes: 0,
-        totalBytes: -1,
+        totalBytes: stream.totalBytes ?? -1,
         percent: -1,
+        muxing: started.muxing,
       });
       setNativeStatus(describeDownloadedFile(stream, started));
     } catch (err) {
@@ -789,7 +792,7 @@ export default function App() {
                     <span>
                       {format === 'mp3'
                         ? 'Runs on this phone over your own connection. Audio is saved as the original AAC/M4A track — there is no MP3 transcode on-device.'
-                        : 'Runs on this phone over your own connection. Progressive MP4 up to the single-file ceiling — HD muxing arrives in a later release.'}
+                        : 'Runs on this phone over your own connection. Compatible HD video and AAC audio are combined on this device without re-encoding.'}
                     </span>
                   </p>
                   {downloadEvent && downloadEvent.state === 'progress' && (
@@ -821,7 +824,9 @@ export default function App() {
                         />
                       </div>
                       <p className="text-[10px] text-gray-400">
-                        Continues in the background — you can leave this screen; the notification shows progress.
+                        {downloadEvent.muxing
+                          ? 'Separate tracks are combined on this device with no re-encode or intermediate file. You can leave this screen.'
+                          : 'Continues in the background — you can leave this screen; the notification shows progress.'}
                       </p>
                     </div>
                   )}

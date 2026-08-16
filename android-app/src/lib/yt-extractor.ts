@@ -2,11 +2,11 @@
 /**
  * Typed bridge to the native YTExtractor Capacitor plugin (Kotlin, registered
  * in MainActivity). The plugin runs Innertube extraction over the phone's own
- * connection — same-egress, no server in the middle — and hands back ONE
- * allowlist-checked stream URL; `download` saves it in the background via a
- * data-sync foreground service into MediaStore.Downloads (Android 10+) or
- * Downloads/YTConvert (Android 6–9), with progress notifications AND a
- * `downloadProgress` listener for the UI.
+ * connection — same-egress, no server in the middle — and hands back either
+ * one allowlist-checked stream or an adaptive H.264/AAC pair. `download` saves
+ * or stream-copy muxes it in the background directly into MediaStore.Downloads
+ * (Android 10+) or Downloads/YTConvert (Android 6–9), with progress
+ * notifications AND a `downloadProgress` listener for the UI.
  *
  * The UI never calls these unless runtime.extractorReady() is true: in a
  * plain browser the plugin is unimplemented and every call would reject.
@@ -15,7 +15,7 @@ import { registerPlugin } from '@capacitor/core';
 
 export interface NativeExtractOptions {
   url: string;
-  /** 'video' → progressive MP4, 'audio' → original audio track. */
+  /** 'video' → progressive or on-device-combined MP4; 'audio' → original track. */
   format: 'video' | 'audio';
   /** 'best' | numeric height (video) / kbps (audio), website-compatible. */
   quality: string;
@@ -24,21 +24,29 @@ export interface NativeExtractOptions {
 export interface NativeExtractResult {
   videoId: string;
   title: string;
-  /** Direct stream URL; already passed the on-device SSRF allowlist. */
+  /** Progressive/original stream, or the adaptive video track. */
   url: string;
+  /** Adaptive AAC track when the selected video needs an on-device remux. */
+  audioUrl?: string;
   mimeType: string;
   extension: string;
+  /** Source byte total used only for progress; omitted when Innertube lacks it. */
+  totalBytes?: number;
+  /** True when download() will combine separate compressed tracks. */
+  muxing: boolean;
   qualityLabel?: string;
   height?: number;
   bitrate?: number;
   /** Innertube client that minted the URL (diagnostics). */
   sourceClient: string;
-  /** Honest caveat, e.g. "on-device muxing arrives later" above 360p. */
+  /** Honest container/processing note shown by callers when useful. */
   note?: string;
 }
 
 export interface NativeDownloadOptions {
   url: string;
+  audioUrl?: string;
+  totalBytes?: number;
   title: string;
   extension: string;
   mimeType: string;
@@ -47,12 +55,13 @@ export interface NativeDownloadOptions {
 export interface NativeDownloadResult {
   downloadId: number;
   filename: string;
+  muxing: boolean;
 }
 
 export interface NativePingResult {
   ok: boolean;
   version: number;
-  /** True once the on-device adaptive remux step lands; false until then. */
+  /** True when adaptive H.264/AAC tracks can be combined on this device. */
   muxing: boolean;
   /** True from the background-download step on. */
   backgroundDownloads: boolean;
@@ -70,6 +79,8 @@ export interface DownloadProgressEvent {
   totalBytes: number;
   /** Whole percent, or -1 while the total length is unknown. */
   percent: number;
+  /** True while separate adaptive tracks are being combined on-device. */
+  muxing: boolean;
   /** Set when state is 'failed'. */
   error?: string;
 }
@@ -127,9 +138,10 @@ export function humanBytes(bytes: number): string {
 /** Progress row under the download button; honest about unknown lengths. */
 export function describeProgressLine(event: DownloadProgressEvent): string {
   if (event.percent >= 0 && event.totalBytes > 0) {
-    return `${event.percent}% · ${humanBytes(event.receivedBytes)} of ${humanBytes(event.totalBytes)}`;
+    const prefix = event.muxing ? 'Combining on device · ' : '';
+    return `${prefix}${event.percent}% · ${humanBytes(event.receivedBytes)} of ${humanBytes(event.totalBytes)}`;
   }
-  return `Downloading… ${humanBytes(event.receivedBytes)}`;
+  return `${event.muxing ? 'Combining on device' : 'Downloading'}… ${humanBytes(event.receivedBytes)}`;
 }
 
 /**

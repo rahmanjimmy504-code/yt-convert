@@ -1,11 +1,10 @@
-# YT Convert — Android companion (background downloads + MediaStore)
+# YT Convert — Android companion (on-device adaptive MP4 muxing)
 
 A Capacitor app that is growing into the Android version of
-[YT Convert](../README.md). The scaffold (step 1) proved the pipeline, step 2
-brought UI parity with the website, step 3 shipped the native YTExtractor
-plugin, and this step makes downloads **background-first**: a data-sync
-foreground service streams the file with live progress while saving to
-MediaStore (scoped storage).
+[YT Convert](../README.md). Steps 1–4 established the shell, native extractor,
+and background MediaStore download pipeline. Step 5 adds **on-device adaptive
+MP4/AAC muxing**: compatible HD video and audio tracks are stream-copied into
+one MP4 with no re-encode and no intermediate file.
 
 Licensed **GPL-3.0-or-later**, like the rest of the repository — see
 [`../LICENSE`](../LICENSE).
@@ -18,14 +17,14 @@ Licensed **GPL-3.0-or-later**, like the rest of the repository — see
 | Capacitor 7 Android project (`android/`), appId `io.github.rahmanjimmy504.ytconvert` | Committed |
 | Brand launcher icon (legacy, round, and adaptive) generated from the website mark | Done |
 | Debug `applicationIdSuffix` (`.debug`) so a test build coexists with a release | Done |
-| Debug APK workflow (`.github/workflows/android-debug.yml`), now incl. Kotlin unit tests | Live in CI |
+| Debug APK workflow (`.github/workflows/android-debug.yml`) | Live in CI |
 | Converter UI (paste box, platform detection, format/quality, dark mode, history) | Done |
-| Kotlin plugin support in Gradle + `YTExtractor` Capacitor plugin | **This PR** |
+| Kotlin plugin support in Gradle + `YTExtractor` Capacitor plugin | Done |
 | Native progressive MP4 / original-audio extraction | Done |
-| Background downloads + MediaStore (foreground service, progress, cancel) | **This PR** |
-| Adaptive MP4/AAC muxing on-device (HD >360p) | **Next** |
+| Background downloads + MediaStore (foreground service, progress, cancel) | Done |
+| Adaptive MP4/AAC muxing on-device (HD >360p) | **This PR** |
 
-## How the on-device extractor works (step 3)
+## How the on-device extractor and muxer work
 
 1. The UI enables the real **Download** button only when the bundle runs
    inside the Capacitor shell **and** the `YTExtractor` plugin is registered
@@ -39,17 +38,18 @@ Licensed **GPL-3.0-or-later**, like the rest of the repository — see
    connection**. That consumer IP is exactly what clears the bot wall that
    blocks datacenter hosts, and it needs no PO-token sidecar at all.
 3. The picker (`FormatPicker.kt`) mirrors `src/lib/youtube-formats.ts`:
-   video downloads get the best **progressive MP4** (single file with audio);
-   audio downloads keep the **original audio track** (usually AAC in M4A —
-   there is no MP3 transcode on-device, and the UI says so). Requests above
-   the progressive ceiling honestly say that HD muxing arrives in a later
-   release and deliver the closest single-file stream.
+   a progressive MP4 is used when it meets the requested height; otherwise it
+   returns compatible **H.264 video-only MP4 + AAC/M4A audio** tracks. Audio
+   downloads keep the **original audio track** (there is no MP3 transcode).
 4. `YTExtractor.download(...)` starts **DownloadService** — a data-sync
-   **foreground service** — which streams the file into **MediaStore**:
+   **foreground service** — which writes into **MediaStore**:
    `MediaStore.Downloads` (Download/YTConvert, written `IS_PENDING` until
    complete) on Android 10+, a plain `Downloads/YTConvert` file on Android
-   6–9 (storage permission requested first; Android 10+ needs none).
-   Downloads survive the app being backgrounded or the screen turning off.
+   6–9 (storage permission requested first; Android 10+ needs none). A single
+   stream is copied directly. For an adaptive pair, `OnDeviceMuxer.kt` uses
+   `MediaExtractor` + `MediaMuxer` to copy compressed samples from both CDN
+   URLs directly into that final target: no decode, re-encode, or intermediate
+   file. Downloads survive backgrounding and the screen turning off.
 5. Progress flows two ways: the required foreground-service notification
    (percent + bytes), and a `downloadProgress` Capacitor listener the UI
    renders as a progress bar with a **Cancel** action. Cancelled/failed
@@ -74,8 +74,9 @@ Licensed **GPL-3.0-or-later**, like the rest of the repository — see
   content gets the same honest refusal message as on the website.
 - **SSRF allowlist.** Every extracted stream URL is checked against
   `MediaHosts.kt` (HTTPS, no userinfo, no IP literals, `googlevideo.com`
-  suffix only) before it reaches the WebView, and the download entry point
-  re-checks it before anything is enqueued.
+  suffix only) before it reaches the WebView. The download entry point and
+  foreground service independently re-check **both** adaptive track URLs
+  before anything is enqueued or fetched.
 - **Honest labelling.** Audio stays M4A/AAC (never renamed to `.mp3`);
   a combined-stream audio download is labelled MP4 with an explanatory note.
 
@@ -84,8 +85,8 @@ Licensed **GPL-3.0-or-later**, like the rest of the repository — see
 1. Capacitor scaffold + debug APK workflow ✓
 2. UI parity with the website ✓
 3. Native progressive MP4 / original-audio MVP ✓
-4. Background downloads + MediaStore (foreground service, progress) ✓ ← this one
-5. Adaptive MP4/AAC muxing on-device (HD >360p)
+4. Background downloads + MediaStore (foreground service, progress) ✓
+5. Adaptive MP4/AAC muxing on-device (HD >360p) ✓ ← this one
 
 ## Build it yourself
 
@@ -105,8 +106,8 @@ Or `npm run apk:debug` from `android-app/` to do all of it in one command.
 
 No Android SDK to hand? Let CI build it: the **Android debug APK** workflow
 ([`.github/workflows/android-debug.yml`](../.github/workflows/android-debug.yml))
-runs on every change under `android-app/`, and on demand from the Actions tab,
-runs the Kotlin unit tests (`testDebugUnitTest`), and uploads a
+runs on every change under `android-app/` and on demand from the Actions tab,
+compiles the Kotlin as part of `assembleDebug`, and uploads a
 `yt-convert-debug-apk` artifact.
 
 ### Web-only development
@@ -145,6 +146,7 @@ android-app/
         FormatPicker.kt                 stream selection (youtube-formats.ts port)
         MediaHosts.kt                   on-device SSRF allowlist
         DownloadService.kt              data-sync foreground service + notifications
+        OnDeviceMuxer.kt                MediaExtractor → MediaMuxer stream-copy remux
         MediaStoreSaver.kt              MediaStore.Downloads / legacy file targets
         DownloadJob.kt                  job data + progress broadcaster
     app/src/test/java/…/ytextractor/    JVM unit tests (picker, allowlist, parity)
@@ -166,12 +168,12 @@ android-app/
 - This project is excluded from the website's `tsconfig.json` and test run; it
   has its own `npm run typecheck` and `npm test`.
 
-## Notes for the next PR
+## Implementation notes
 
-- `minSdk` is 23 and `targetSdk`/`compileSdk` are 35 (re-checked from
-  `android/variables.gradle` for this step). MediaStore.Downloads is API 29+;
-  Android 6–9 keep the permission-gated file path. No
-  `requestLegacyExternalStorage` escape hatch anywhere.
-- The on-device muxing step mirrors the website's `src/lib/ffmpeg.ts`
-  approach (fragmented MP4, stream copy, no re-encode): the plugin's
-  `ping()` reports `muxing: false` until it lands.
+- `minSdk` is 23 and `targetSdk`/`compileSdk` are 35. MediaStore.Downloads is
+  API 29+; Android 6–9 keep the permission-gated file path. No
+  `requestLegacyExternalStorage` escape hatch exists anywhere.
+- The on-device muxing path mirrors the website's `src/lib/ffmpeg.ts` intent:
+  stream copy, no re-encode, and no intermediate persisted input. Android's
+  seekable final MediaStore/file target lets `MediaMuxer` emit a regular MP4
+  directly, and `ping()` now reports `muxing: true`.

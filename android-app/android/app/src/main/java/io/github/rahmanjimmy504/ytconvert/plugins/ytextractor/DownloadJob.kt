@@ -12,7 +12,14 @@ data class DownloadJob(
     val filename: String,
     val mimeType: String,
     val title: String,
+    /** Second adaptive track; when set, the service stream-copy muxes to MP4. */
+    val audioUrl: String? = null,
+    /** Sum of Innertube Content-Length values, or -1 when unavailable. */
+    val expectedBytes: Long = -1L,
 ) {
+    val muxing: Boolean
+        get() = !audioUrl.isNullOrBlank()
+
     companion object {
         /** Whole-percent progress; total <= 0 (unknown length) reports -1. */
         fun progressPercent(received: Long, total: Long): Int {
