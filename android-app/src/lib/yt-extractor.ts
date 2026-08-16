@@ -5,8 +5,10 @@
  * connection — same-egress, no server in the middle — and hands back either
  * one allowlist-checked stream or an adaptive H.264/AAC pair. `download` saves
  * or stream-copy muxes it in the background directly into MediaStore.Downloads
- * (Android 10+) or Downloads/YTConvert (Android 6–9), with progress
- * notifications AND a `downloadProgress` listener for the UI.
+ * (Android 10+) or Downloads/YTConvert (Android 6–9); a combined-stream audio
+ * fallback has only its AAC track stream-copied into an audio-only M4A — never
+ * the whole video. Progress notifications AND a `downloadProgress` listener
+ * keep the UI informed.
  *
  * The UI never calls these unless runtime.extractorReady() is true: in a
  * plain browser the plugin is unimplemented and every call would reject.
@@ -34,6 +36,11 @@ export interface NativeExtractResult {
   totalBytes?: number;
   /** True when download() will combine separate compressed tracks. */
   muxing: boolean;
+  /**
+   * True when the only source is a progressive MP4 (video+AAC) and download()
+   * will stream-copy just its AAC track into an audio-only M4A.
+   */
+  extractAudio?: boolean;
   qualityLabel?: string;
   height?: number;
   bitrate?: number;
@@ -50,12 +57,15 @@ export interface NativeDownloadOptions {
   title: string;
   extension: string;
   mimeType: string;
+  /** True for the combined-stream audio fallback: save an audio-only M4A. */
+  extractAudio?: boolean;
 }
 
 export interface NativeDownloadResult {
   downloadId: number;
   filename: string;
   muxing: boolean;
+  extractAudio?: boolean;
 }
 
 export interface NativePingResult {
@@ -81,6 +91,8 @@ export interface DownloadProgressEvent {
   percent: number;
   /** True while separate adaptive tracks are being combined on-device. */
   muxing: boolean;
+  /** True while only the AAC track is being saved as an audio-only M4A. */
+  extractAudio: boolean;
   /** Set when state is 'failed'. */
   error?: string;
 }
@@ -137,17 +149,23 @@ export function humanBytes(bytes: number): string {
 
 /** Progress row under the download button; honest about unknown lengths. */
 export function describeProgressLine(event: DownloadProgressEvent): string {
+  const action = event.extractAudio
+    ? 'Saving audio'
+    : event.muxing
+      ? 'Combining on device'
+      : '';
   if (event.percent >= 0 && event.totalBytes > 0) {
-    const prefix = event.muxing ? 'Combining on device · ' : '';
+    const prefix = action ? `${action} · ` : '';
     return `${prefix}${event.percent}% · ${humanBytes(event.receivedBytes)} of ${humanBytes(event.totalBytes)}`;
   }
-  return `${event.muxing ? 'Combining on device' : 'Downloading'}… ${humanBytes(event.receivedBytes)}`;
+  return `${action || 'Downloading'}… ${humanBytes(event.receivedBytes)}`;
 }
 
 /**
  * One-line summary of a successful start for the status row. Honest about
  * what is actually saved: original audio stays M4A/AAC (no MP3 transcode on
- * the phone), and a combined-stream audio download is labelled MP4.
+ * the phone), and a combined-stream audio download has only its AAC track
+ * stream-copied into an audio-only M4A — never the whole video.
  */
 export function describeDownloadedFile(result: NativeExtractResult, download: NativeDownloadResult): string {
   const quality = result.qualityLabel
@@ -155,5 +173,8 @@ export function describeDownloadedFile(result: NativeExtractResult, download: Na
     : result.bitrate
       ? ` (${Math.round(result.bitrate / 1000)} kbps)`
       : '';
-  return `Downloading “${result.title}”${quality} in the background — progress in the notification bar, file lands in Downloads/YTConvert/${download.filename}.`;
+  const how = result.extractAudio
+    ? ' Its AAC track is stream-copied into an audio-only M4A — no re-encoding.'
+    : '';
+  return `Downloading “${result.title}”${quality} in the background — progress in the notification bar, file lands in Downloads/YTConvert/${download.filename}.${how}`;
 }

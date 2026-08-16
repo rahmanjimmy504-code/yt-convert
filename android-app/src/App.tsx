@@ -461,6 +461,7 @@ export default function App() {
         title: stream.title,
         extension: stream.extension,
         mimeType: stream.mimeType,
+        extractAudio: stream.extractAudio,
       });
       activeDownloadId.current = started.downloadId;
       // Seed the progress row; real events from the foreground service
@@ -474,6 +475,7 @@ export default function App() {
         totalBytes: stream.totalBytes ?? -1,
         percent: -1,
         muxing: started.muxing,
+        extractAudio: started.extractAudio ?? false,
       });
       setNativeStatus(describeDownloadedFile(stream, started));
     } catch (err) {
@@ -791,7 +793,7 @@ export default function App() {
                     <InfoIcon className="mt-0.5 flex-shrink-0 text-gray-400" />
                     <span>
                       {format === 'mp3'
-                        ? 'Runs on this phone over your own connection. Audio is saved as the original AAC/M4A track — there is no MP3 transcode on-device.'
+                        ? 'Runs on this phone over your own connection. Audio is saved as the original AAC/M4A track; when only a combined stream exists, its AAC track is saved as an audio-only M4A without re-encoding — there is no MP3 transcode on-device.'
                         : 'Runs on this phone over your own connection. Compatible HD video and AAC audio are combined on this device without re-encoding.'}
                     </span>
                   </p>
@@ -824,9 +826,11 @@ export default function App() {
                         />
                       </div>
                       <p className="text-[10px] text-gray-400">
-                        {downloadEvent.muxing
-                          ? 'Separate tracks are combined on this device with no re-encode or intermediate file. You can leave this screen.'
-                          : 'Continues in the background — you can leave this screen; the notification shows progress.'}
+                        {downloadEvent.extractAudio
+                          ? 'Saving the AAC track as an audio-only M4A — stream-copied from the source, no re-encoding. You can leave this screen.'
+                          : downloadEvent.muxing
+                            ? 'Separate tracks are combined on this device with no re-encode or intermediate file. You can leave this screen.'
+                            : 'Continues in the background — you can leave this screen; the notification shows progress.'}
                       </p>
                     </div>
                   )}

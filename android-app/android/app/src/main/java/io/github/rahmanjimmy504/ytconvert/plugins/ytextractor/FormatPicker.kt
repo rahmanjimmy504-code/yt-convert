@@ -132,9 +132,9 @@ object FormatPicker {
         val pool = if (preferred.isNotEmpty()) preferred else audio
         if (pool.isEmpty()) {
             // Music-label uploads can expose only a progressive itag 18 with no
-            // adaptive audio. Hand back that combined stream; the caller labels
-            // it honestly (MP4 container, note explains there is no separate
-            // audio track) instead of pretending to save a music-only file.
+            // adaptive audio. Hand back that combined stream; the caller
+            // stream-copies its AAC track into an audio-only M4A instead of
+            // saving the whole video file.
             return pickProgressiveForQuality(usable(formats).filter { isProgressiveMp4(it) }, "best")
         }
         return if (quality == "best" || !Regex("""^\d+$""").matches(quality)) {

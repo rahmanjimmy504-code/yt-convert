@@ -1,10 +1,12 @@
-# YT Convert — Android companion (on-device adaptive MP4 muxing)
+# YT Convert — Android companion (on-device adaptive MP4 muxing + audio-only M4A)
 
 A Capacitor app that is growing into the Android version of
 [YT Convert](../README.md). Steps 1–4 established the shell, native extractor,
 and background MediaStore download pipeline. Step 5 adds **on-device adaptive
 MP4/AAC muxing**: compatible HD video and audio tracks are stream-copied into
-one MP4 with no re-encode and no intermediate file.
+one MP4 with no re-encode and no intermediate file. Step 6 fixes audio
+downloads whose only source is a progressive MP4: instead of saving the whole
+video, only the AAC track is stream-copied into an **audio-only M4A**.
 
 Licensed **GPL-3.0-or-later**, like the rest of the repository — see
 [`../LICENSE`](../LICENSE).
@@ -22,7 +24,8 @@ Licensed **GPL-3.0-or-later**, like the rest of the repository — see
 | Kotlin plugin support in Gradle + `YTExtractor` Capacitor plugin | Done |
 | Native progressive MP4 / original-audio extraction | Done |
 | Background downloads + MediaStore (foreground service, progress, cancel) | Done |
-| Adaptive MP4/AAC muxing on-device (HD >360p) | **This PR** |
+| Adaptive MP4/AAC muxing on-device (HD >360p) | Done |
+| Audio-only M4A extraction from combined streams (no video saved) | **This PR** |
 
 ## How the on-device extractor and muxer work
 
@@ -41,6 +44,9 @@ Licensed **GPL-3.0-or-later**, like the rest of the repository — see
    a progressive MP4 is used when it meets the requested height; otherwise it
    returns compatible **H.264 video-only MP4 + AAC/M4A audio** tracks. Audio
    downloads keep the **original audio track** (there is no MP3 transcode).
+   When a music upload exposes no separate audio URL at all, the picker hands
+   back the progressive MP4 as a fallback — and the plugin marks it for
+   audio-only extraction (step 6) instead of saving a video file.
 4. `YTExtractor.download(...)` starts **DownloadService** — a data-sync
    **foreground service** — which writes into **MediaStore**:
    `MediaStore.Downloads` (Download/YTConvert, written `IS_PENDING` until
@@ -49,7 +55,10 @@ Licensed **GPL-3.0-or-later**, like the rest of the repository — see
    stream is copied directly. For an adaptive pair, `OnDeviceMuxer.kt` uses
    `MediaExtractor` + `MediaMuxer` to copy compressed samples from both CDN
    URLs directly into that final target: no decode, re-encode, or intermediate
-   file. Downloads survive backgrounding and the screen turning off.
+   file. For a combined-stream audio fallback, `OnDeviceMuxer.extractAudio()`
+   copies only the `audio/mp4a-latm` (AAC) track into an audio-only `.m4a` —
+   the video bytes are never written. Downloads survive backgrounding and the
+   screen turning off.
 5. Progress flows two ways: the required foreground-service notification
    (percent + bytes), and a `downloadProgress` Capacitor listener the UI
    renders as a progress bar with a **Cancel** action. Cancelled/failed
@@ -77,8 +86,10 @@ Licensed **GPL-3.0-or-later**, like the rest of the repository — see
   suffix only) before it reaches the WebView. The download entry point and
   foreground service independently re-check **both** adaptive track URLs
   before anything is enqueued or fetched.
-- **Honest labelling.** Audio stays M4A/AAC (never renamed to `.mp3`);
-  a combined-stream audio download is labelled MP4 with an explanatory note.
+- **Honest labelling.** Audio stays M4A/AAC (never renamed to `.mp3`); a
+  combined-stream audio download has only its AAC track saved as an
+  audio-only `.m4a` (stream-copied, no re-encode) — it is never silently
+  saved as a video MP4.
 
 ## Roadmap (one PR each, in order)
 
@@ -86,7 +97,8 @@ Licensed **GPL-3.0-or-later**, like the rest of the repository — see
 2. UI parity with the website ✓
 3. Native progressive MP4 / original-audio MVP ✓
 4. Background downloads + MediaStore (foreground service, progress) ✓
-5. Adaptive MP4/AAC muxing on-device (HD >360p) ✓ ← this one
+5. Adaptive MP4/AAC muxing on-device (HD >360p) ✓
+6. Audio-only M4A extraction from combined streams ✓ ← this one
 
 ## Build it yourself
 
@@ -146,7 +158,7 @@ android-app/
         FormatPicker.kt                 stream selection (youtube-formats.ts port)
         MediaHosts.kt                   on-device SSRF allowlist
         DownloadService.kt              data-sync foreground service + notifications
-        OnDeviceMuxer.kt                MediaExtractor → MediaMuxer stream-copy remux
+        OnDeviceMuxer.kt                MediaExtractor → MediaMuxer stream-copy remux + audio-only extraction
         MediaStoreSaver.kt              MediaStore.Downloads / legacy file targets
         DownloadJob.kt                  job data + progress broadcaster
     app/src/test/java/…/ytextractor/    JVM unit tests (picker, allowlist, parity)
