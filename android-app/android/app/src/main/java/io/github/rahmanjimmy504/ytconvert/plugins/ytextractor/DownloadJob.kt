@@ -16,6 +16,13 @@ data class DownloadJob(
     val audioUrl: String? = null,
     /** Sum of Innertube Content-Length values, or -1 when unavailable. */
     val expectedBytes: Long = -1L,
+    /**
+     * When true, the single combined source is progressive video+AAC and the
+     * service must stream-copy only its AAC track into an audio-only M4A.
+     * Progress is indeterminate: the source Content-Length includes the
+     * discarded video bytes, so [expectedBytes] is not used for the total.
+     */
+    val extractAudio: Boolean = false,
 ) {
     val muxing: Boolean
         get() = !audioUrl.isNullOrBlank()

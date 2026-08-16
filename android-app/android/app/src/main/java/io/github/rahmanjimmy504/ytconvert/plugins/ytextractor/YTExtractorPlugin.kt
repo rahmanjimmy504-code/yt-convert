@@ -22,10 +22,12 @@ import java.util.concurrent.atomic.AtomicLong
  * the Innertube client table over the phone's own connection and answers with
  * either one direct progressive/original-audio URL or an allowlist-checked
  * adaptive H.264 + AAC pair. `download(...)` saves it in the background via
- * DownloadService: one stream is copied as-is, while a pair is stream-copy
- * muxed directly into the final MediaStore/file target (no re-encode and no
- * intermediate file). Progress notifications and the `downloadProgress`
- * listener stay active in both paths; cancel discards the partial target.
+ * DownloadService: one stream is copied as-is, an adaptive pair is
+ * stream-copy muxed directly into the final MediaStore/file target, and a
+ * combined-stream audio fallback has only its AAC track stream-copied into an
+ * audio-only M4A (no re-encode and no intermediate file in every path).
+ * Progress notifications and the `downloadProgress` listener stay active in
+ * all paths; cancel discards the partial target.
  *
  * Invariants (see Innertube.kt / MediaHosts.kt):
  *  - no secrets in the APK (no API keys beyond YouTube's public web key, no
@@ -68,6 +70,7 @@ class YTExtractorPlugin : Plugin() {
             event.put("totalBytes", total)
             event.put("percent", DownloadJob.progressPercent(received, total))
             event.put("muxing", job.muxing)
+            event.put("extractAudio", job.extractAudio)
             if (error != null) event.put("error", error)
             notifyListeners("downloadProgress", event)
         }
@@ -147,17 +150,29 @@ class YTExtractorPlugin : Plugin() {
                 )
             val combined = FormatPicker.isProgressiveMp4(pick)
             ret.put("url", pick.url)
-            ret.put("mimeType", if (combined) "video/mp4" else normalizeAudioMime(pick.mimeType))
-            ret.put("extension", FormatPicker.extensionForMime(pick.mimeType))
+            if (combined) {
+                // Innertube exposed no separate audio URL: the fallback is a
+                // progressive MP4 carrying video + AAC. Report the output the
+                // service will actually produce — an audio-only M4A — and ask
+                // it to stream-copy just the AAC track. The progressive
+                // Content-Length is deliberately NOT reported as totalBytes:
+                // it counts the discarded video bytes too.
+                ret.put("mimeType", "audio/mp4")
+                ret.put("extension", "m4a")
+                ret.put("extractAudio", true)
+            } else {
+                ret.put("mimeType", normalizeAudioMime(pick.mimeType))
+                ret.put("extension", FormatPicker.extensionForMime(pick.mimeType))
+                if (pick.contentLength > 0) ret.put("totalBytes", pick.contentLength)
+            }
             pick.qualityLabel?.let { ret.put("qualityLabel", it) }
             if (pick.bitrate > 0) ret.put("bitrate", pick.bitrate)
-            if (pick.contentLength > 0) ret.put("totalBytes", pick.contentLength)
             ret.put("sourceClient", pick.sourceClient)
             ret.put("muxing", false)
             ret.put(
                 "note",
                 if (combined) {
-                    "This video exposes no separate audio track; the combined stream (MP4) carries its audio."
+                    "Its AAC track will be saved as audio-only M4A without re-encoding."
                 } else {
                     "Original audio track — saved without transcoding."
                 },
@@ -252,6 +267,7 @@ class YTExtractorPlugin : Plugin() {
         val title = call.getString("title") ?: "download"
         val extension = call.getString("extension") ?: "bin"
         val mimeType = call.getString("mimeType") ?: ""
+        val extractAudio = call.getBoolean("extractAudio") ?: false
         val expectedBytes = (call.getLong("totalBytes") ?: -1L).let {
             // Display/progress hint only. Reject absurd bridge values so they
             // cannot keep a notification pinned near 0% forever.
@@ -277,7 +293,7 @@ class YTExtractorPlugin : Plugin() {
             needed.add("notifications")
         }
         if (needed.isEmpty()) {
-            startDownloadService(call, id, url, audioUrl, expectedBytes, filename, mimeType, title)
+            startDownloadService(call, id, url, audioUrl, extractAudio, expectedBytes, filename, mimeType, title)
         } else {
             // Keep the job details on the call so the permission callback can
             // resume the same download (PluginCall is handed back unchanged).
@@ -285,6 +301,7 @@ class YTExtractorPlugin : Plugin() {
             data.put("jobId", id)
             data.put("jobUrl", url)
             data.put("jobAudioUrl", audioUrl ?: "")
+            data.put("jobExtractAudio", extractAudio)
             data.put("jobExpectedBytes", expectedBytes)
             data.put("jobFilename", filename)
             data.put("jobMime", mimeType)
@@ -307,6 +324,7 @@ class YTExtractorPlugin : Plugin() {
         val id = data.optLong("jobId", -1L)
         val url = data.optString("jobUrl", "")
         val audioUrl = data.optString("jobAudioUrl", "").ifBlank { null }
+        val extractAudio = data.optBoolean("jobExtractAudio", false)
         val expectedBytes = data.optLong("jobExpectedBytes", -1L)
         val filename = data.optString("jobFilename", "")
         val mime = data.optString("jobMime", "")
@@ -315,7 +333,7 @@ class YTExtractorPlugin : Plugin() {
             call.reject("Download details were lost while asking for permission. Try again.")
             return
         }
-        startDownloadService(call, id, url, audioUrl, expectedBytes, filename, mime, title)
+        startDownloadService(call, id, url, audioUrl, extractAudio, expectedBytes, filename, mime, title)
     }
 
     private fun startDownloadService(
@@ -323,6 +341,7 @@ class YTExtractorPlugin : Plugin() {
         id: Long,
         url: String,
         audioUrl: String?,
+        extractAudio: Boolean,
         expectedBytes: Long,
         filename: String,
         mimeType: String,
@@ -333,6 +352,7 @@ class YTExtractorPlugin : Plugin() {
                 putExtra(DownloadService.EXTRA_ID, id)
                 putExtra(DownloadService.EXTRA_URL, url)
                 audioUrl?.let { putExtra(DownloadService.EXTRA_AUDIO_URL, it) }
+                putExtra(DownloadService.EXTRA_EXTRACT_AUDIO, extractAudio)
                 putExtra(DownloadService.EXTRA_EXPECTED_BYTES, expectedBytes)
                 putExtra(DownloadService.EXTRA_FILENAME, filename)
                 putExtra(DownloadService.EXTRA_MIME, mimeType)
@@ -343,6 +363,7 @@ class YTExtractorPlugin : Plugin() {
             ret.put("downloadId", id)
             ret.put("filename", filename)
             ret.put("muxing", audioUrl != null)
+            ret.put("extractAudio", extractAudio)
             call.resolve(ret)
         } catch (e: Exception) {
             call.reject("Could not start the background download: ${e.message ?: "unknown error"}")

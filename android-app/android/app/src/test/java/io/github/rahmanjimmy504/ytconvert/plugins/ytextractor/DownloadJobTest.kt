@@ -32,6 +32,29 @@ class DownloadJobTest {
     }
 
     @Test
+    fun extractAudioFlagMarksAnAudioOnlyRemuxJob() {
+        // A combined progressive source (video+AAC) that must be saved as an
+        // audio-only M4A: extractAudio is true while muxing stays false —
+        // there is no second adaptive track to combine.
+        val audioOnly = DownloadJob(
+            id = 2,
+            url = "video",
+            filename = "file.m4a",
+            mimeType = "audio/mp4",
+            title = "File",
+            extractAudio = true,
+        )
+        assertEquals(true, audioOnly.extractAudio)
+        assertEquals(false, audioOnly.muxing)
+    }
+
+    @Test
+    fun plainJobsHaveNoAudioExtraction() {
+        val job = DownloadJob(3, "video", "file.mp4", "video/mp4", "File")
+        assertEquals(false, job.extractAudio)
+    }
+
+    @Test
     fun humanBytesUsesReadableUnits() {
         assertEquals("0 B", DownloadJob.humanBytes(0))
         assertEquals("512 B", DownloadJob.humanBytes(512))
