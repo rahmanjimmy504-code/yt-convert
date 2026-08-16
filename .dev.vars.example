@@ -1,0 +1,38 @@
+# Copy this file to `.dev.vars` for local Cloudflare Workers preview:
+#
+#   cp .dev.vars.example .dev.vars
+#
+# `.dev.vars` is git-ignored — never commit real values. `npm run cf:preview`
+# (opennextjs-cloudflare preview) loads these into process.env inside the local
+# workerd runtime, mirroring the encrypted secrets the deploy workflow uploads.
+#
+# RUNTIME variables (read by the Worker at request time) belong here:
+
+# Stable secret for the local CAPTCHA proof tokens.
+CAPTCHA_SECRET=replace-with-a-long-random-value
+
+# HMAC secret for short-lived convert tickets (falls back to CAPTCHA_SECRET).
+CONVERT_TICKET_SECRET=replace-with-a-long-random-value
+
+# Unlocks the admin dashboard at /status (≥ 16 chars). Leave empty to disable.
+ADMIN_TOKEN=
+
+# Optional: Cloudflare Turnstile (recommended for production). The *_PROD
+# scope is selected because a Workers build runs NODE_ENV=production.
+TURNSTILE_SECRET_KEY_PROD=
+TURNSTILE_SECRET_KEY=
+
+# Optional: shared rate limiting across Workers isolates (Upstash Redis REST).
+UPSTASH_REDIS_REST_URL=
+UPSTASH_REDIS_REST_TOKEN=
+
+# ---------------------------------------------------------------------------
+# NOTE on NEXT_PUBLIC_* values (e.g. NEXT_PUBLIC_SITE_URL):
+# these are INLINED at build time, so they must be set in the shell BEFORE
+# `npm run cf:build`, not here. Example:
+#
+#   NEXT_PUBLIC_SITE_URL=http://localhost:3000 npm run cf:build
+#
+# The deploy workflow (deploy-cloudflare.yml) does the same with the
+# NEXT_PUBLIC_SITE_URL Actions variable.
+# ---------------------------------------------------------------------------

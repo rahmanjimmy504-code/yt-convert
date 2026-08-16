@@ -33,6 +33,7 @@ A clean, fast multi-platform converter website built with Next.js. Paste a link 
 - **oEmbed** endpoints for Spotify, Deezer, TikTok, SoundCloud, X, Instagram
 - **Vendored Geist Variable** font (no runtime Google Fonts dependency)
 - **API hardening**: per-IP fixed-window rate limiting (shared through optional Upstash Redis, in-memory by default), in-memory response caching, upstream payload sanitizing
+- **Edge bot-blocking**: a middleware (`src/middleware.ts` → `src/lib/bot-block.ts`) refuses scrapers, SEO crawlers, and AI harvesters before they reach a function, so metered hosts don't spend quota on bots
 - **Human verification**: Cloudflare Turnstile in production, with an accessible dependency-free CAPTCHA fallback for local development — and **separate key sets for production, previews, and local dev**
 - **Converter availability checks**: every converter card shows a live "Working / Unavailable" badge (server-probed, cached 15 min, manual re-check)
 - **Broken-converter reporting**: users flag dead or unsafe converters with a flag button; reports surface on the cards and in the admin dashboard
@@ -437,9 +438,11 @@ On Android: Chrome menu → "Install app" / "Add to Home screen". On iOS: Share 
 
 ## Deployment
 
-The project is designed for **Vercel** (zero-config Next.js hosting). Push to your repository and import it in the Vercel dashboard — `next build` and `next start` are already wired up.
-
-The default live site is at **https://yt-convert-xi.vercel.app/**.
+The forward path is **Cloudflare Workers** (free tier, no credit card) via the
+OpenNext adapter — see [docs/setup-cloudflare.md](docs/setup-cloudflare.md) for
+the Termux, local-CLI, and GitHub Actions routes. The project also runs
+zero-config on **Vercel**, on **Render** via `render.yaml`, on any Docker host,
+or on your own hardware ([docs/setup-home-server.md](docs/setup-home-server.md)).
 
 ### One-VPS Docker (recommended for YouTube)
 
@@ -455,6 +458,12 @@ The default live site is at **https://yt-convert-xi.vercel.app/**.
 > live checks returned no MP3 or MP4), and converter cards provide browser
 > handoffs rather than guaranteed third-party conversions. Only the Termux
 > route has a consumer IP that usually clears the bot check outright.
+>
+> **Want no request meter at all?** [docs/setup-home-server.md](docs/setup-home-server.md)
+> covers running the same Compose stack on your own always-on hardware — a
+> consumer IP plus ffmpeg HD muxing, with no per-request quota, bandwidth
+> bill, or sleep timer. **Moving off Vercel?** [docs/setup-cloudflare.md](docs/setup-cloudflare.md)
+> is the forward path (Cloudflare Workers free plan).
 
 ```bash
 cp .env.example .env   # set AUTH_TOKEN, CONVERT_TICKET_SECRET, SITE_ADDRESS

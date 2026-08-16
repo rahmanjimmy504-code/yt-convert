@@ -15,12 +15,25 @@
  * When neither exists (e.g. Vercel's runtime) muxing self-disables and the
  * download falls back to the progressive single-file stream. Set
  * DISABLE_MUXING=1 to switch it off explicitly.
+ *
+ * Cloudflare Workers (via OpenNext) has no subprocess support at all —
+ * node:child_process is a non-functional stub there. isSubprocessUnavailable()
+ * detects that runtime up front so ffmpegPath() returns null without ever
+ * touching spawn, and muxing self-disables exactly as it does on Vercel.
  */
 
 import { spawn, spawnSync } from 'node:child_process';
 
-const BROWSER_UA =
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36';
+/**
+ * True on runtimes with no working subprocess support (Cloudflare Workers via
+ * OpenNext). The Workers runtime exposes a `navigator` global whose user agent
+ * is the literal "Cloudflare-Workers"; Node does not. This is checked instead
+ * of probe-spawning, because calling the child_process stub there throws.
+ */
+export function isSubprocessUnavailable(): boolean {
+  const g = globalThis as { navigator?: { userAgent?: string } };
+  return typeof g.navigator !== 'undefined' && g.navigator?.userAgent === 'Cloudflare-Workers';
+}
 
 /** Module-level probe cache: `undefined` = not yet probed. */
 let cachedFfmpeg: string | null | undefined;
@@ -29,16 +42,30 @@ let cachedFfmpeg: string | null | undefined;
 export function ffmpegPath(): string | null {
   if (cachedFfmpeg !== undefined) return cachedFfmpeg;
 
+  if (isSubprocessUnavailable()) {
+    cachedFfmpeg = null;
+    return cachedFfmpeg;
+  }
+
   const explicit = (process.env.FFMPEG_PATH || '').trim();
   if (explicit) {
     cachedFfmpeg = explicit;
     return cachedFfmpeg;
   }
 
-  const probe = spawnSync('ffmpeg', ['-version'], { stdio: 'ignore', timeout: 5000 });
-  cachedFfmpeg = probe.error ? null : 'ffmpeg';
+  try {
+    const probe = spawnSync('ffmpeg', ['-version'], { stdio: 'ignore', timeout: 5000 });
+    cachedFfmpeg = probe.error ? null : 'ffmpeg';
+  } catch {
+    // Defense in depth: if spawnSync itself is unavailable/throws, treat
+    // ffmpeg as absent rather than crashing the request path.
+    cachedFfmpeg = null;
+  }
   return cachedFfmpeg;
 }
+
+const BROWSER_UA =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36';
 
 /** Pure decision, split out so it can be unit-tested without a real binary. */
 export function muxingEnabled(ffmpegAvailable: boolean, disabled: boolean): boolean {

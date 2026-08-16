@@ -7,12 +7,13 @@
  *
  *   NEXT_PUBLIC_SITE_URL=https://yt-convert.example.com
  *
- * Previews can override it per-environment in Vercel (set a different
- * NEXT_PUBLIC_SITE_URL for the Preview environment), which keeps canonical
- * URLs correct on preview deployments too.
+ * Production deployments should always set NEXT_PUBLIC_SITE_URL (see
+ * docs/setup-cloudflare.md and docs/setup-free.md). The built-in default is a
+ * local development URL only, so an unconfigured build never advertises a
+ * stale third-party hostname as its canonical origin.
  */
 
-export const DEFAULT_SITE_URL = 'https://yt-convert-xi.vercel.app';
+export const DEFAULT_SITE_URL = 'http://localhost:3000';
 
 /**
  * Where the complete corresponding source lives. YT Convert is free software
