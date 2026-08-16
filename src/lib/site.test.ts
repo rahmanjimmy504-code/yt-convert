@@ -10,10 +10,11 @@ afterEach(() => {
 });
 
 describe('getSiteUrl', () => {
-  it('returns the Vercel fallback when no deployment URL is set', () => {
+  it('returns the local development fallback when no deployment URL is set', () => {
     delete process.env.NEXT_PUBLIC_SITE_URL;
     delete process.env.RENDER_EXTERNAL_URL;
     expect(getSiteUrl()).toBe(DEFAULT_SITE_URL);
+    expect(getSiteUrl()).toBe('http://localhost:3000');
   });
 
   it('uses Render\'s service URL when no custom domain is configured', () => {
