@@ -16,6 +16,14 @@ import {
 import { __resetPoTokenCacheForTests } from './po-token';
 import { resetCobaltDirectoryCache } from './cobalt-directory';
 
+// Deterministic ffmpeg availability for the extractor's mux/transcode
+// decisions. Without this, the tests would depend on whether the runner
+// happens to have an ffmpeg binary on PATH (GitHub CI does).
+vi.mock('./ffmpeg', () => ({
+  isMuxingEnabled: vi.fn(() => false),
+  isTranscodeEnabled: vi.fn(() => false),
+}));
+
 /** Minimal 24-byte MP4 (ftyp=isom) for probes. */
 function fakeMp4Body(): Uint8Array {
   // 32-byte minimal ISO-BMFF ftyp box.
@@ -270,6 +278,58 @@ describe('extractMedia YouTube fallbacks', () => {
     }
     // No pipedapi.* host should have been contacted.
     expect(urls.some(u => u.includes('pipedapi'))).toBe(false);
+  });
+
+  it('offers a server-side MP3 transcode when ffmpeg is available and only M4A exists', async () => {
+    const { isTranscodeEnabled } = await import('./ffmpeg');
+    vi.mocked(isTranscodeEnabled).mockReturnValue(true);
+    const urls: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        urls.push(url);
+        return new Response(JSON.stringify(playerOk(GV_VIDEO, GV_AUDIO)), {
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }),
+    );
+
+    const result = await extractMedia('youtube', 'https://www.youtube.com/watch?v=Y1Z3Q3O7IRE', 'mp3', '320');
+    expect(isExtractError(result)).toBe(false);
+    if (!isExtractError(result)) {
+      // The real M4A source is handed back with a transcode hint; the convert
+      // route re-encodes it to MP3 with ffmpeg libmp3lame.
+      expect(result.url).toBe(GV_AUDIO);
+      expect(result.transcodeToMp3).toBe(true);
+      expect(result.extension).toBe('m4a');
+    }
+    // Local formats are kept for the local transcode — no farm/cobalt hop.
+    expect(urls.some(u => u.includes('9convert') || u.includes('cobalt'))).toBe(false);
+  });
+
+  it('still fails honestly for MP3 when ffmpeg is unavailable and only M4A exists', async () => {
+    // Re-arm the default (transcoding disabled) — the previous test enabled it.
+    const { isTranscodeEnabled } = await import('./ffmpeg');
+    vi.mocked(isTranscodeEnabled).mockReturnValue(false);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        // Innertube answers with the M4A-only player; the farm/cobalt hops
+        // answer nothing so the honest failure is reached.
+        if (url.includes('youtubei/v1/player')) {
+          return new Response(JSON.stringify(playerOk(GV_VIDEO, GV_AUDIO)), {
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        return new Response('{}', { status: 404 });
+      }),
+    );
+
+    // isTranscodeEnabled defaults to false via the ./ffmpeg mock. The lookup
+    // must fail (honest error, farm/cobalt found nothing) rather than hand
+    // back the M4A relabelled as MP3.
+    const result = await extractMedia('youtube', 'https://www.youtube.com/watch?v=Y1Z3Q3O7IRE', 'mp3', 'best');
+    expect(isExtractError(result)).toBe(true);
   });
 
   it('falls back to Piped when Innertube and Invidious return nothing', async () => {

@@ -66,6 +66,8 @@ interface VideoInfo {
   videoQualityPlans?: VideoQualityPlan[];
   /** Whether the server can combine separate video + audio tracks (remux). */
   muxing?: boolean;
+  /** Whether the server can re-encode audio to MP3 (ffmpeg libmp3lame). */
+  transcoding?: boolean;
 }
 
 interface HistoryItem {
@@ -877,7 +879,11 @@ export default function Home() {
                   </div>
                   <p className="text-[11px] text-gray-500 dark:text-gray-400">
                     We proxy the public file and do not store it.
-                    {format === 'mp3' ? ' Audio keeps its real container (often M4A/AAC, not MP3).' : ' Video is progressive MP4 when the platform provides one.'}
+                    {format === 'mp3'
+                      ? videoInfo?.transcoding
+                        ? ' Audio is converted to MP3 on this server (ffmpeg) — no third-party service.'
+                        : ' Audio keeps its real container (often M4A/AAC, not MP3).'
+                      : ' Video is progressive MP4 when the platform provides one.'}
                   </p>
 
                   {/* Audio / Video toggle stays on the result card. */}

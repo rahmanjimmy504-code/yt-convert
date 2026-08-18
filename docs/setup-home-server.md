@@ -18,7 +18,7 @@ a NAS, or a mini PC that stays plugged in and connected.
 | Request quota / bandwidth cap | yes, and it is why the Vercel deploy was paused | none — only your upload speed |
 | Sleeps when idle | Render free plan does | no |
 | Consumer IP (clears YouTube's bot check) | no — datacenter IP | **usually yes** |
-| ffmpeg HD muxing | no on Vercel/Workers | **yes** (bundled in the Docker image) |
+| ffmpeg HD muxing + MP3 transcode | no on Vercel/Workers | **yes** (bundled in the Docker image) |
 | Uptime responsibility | the host's | **yours** |
 | Exposure | public, anonymous visitors | public, *your* IP and *your* network |
 
@@ -127,7 +127,10 @@ docker compose up -d --build
 First build takes a few minutes. Then open `https://yt.example.com`.
 
 - **ffmpeg is bundled**, so YouTube's >360p separate-track streams are
-  stream-copied into one MP4 on the fly — no re-encode, no file stored.
+  stream-copied into one MP4 on the fly — no re-encode, no file stored. It
+  also enables **MP3 audio downloads**: the source audio is re-encoded to MP3
+  on this server (libmp3lame, included in Debian's ffmpeg) instead of failing
+  or relabelling an M4A. Set `DISABLE_TRANSCODING=1` to switch that off.
 - The **PO-token sidecar** (`po-token`) shares the app's egress IP, which is
   exactly the same-egress arrangement that clears YouTube's BotGuard check.
   Do not publish port `4416`.

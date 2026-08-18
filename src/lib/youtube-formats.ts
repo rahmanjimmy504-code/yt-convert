@@ -89,6 +89,18 @@ export const VIDEO_QUALITY_OPTIONS = ['best', '1080', '720', '480', '360'] as co
 export type AudioQuality = (typeof AUDIO_KBPS_OPTIONS)[number];
 export type VideoQuality = (typeof VIDEO_QUALITY_OPTIONS)[number];
 
+/**
+ * LAME CBR bitrate (kbps) for an MP3 transcode quality selection. 'best'
+ * maps to 320 kbps — LAME's top CBR rate for MPEG-1 Layer III at 44.1 kHz —
+ * matching what the on-device Android picker uses.
+ */
+export function mp3BitrateKbps(quality: string): number {
+  if (quality === 'best') return 320;
+  const numeric = parseInt(quality, 10);
+  if (!Number.isFinite(numeric)) return 320;
+  return Math.min(320, Math.max(64, numeric));
+}
+
 /** Validates the `quality` query param against the chosen format. */
 export function isValidQuality(format: 'mp3' | 'mp4', quality: string): boolean {
   return format === 'mp3'

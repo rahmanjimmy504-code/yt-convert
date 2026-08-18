@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { isSubprocessUnavailable, muxArgs, muxingEnabled } from './ffmpeg';
+import { isSubprocessUnavailable, muxArgs, muxingEnabled, transcodeArgs, transcodeEnabled } from './ffmpeg';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -23,6 +23,55 @@ describe('muxingEnabled', () => {
     expect(muxingEnabled(false, false)).toBe(false);
     expect(muxingEnabled(true, true)).toBe(false);
     expect(muxingEnabled(false, true)).toBe(false);
+  });
+});
+
+describe('transcodeEnabled', () => {
+  it('is true only when ffmpeg is present and not disabled', () => {
+    expect(transcodeEnabled(true, false)).toBe(true);
+    expect(transcodeEnabled(false, false)).toBe(false);
+    expect(transcodeEnabled(true, true)).toBe(false);
+    expect(transcodeEnabled(false, true)).toBe(false);
+  });
+});
+
+describe('transcodeArgs', () => {
+  const args = transcodeArgs('https://example.com/a.m4a', 320);
+
+  it('is an argv array, never a joined shell string', () => {
+    expect(Array.isArray(args)).toBe(true);
+    for (const arg of args) {
+      expect(typeof arg).toBe('string');
+      expect(arg.length).toBeGreaterThan(0);
+    }
+    expect(args).toContain('https://example.com/a.m4a');
+  });
+
+  it('maps the first audio track to LAME CBR MP3 on stdout', () => {
+    expect(args).toContain('-map');
+    expect(args).toContain('0:a:0');
+    expect(args).toContain('-c:a');
+    expect(args).toContain('libmp3lame');
+    expect(args).toContain('-b:a');
+    expect(args).toContain('320k');
+    expect(args).toContain('-f');
+    expect(args).toContain('mp3');
+    expect(args).toContain('pipe:1');
+    // Xing/Info tags need a seekable output; a pipe must not try to write one.
+    expect(args).toContain('-write_xing');
+    expect(args).toContain('0');
+  });
+
+  it('uses the requested CBR bitrate', () => {
+    expect(transcodeArgs('u', 64)).toContain('64k');
+    expect(transcodeArgs('u', 128)).toContain('128k');
+    expect(transcodeArgs('u', 320)).toContain('320k');
+  });
+
+  it('sends a browser user agent so CDNs do not refuse the fetch', () => {
+    const uaIndex = args.indexOf('-user_agent');
+    expect(uaIndex).toBeGreaterThanOrEqual(0);
+    expect(args[uaIndex + 1]).toMatch(/Mozilla\/5\.0/);
   });
 });
 

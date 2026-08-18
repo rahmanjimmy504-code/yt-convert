@@ -5,6 +5,7 @@ import {
   extensionForMime,
   isGoogleVideoUrl,
   isValidQuality,
+  mp3BitrateKbps,
   pickYouTubeFormat,
   planVideoDownload,
   sanitizeDownloadFilename,
@@ -189,6 +190,18 @@ describe('quality selection', () => {
     expect(isValidQuality('mp4', 'highest')).toBe(false);
     expect([...AUDIO_KBPS_OPTIONS]).toContain('320');
     expect([...VIDEO_QUALITY_OPTIONS]).toContain('1080');
+  });
+
+  it('maps the MP3 quality row to a LAME CBR bitrate', () => {
+    expect(mp3BitrateKbps('best')).toBe(320);
+    expect(mp3BitrateKbps('320')).toBe(320);
+    expect(mp3BitrateKbps('256')).toBe(256);
+    expect(mp3BitrateKbps('128')).toBe(128);
+    expect(mp3BitrateKbps('64')).toBe(64);
+    // Nonsense values clamp into codec-legal ranges instead of failing.
+    expect(mp3BitrateKbps('10')).toBe(64);
+    expect(mp3BitrateKbps('999')).toBe(320);
+    expect(mp3BitrateKbps('')).toBe(320);
   });
 });
 
