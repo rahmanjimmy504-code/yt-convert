@@ -9,7 +9,7 @@ import {
 import { verifyCaptchaToken } from '@/lib/captcha';
 import { issueConvertTicket } from '@/lib/convert-ticket';
 import { innertubeFormats, sanitizeYouTubeCookies } from '@/lib/extract';
-import { isMuxingEnabled } from '@/lib/ffmpeg';
+import { isMuxingEnabled, isTranscodeEnabled } from '@/lib/ffmpeg';
 import { INVIDIOUS_INSTANCES, invidiousVideoUrl } from '@/lib/invidious';
 import { clientIp, rateLimit } from '@/lib/rate-limit';
 import { recordEvent } from '@/lib/stats';
@@ -43,6 +43,12 @@ export interface VideoInfo {
    * is reported honestly as "not available yet" by the result card.
    */
   muxing?: boolean;
+  /**
+   * Whether this deployment can re-encode audio to MP3 server-side (ffmpeg
+   * libmp3lame). When false, MP3 downloads keep the honest "real container
+   * only" behaviour (often M4A/AAC, never a renamed file).
+   */
+  transcoding?: boolean;
 }
 
 const UA = { 'User-Agent': 'Mozilla/5.0 (compatible; YTConvert/1.0)' };
@@ -283,6 +289,7 @@ function withConvertFields(info: VideoInfo, rawUrl: string, ip: string): VideoIn
     // Deployment-level capability, attached outside the cache so it always
     // reflects the current process's ffmpeg availability.
     muxing: isMuxingEnabled(),
+    transcoding: isTranscodeEnabled(),
   };
 }
 

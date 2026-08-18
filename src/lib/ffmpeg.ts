@@ -118,15 +118,50 @@ const HIGH_WATER = 64;
 const LOW_WATER = 32;
 
 /**
+ * The exact ffmpeg invocation for an on-server MP3 transcode, as an argument
+ * array. No shell interpolation is possible. The source is any audio track
+ * ffmpeg can decode (M4A/AAC, WebM/Opus, OGG); libmp3lame re-encodes to CBR
+ * MP3. `-write_xing 0` keeps the output a plain frame stream (no Xing/Info
+ * tag), which is what a non-seekable pipe can emit deterministically.
+ */
+export function transcodeArgs(audioUrl: string, bitrateKbps: number): string[] {
+  return [
+    '-hide_banner',
+    '-loglevel', 'error',
+    '-nostdin',
+    '-user_agent', BROWSER_UA,
+    '-i', audioUrl,
+    '-map', '0:a:0',
+    '-vn',
+    '-c:a', 'libmp3lame',
+    '-b:a', `${bitrateKbps}k`,
+    '-id3v2_version', '3',
+    '-write_xing', '0',
+    '-f', 'mp3',
+    'pipe:1',
+  ];
+}
+
+/** Pure decision, split out so it can be unit-tested without a real binary. */
+export function transcodeEnabled(ffmpegAvailable: boolean, disabled: boolean): boolean {
+  return ffmpegAvailable && !disabled;
+}
+
+/** Whether this process can convert audio to MP3 right now. */
+export function isTranscodeEnabled(): boolean {
+  return transcodeEnabled(ffmpegPath() !== null, process.env.DISABLE_TRANSCODING === '1');
+}
+
+/**
  * Spawn ffmpeg and expose its stdout as a web ReadableStream. Returns null when
  * no ffmpeg binary is available. The child is killed on cancel; the caller must
  * also arrange to call `kill()` when the request is aborted (see /api/convert).
  */
-export function muxMediaToStream(videoUrl: string, audioUrl: string): MuxStream | null {
+function spawnFfmpegToStream(args: string[]): MuxStream | null {
   const bin = ffmpegPath();
   if (!bin) return null;
 
-  const child = spawn(bin, muxArgs(videoUrl, audioUrl), {
+  const child = spawn(bin, args, {
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 
@@ -209,4 +244,14 @@ export function muxMediaToStream(videoUrl: string, audioUrl: string): MuxStream 
   });
 
   return { body, started, kill, stderrTail: () => stderrBuf };
+}
+
+/** Stream-copy remux of a video track and an audio track into one MP4. */
+export function muxMediaToStream(videoUrl: string, audioUrl: string): MuxStream | null {
+  return spawnFfmpegToStream(muxArgs(videoUrl, audioUrl));
+}
+
+/** Re-encode an audio stream into MP3 (libmp3lame) on this server. */
+export function transcodeAudioToStream(audioUrl: string, bitrateKbps: number): MuxStream | null {
+  return spawnFfmpegToStream(transcodeArgs(audioUrl, bitrateKbps));
 }

@@ -9,10 +9,24 @@ import {
   canConvertPlatform,
   canExtractOnDevice,
   convertUnavailableReason,
-  type FormatKey,
   type PlatformKey,
 } from './lib/platforms';
-import { AUDIO_KBPS_OPTIONS, VIDEO_QUALITY_OPTIONS } from './lib/formats';
+import {
+  AUDIO_KBPS_OPTIONS,
+  AUDIO_TARGETS,
+  KIND_STORAGE_KEY,
+  TARGETS,
+  TARGET_STORAGE_KEY,
+  VIDEO_QUALITY_OPTIONS,
+  isAudioTarget,
+  isTranscodeTarget,
+  parseStoredKind,
+  targetAvailable,
+  targetUnavailableReason,
+  type AudioTarget,
+  type DownloadTarget,
+  type MediaKind,
+} from './lib/formats';
 import {
   ANDROID_DOWNLOAD_APPS,
   buildAndroidDownloadIntent,
@@ -214,7 +228,7 @@ const PLACEHOLDERS = [
   'https://www.tiktok.com/...',
 ];
 
-const FORMAT_LABELS: Record<FormatKey, string> = { mp3: 'Audio', mp4: 'Video' };
+const KIND_LABELS: Record<MediaKind, string> = { audio: 'Audio', video: 'Video' };
 
 export default function App() {
   const runtime = describeRuntime();
@@ -225,7 +239,11 @@ export default function App() {
 
   const [mounted, setMounted] = useState(false);
   const [url, setUrl] = useState('');
-  const [format, setFormat] = useState<FormatKey>('mp4');
+  const [kind, setKind] = useState<MediaKind>('video');
+  const [audioTarget, setAudioTarget] = useState<AudioTarget>('m4a');
+  // Device API level from YTExtractor.ping(); null until probed (or in a
+  // browser shell). Encoder-gated chips (FLAC/Opus) stay disabled until known.
+  const [apiLevel, setApiLevel] = useState<number | null>(null);
   const [audioQuality, setAudioQuality] = useState<string>('best');
   const [videoQuality, setVideoQuality] = useState<string>('best');
   const [phase, setPhase] = useState<Phase>('input');
@@ -250,8 +268,16 @@ export default function App() {
     setDark(d);
     document.documentElement.classList.toggle('dark', d);
     setHistory(sGetJ<HistoryItem[]>('yt-convert-android-history') || []);
-    const f = sGet('yt-convert-android-format');
-    if (f === 'mp3' || f === 'mp4') setFormat(f);
+    // Restore the format picker. New keys win; the legacy mp3/mp4 key from
+    // older installs maps onto the equivalent defaults (audio → M4A, video).
+    const legacyFormat = sGet('yt-convert-android-format');
+    const storedKindRaw =
+      sGet(KIND_STORAGE_KEY) || (legacyFormat === 'mp3' ? 'audio' : legacyFormat === 'mp4' ? 'video' : '');
+    setKind(parseStoredKind(storedKindRaw || null));
+    // Restore the exact stored audio target; encoder gating is re-checked
+    // once ping() reports the device API level below.
+    const storedTarget = sGet(TARGET_STORAGE_KEY);
+    setAudioTarget(isAudioTarget(storedTarget) ? storedTarget : 'm4a');
     const aq = sGet('yt-convert-android-audio-quality');
     if ((AUDIO_KBPS_OPTIONS as readonly string[]).includes(aq)) setAudioQuality(aq);
     const vq = sGet('yt-convert-android-video-quality');
@@ -265,6 +291,29 @@ export default function App() {
     const i = setInterval(() => setTipIdx(t => (t + 1) % TIPS.length), 5000);
     return () => clearInterval(i);
   }, []);
+
+  // Ask the native plugin for the device API level so encoder-gated targets
+  // (FLAC needs Android 12, Opus Android 10) can gate their chips honestly.
+  // In a browser shell ping() would reject; gating stays conservative there.
+  useEffect(() => {
+    if (!nativeReady) return;
+    let disposed = false;
+    YTExtractor.ping()
+      .then(p => {
+        if (!disposed) setApiLevel(typeof p.apiLevel === 'number' ? p.apiLevel : null);
+      })
+      .catch(() => {
+        /* keep apiLevel unknown: chips stay honestly disabled */
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [nativeReady]);
+
+  // A restored choice that this device cannot encode falls back to M4A.
+  useEffect(() => {
+    if (apiLevel !== null && !targetAvailable(audioTarget, apiLevel)) setAudioTarget('m4a');
+  }, [apiLevel, audioTarget]);
 
   // Background-download progress from the native foreground service. Only the
   // download this session started is shown; terminal states flip into the
@@ -390,12 +439,20 @@ export default function App() {
     [phase],
   );
 
-  const handleFormatChange = useCallback((f: FormatKey) => {
-    setFormat(f);
+  const handleKindChange = useCallback((k: MediaKind) => {
+    setKind(k);
     setNativeStatus('');
     setNativeError('');
     setDownloadEvent(null);
-    sSet('yt-convert-android-format', f);
+    sSet(KIND_STORAGE_KEY, k);
+  }, []);
+
+  const handleTargetChange = useCallback((t: AudioTarget) => {
+    setAudioTarget(t);
+    setNativeStatus('');
+    setNativeError('');
+    setDownloadEvent(null);
+    sSet(TARGET_STORAGE_KEY, t);
   }, []);
   const handleAudioQualityChange = useCallback((q: string) => {
     setAudioQuality(q);
@@ -416,6 +473,13 @@ export default function App() {
   }, []);
 
   const videoId = phase === 'ready' ? extractYouTubeId(url.trim()) : null;
+
+  /** The concrete output file type the native side will be asked to save. */
+  const activeTarget: DownloadTarget = kind === 'audio' ? audioTarget : 'mp4';
+  const activeSpec = TARGETS[activeTarget];
+  const transcode = kind === 'audio' && isTranscodeTarget(activeTarget);
+  /** Bitrate row semantics: encoder setting for transcodes, source pick for M4A. */
+  const bitrateRowVisible = kind === 'audio' && activeSpec.bitrateRelevant;
 
   const openAndroidDownloadApp = useCallback(
     (app: AndroidDownloadApp) => {
@@ -451,8 +515,11 @@ export default function App() {
     try {
       const stream = await YTExtractor.extract({
         url: u,
-        format: format === 'mp3' ? 'audio' : 'video',
-        quality: format === 'mp3' ? audioQuality : videoQuality,
+        format: kind,
+        // Transcodes always take the best source stream; the bitrate row
+        // configures the encoder instead. M4A keeps source-bitrate picking.
+        quality: kind === 'audio' ? (transcode ? 'best' : audioQuality) : videoQuality,
+        target: activeTarget,
       });
       const started = await YTExtractor.download({
         url: stream.url,
@@ -462,6 +529,9 @@ export default function App() {
         extension: stream.extension,
         mimeType: stream.mimeType,
         extractAudio: stream.extractAudio,
+        target: activeTarget,
+        transcode,
+        audioBitrate: kind === 'audio' ? audioQuality : undefined,
       });
       activeDownloadId.current = started.downloadId;
       // Seed the progress row; real events from the foreground service
@@ -476,6 +546,7 @@ export default function App() {
         percent: -1,
         muxing: started.muxing,
         extractAudio: started.extractAudio ?? false,
+        transcoding: started.transcoding ?? transcode,
       });
       setNativeStatus(describeDownloadedFile(stream, started));
     } catch (err) {
@@ -483,7 +554,7 @@ export default function App() {
     } finally {
       setBusy(false);
     }
-  }, [url, format, audioQuality, videoQuality, busy]);
+  }, [url, kind, audioTarget, transcode, audioQuality, videoQuality, busy]);
 
   const handleCancelDownload = useCallback(() => {
     const id = activeDownloadId.current;
@@ -498,6 +569,40 @@ export default function App() {
    * the native extractor is absent for a YouTube link, or when a native
    * extraction just failed and the visitor still wants their file.
    */
+  /**
+   * The audio file-type chip row (M4A / MP3 / WAV / FLAC / Opus). Chips whose
+   * encoder needs a newer Android than this device (or than ping() could
+   * confirm) are disabled with the reason as their tooltip — never a button
+   * that silently fails.
+   */
+  const renderTargetChips = () => (
+    <div className="flex flex-wrap gap-1.5" role="group" aria-label="Audio file type">
+      {AUDIO_TARGETS.map(t => {
+        const reason = targetUnavailableReason(t.key, apiLevel);
+        return (
+          <button
+            key={t.key}
+            type="button"
+            onClick={() => handleTargetChange(t.key)}
+            disabled={reason !== null}
+            aria-pressed={audioTarget === t.key}
+            title={reason ?? t.description}
+            className={
+              'px-2.5 py-1 rounded-md text-[11px] font-semibold border transition-colors ' +
+              (audioTarget === t.key
+                ? 'bg-red-600 text-white border-red-600'
+                : reason !== null
+                  ? 'bg-gray-50 dark:bg-gray-800/50 text-gray-300 dark:text-gray-600 border-gray-100 dark:border-gray-800 cursor-not-allowed'
+                  : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-700 hover:border-red-300 dark:hover:border-red-800')
+            }
+          >
+            {t.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+
   const renderFreeAppsPanel = (lead: string) =>
     videoId ? (
       <div className="border-t border-red-200/80 dark:border-red-900 pt-3 space-y-2.5">
@@ -640,24 +745,32 @@ export default function App() {
             <label className="text-sm font-semibold">Format</label>
             <div className="grid grid-cols-2 h-11 rounded-xl bg-gray-100 dark:bg-gray-800 p-1">
               <button
-                onClick={() => handleFormatChange('mp3')}
+                onClick={() => handleKindChange('audio')}
                 className={
                   'rounded-lg text-sm font-medium transition-all flex items-center justify-center gap-2 ' +
-                  (format === 'mp3' ? 'bg-white dark:bg-gray-700 shadow-sm' : 'text-gray-500')
+                  (kind === 'audio' ? 'bg-white dark:bg-gray-700 shadow-sm' : 'text-gray-500')
                 }
               >
-                <MusicIcon size={16} /> MP3
+                <MusicIcon size={16} /> Audio
               </button>
               <button
-                onClick={() => handleFormatChange('mp4')}
+                onClick={() => handleKindChange('video')}
                 className={
                   'rounded-lg text-sm font-medium transition-all flex items-center justify-center gap-2 ' +
-                  (format === 'mp4' ? 'bg-white dark:bg-gray-700 shadow-sm' : 'text-gray-500')
+                  (kind === 'video' ? 'bg-white dark:bg-gray-700 shadow-sm' : 'text-gray-500')
                 }
               >
-                <FilmIcon size={16} /> MP4
+                <FilmIcon size={16} /> Video
               </button>
             </div>
+            {kind === 'audio' && (
+              <div className="space-y-1.5">
+                {renderTargetChips()}
+                <p className="text-[11px] leading-snug text-gray-500 dark:text-gray-400">
+                  {activeSpec.description}
+                </p>
+              </div>
+            )}
           </div>
 
           <p className="text-xs text-gray-400 text-center animate-pulse">{TIPS[tipIdx]}</p>
@@ -668,7 +781,7 @@ export default function App() {
             <div className="bg-white dark:bg-gray-900 rounded-2xl border-2 border-red-200 dark:border-red-900 overflow-hidden p-5 space-y-4">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0 flex-1">
-                  <h3 className="font-semibold text-sm">{FORMAT_LABELS[format]} · {platformLabel(dp)}</h3>
+                  <h3 className="font-semibold text-sm">{KIND_LABELS[kind]} · {platformLabel(dp)}</h3>
                   {videoId && <p className="text-xs text-gray-500 mt-1 font-mono">{videoId}</p>}
                 </div>
                 <span className={'text-xs font-medium px-2.5 py-1 rounded-full flex-shrink-0 ' + platformColor(dp)}>
@@ -699,48 +812,61 @@ export default function App() {
 
               <div className="grid grid-cols-2 h-10 rounded-lg bg-gray-100 dark:bg-gray-800 p-1">
                 <button
-                  onClick={() => handleFormatChange('mp3')}
+                  onClick={() => handleKindChange('audio')}
                   className={
                     'rounded-md text-xs font-medium transition-all flex items-center justify-center gap-1.5 ' +
-                    (format === 'mp3' ? 'bg-white dark:bg-gray-700 shadow-sm' : 'text-gray-500')
+                    (kind === 'audio' ? 'bg-white dark:bg-gray-700 shadow-sm' : 'text-gray-500')
                   }
                 >
                   <MusicIcon size={14} /> Audio
                 </button>
                 <button
-                  onClick={() => handleFormatChange('mp4')}
+                  onClick={() => handleKindChange('video')}
                   className={
                     'rounded-md text-xs font-medium transition-all flex items-center justify-center gap-1.5 ' +
-                    (format === 'mp4' ? 'bg-white dark:bg-gray-700 shadow-sm' : 'text-gray-500')
+                    (kind === 'video' ? 'bg-white dark:bg-gray-700 shadow-sm' : 'text-gray-500')
                   }
                 >
                   <FilmIcon size={14} /> Video
                 </button>
               </div>
 
-              {format === 'mp3' ? (
-                <div>
-                  <label className="block text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-1.5">
-                    Bitrate
-                  </label>
-                  <div className="flex flex-wrap gap-1.5">
-                    {AUDIO_KBPS_OPTIONS.map(q => (
-                      <button
-                        key={q}
-                        type="button"
-                        onClick={() => handleAudioQualityChange(q)}
-                        aria-pressed={audioQuality === q}
-                        className={
-                          'px-2.5 py-1 rounded-md text-[11px] font-medium border transition-colors ' +
-                          (audioQuality === q
-                            ? 'bg-red-600 text-white border-red-600'
-                            : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-700 hover:border-red-300 dark:hover:border-red-800')
-                        }
-                      >
-                        {q === 'best' ? 'Best' : `${q} kbps`}
-                      </button>
-                    ))}
+              {kind === 'audio' ? (
+                <div className="space-y-2">
+                  <div>
+                    <label className="block text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-1.5">
+                      File type
+                    </label>
+                    {renderTargetChips()}
                   </div>
+                  <p className="text-[11px] leading-snug text-gray-500 dark:text-gray-400">
+                    {activeSpec.description}
+                  </p>
+                  {bitrateRowVisible && (
+                    <div>
+                      <label className="block text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-1.5">
+                        {transcode ? 'Bitrate (re-encode)' : 'Bitrate'}
+                      </label>
+                      <div className="flex flex-wrap gap-1.5">
+                        {AUDIO_KBPS_OPTIONS.map(q => (
+                          <button
+                            key={q}
+                            type="button"
+                            onClick={() => handleAudioQualityChange(q)}
+                            aria-pressed={audioQuality === q}
+                            className={
+                              'px-2.5 py-1 rounded-md text-[11px] font-medium border transition-colors ' +
+                              (audioQuality === q
+                                ? 'bg-red-600 text-white border-red-600'
+                                : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-700 hover:border-red-300 dark:hover:border-red-800')
+                            }
+                          >
+                            {q === 'best' ? 'Best' : `${q} kbps`}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div>
@@ -787,14 +913,16 @@ export default function App() {
                     className="w-full h-11 rounded-xl bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white text-sm font-semibold shadow-lg shadow-red-500/20 disabled:opacity-60 disabled:cursor-wait transition-all flex items-center justify-center gap-2"
                   >
                     <DownloadIcon size={16} className={busy ? 'animate-pulse' : undefined} />
-                    {busy ? 'Extracting…' : format === 'mp3' ? 'Download audio' : 'Download video'}
+                    {busy ? 'Extracting…' : kind === 'audio' ? 'Download audio' : 'Download video'}
                   </button>
                   <p className="flex items-start gap-1.5 text-[11px] text-gray-500 dark:text-gray-400">
                     <InfoIcon className="mt-0.5 flex-shrink-0 text-gray-400" />
                     <span>
-                      {format === 'mp3'
-                        ? 'Runs on this phone over your own connection. Audio is saved as the original AAC/M4A track; when only a combined stream exists, its AAC track is saved as an audio-only M4A without re-encoding — there is no MP3 transcode on-device.'
-                        : 'Runs on this phone over your own connection. Compatible HD video and AAC audio are combined on this device without re-encoding.'}
+                      {kind === 'audio'
+                        ? activeSpec.transcode
+                          ? `Runs on this phone over your own connection. The original track is decoded and re-encoded into ${activeSpec.label} on this device${activeSpec.bitrateRelevant ? ' at the chosen bitrate' : ''}.`
+                          : 'Runs on this phone over your own connection. Audio is saved as the original AAC/M4A track; when only a combined stream exists, its AAC track is saved as an audio-only M4A without re-encoding.'
+                        : 'Runs on this phone over your own connection. Compatible HD video and AAC audio are combined on this device without re-encoding. Video saves as MP4 only.'}
                     </span>
                   </p>
                   {downloadEvent && downloadEvent.state === 'progress' && (

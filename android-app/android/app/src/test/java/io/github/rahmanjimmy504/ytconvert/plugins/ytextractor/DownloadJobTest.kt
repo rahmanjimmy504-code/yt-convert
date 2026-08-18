@@ -55,6 +55,34 @@ class DownloadJobTest {
     }
 
     @Test
+    fun defaultsKeepLegacyStreamCopyJobsUnchanged() {
+        // Jobs that predate the format picker must behave exactly as before.
+        val job = DownloadJob(4, "video", "file.mp4", "video/mp4", "File")
+        assertEquals("mp4", job.target)
+        assertEquals(false, job.transcode)
+        assertEquals(false, job.transcoding)
+        assertEquals(-1, job.audioBitrate)
+    }
+
+    @Test
+    fun transcodeJobsCarryTargetAndBitrate() {
+        val job = DownloadJob(
+            id = 5,
+            url = "audio",
+            filename = "Track.flac",
+            mimeType = "audio/flac",
+            title = "Track",
+            target = "flac",
+            transcode = true,
+            audioBitrate = -1,
+        )
+        assertEquals("flac", job.target)
+        assertEquals(true, job.transcoding)
+        assertEquals(false, job.extractAudio)
+        assertEquals(false, job.muxing)
+    }
+
+    @Test
     fun humanBytesUsesReadableUnits() {
         assertEquals("0 B", DownloadJob.humanBytes(0))
         assertEquals("512 B", DownloadJob.humanBytes(512))

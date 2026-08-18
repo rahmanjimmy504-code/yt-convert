@@ -17,12 +17,13 @@ all).
 ## The honest tradeoffs first
 
 1. **No ffmpeg.** Cloudflare Workers cannot spawn subprocesses, so the
-   on-the-fly stream-copy remux for YouTube's >360p separate tracks is
-   **disabled on Workers** (`src/lib/ffmpeg.ts` self-disables). Downloads
-   above the progressive single-file ceiling fall back to the honest
-   single-file stream, exactly as on Vercel. Run the Docker stack
-   ([setup-home-server.md](setup-home-server.md)) or the Termux site if you
-   want HD muxing.
+   on-the-fly stream-copy remux for YouTube's >360p separate tracks and the
+   on-server MP3 transcode are both **disabled on Workers** (`src/lib/ffmpeg.ts`
+   self-disables). Downloads above the progressive single-file ceiling fall
+   back to the honest single-file stream, and MP3 requests keep the honest
+   "real container only" behaviour (often M4A/AAC) — exactly as on Vercel.
+   Run the Docker stack ([setup-home-server.md](setup-home-server.md)) or the
+   Termux site if you want HD muxing or server-side MP3.
 2. **Datacenter IP.** Workers egress from Cloudflare's network, so direct
    YouTube extraction can be bot-blocked just like Render/Vercel. The
    converter cards still hand off to the visitor's own connection, and the
@@ -211,7 +212,8 @@ being unpaused.
 
 - **Error 1027** means you crossed 100K requests/day on the free tier. See the
   "honest tradeoffs" section for the options.
-- **No ffmpeg muxing** on Workers (see tradeoffs). Use the Docker/Termux route
-  for HD combined streams.
+- **No ffmpeg muxing or MP3 transcode** on Workers (see tradeoffs). Use the
+  Docker/Termux route for HD combined streams and server-side MP3; the
+  Android APK converts MP3 on-device.
 - **Media-streaming ToS grey area**: if Cloudflare flags the stream proxy,
   route downloads through the converter-handoff cards and the Android APK.

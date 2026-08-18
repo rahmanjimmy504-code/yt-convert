@@ -4,8 +4,8 @@ import { verifyConvertTicket } from '@/lib/convert-ticket';
 import { extractMedia, isExtractError, sanitizeYouTubeCookies } from '@/lib/extract';
 import { fetchAllowedMedia, MediaHostError } from '@/lib/media-fetch';
 import { isAllowedMediaUrl } from '@/lib/media-hosts';
-import { isMuxingEnabled, muxMediaToStream } from '@/lib/ffmpeg';
-import { isValidQuality, sanitizeDownloadFilename } from '@/lib/youtube-formats';
+import { isMuxingEnabled, isTranscodeEnabled, muxMediaToStream, transcodeAudioToStream } from '@/lib/ffmpeg';
+import { isValidQuality, mp3BitrateKbps, sanitizeDownloadFilename } from '@/lib/youtube-formats';
 import { acceptMediaResponse, sniffStreamPrefix, SNIFF_BYTES } from '@/lib/media-content';
 import { clientIp, rateLimit } from '@/lib/rate-limit';
 import { recordEvent } from '@/lib/stats';
@@ -19,6 +19,9 @@ const RATE_LIMIT = 10;
 // bandwidth, so they get a separate, tighter per-IP budget than single-file
 // downloads (see docs/hd-muxing-proposal.md §Security).
 const MUX_RATE_LIMIT = 3;
+// MP3 transcodes hold the function open AND burn CPU for the whole re-encode
+// (ffmpeg libmp3lame), so they get their own tight per-IP budget.
+const TRANSCODE_RATE_LIMIT = 3;
 
 function json(error: string, status: number, extra?: Record<string, unknown>) {
   return NextResponse.json(
@@ -158,8 +161,12 @@ export async function GET(request: Request) {
     // extension/mime from the extractor already reflects the real container
     // (see extensionForMime), so a mismatch here means no true MP3/MP4
     // source was available and we should not hand the user a renamed file.
+    // The one exception: an extractor-marked transcodeToMp3 result is a real
+    // audio source that this server will re-encode to MP3 (ffmpeg libmp3lame).
     const requestedExt = format === 'mp3' ? 'mp3' : 'mp4';
-    if (extracted.extension !== requestedExt) {
+    const transcodeAvailable =
+      format === 'mp3' && extracted.transcodeToMp3 === true && isTranscodeEnabled();
+    if (extracted.extension !== requestedExt && !transcodeAvailable) {
       recordEvent({ type: 'lookup', platform, ok: false, error: `no ${requestedExt} source` });
       return json(
         `No real ${requestedExt.toUpperCase()} source was available for this video. The available stream is ${extracted.extension.toUpperCase()} — try a converter below.`,
@@ -167,7 +174,10 @@ export async function GET(request: Request) {
       );
     }
 
-    const filename = sanitizeDownloadFilename(title || 'download', extracted.extension);
+    const filename = sanitizeDownloadFilename(
+      title || 'download',
+      transcodeAvailable ? 'mp3' : extracted.extension,
+    );
 
     // Decide the streaming source: a single upstream URL, or an ffmpeg
     // stream-copy remux of two adaptive tracks (YouTube >360p).
@@ -239,6 +249,57 @@ export async function GET(request: Request) {
 
       recordEvent({ type: 'lookup', platform, ok: true });
       return new Response(muxStream.body, { status: 200, headers });
+    }
+
+    if (transcodeAvailable) {
+      // Re-validate the source URL immediately before spawning ffmpeg; never
+      // trust the URL cached/returned at extraction time.
+      if (!isAllowedMediaUrl(extracted.url)) {
+        recordEvent({ type: 'lookup', platform, ok: false, error: 'transcode ssrf' });
+        return json('Refusing to fetch a non-allowlisted media host.', 502);
+      }
+      const transcodeRetryAfter = await rateLimit(`transcode:${ip}`, TRANSCODE_RATE_LIMIT);
+      if (transcodeRetryAfter > 0) {
+        return NextResponse.json(
+          { error: 'Too many MP3 conversions. Please wait a moment and try again.' },
+          { status: 429, headers: { 'Retry-After': String(transcodeRetryAfter), 'Cache-Control': 'no-store' } },
+        );
+      }
+      const transcodeStream = transcodeAudioToStream(extracted.url, mp3BitrateKbps(quality));
+      if (!transcodeStream) {
+        recordEvent({ type: 'lookup', platform, ok: false, error: 'transcode unavailable' });
+        return json('MP3 conversion is unavailable on this server.', 502);
+      }
+
+      // Wait a bounded time for ffmpeg to produce its first MP3 bytes or
+      // fail, mirroring the mux path.
+      const started = await Promise.race([
+        transcodeStream.started,
+        new Promise<boolean | null>(resolve => setTimeout(() => resolve(null), 3000)),
+      ]);
+      if (started === false) {
+        transcodeStream.kill();
+        const tail = transcodeStream.stderrTail().trim();
+        console.warn('[convert] mp3 transcode failed:', tail || '(no stderr)');
+        recordEvent({ type: 'lookup', platform, ok: false, error: 'transcode failed' });
+        return json(
+          'Could not convert the audio to MP3 on this server. Try again, or use a converter below.',
+          502,
+        );
+      }
+
+      request.signal.addEventListener('abort', () => transcodeStream.kill(), { once: true });
+
+      const encodedName = encodeURIComponent(filename).replace(/['()]/g, '');
+      const headers = new Headers({
+        'Content-Type': 'audio/mpeg',
+        'Content-Disposition': `attachment; filename="${filename.replace(/\"/g, '')}"; filename*=UTF-8''${encodedName}`,
+        'Cache-Control': 'no-store',
+        'X-Content-Type-Options': 'nosniff',
+      });
+
+      recordEvent({ type: 'lookup', platform, ok: true });
+      return new Response(transcodeStream.body, { status: 200, headers });
     }
 
     const range = request.headers.get('range');

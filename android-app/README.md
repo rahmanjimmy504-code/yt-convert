@@ -1,4 +1,4 @@
-# YT Convert — Android companion (on-device adaptive MP4 muxing + audio-only M4A)
+# YT Convert — Android companion (on-device MP4 muxing + audio format picker)
 
 A Capacitor app that is growing into the Android version of
 [YT Convert](../README.md). Steps 1–4 established the shell, native extractor,
@@ -6,7 +6,11 @@ and background MediaStore download pipeline. Step 5 adds **on-device adaptive
 MP4/AAC muxing**: compatible HD video and audio tracks are stream-copied into
 one MP4 with no re-encode and no intermediate file. Step 6 fixes audio
 downloads whose only source is a progressive MP4: instead of saving the whole
-video, only the AAC track is stream-copied into an **audio-only M4A**.
+video, only the AAC track is stream-copied into an **audio-only M4A**. Step 7
+adds the **audio format picker**: M4A keeps the original AAC (stream-copied),
+while **MP3, WAV, FLAC and Opus** are decoded and re-encoded on the phone —
+MP3 via the bundled LAME encoder (LGPL-2.1-or-later), WAV/FLAC/Opus via the
+platform MediaCodec stack.
 
 Licensed **GPL-3.0-or-later**, like the rest of the repository — see
 [`../LICENSE`](../LICENSE).
@@ -25,7 +29,8 @@ Licensed **GPL-3.0-or-later**, like the rest of the repository — see
 | Native progressive MP4 / original-audio extraction | Done |
 | Background downloads + MediaStore (foreground service, progress, cancel) | Done |
 | Adaptive MP4/AAC muxing on-device (HD >360p) | Done |
-| Audio-only M4A extraction from combined streams (no video saved) | **This PR** |
+| Audio-only M4A extraction from combined streams (no video saved) | Done |
+| Audio format picker: M4A / MP3 / WAV / FLAC / Opus (LAME vendored, API-gated) | **This PR** |
 
 ## How the on-device extractor and muxer work
 
@@ -43,10 +48,17 @@ Licensed **GPL-3.0-or-later**, like the rest of the repository — see
 3. The picker (`FormatPicker.kt`) mirrors `src/lib/youtube-formats.ts`:
    a progressive MP4 is used when it meets the requested height; otherwise it
    returns compatible **H.264 video-only MP4 + AAC/M4A audio** tracks. Audio
-   downloads keep the **original audio track** (there is no MP3 transcode).
+   downloads save the **original audio track** by default: the format picker
+   (`src/lib/formats.ts` on the web side, the target mapping in
+   `FormatPicker.kt` on the native side) offers **M4A** (stream-copy of the
+   original AAC) plus **MP3 / WAV / FLAC / Opus**, which are decoded and
+   re-encoded on the phone by `AudioTranscoder.kt`. FLAC needs Android 12+
+   and Opus Android 10+ (MediaCodec encoders); the chips gate on the API level
+   reported by `YTExtractor.ping()` and the plugin re-checks before starting.
    When a music upload exposes no separate audio URL at all, the picker hands
    back the progressive MP4 as a fallback — and the plugin marks it for
-   audio-only extraction (step 6) instead of saving a video file.
+   audio-only extraction (step 6) or transcoding instead of saving a video
+   file.
 4. `YTExtractor.download(...)` starts **DownloadService** — a data-sync
    **foreground service** — which writes into **MediaStore**:
    `MediaStore.Downloads` (Download/YTConvert, written `IS_PENDING` until
@@ -57,8 +69,15 @@ Licensed **GPL-3.0-or-later**, like the rest of the repository — see
    URLs directly into that final target: no decode, re-encode, or intermediate
    file. For a combined-stream audio fallback, `OnDeviceMuxer.extractAudio()`
    copies only the `audio/mp4a-latm` (AAC) track into an audio-only `.m4a` —
-   the video bytes are never written. Downloads survive backgrounding and the
-   screen turning off.
+   the video bytes are never written. For a picker transcode target,
+   `AudioTranscoder.kt` decodes the same allowlist-checked source with
+   `MediaExtractor` + `MediaCodec` and re-encodes the PCM16 stream straight
+   into the final target: WAV (streaming RIFF writer), MP3 (bundled LAME via
+   the `Mp3Encoder.kt` JNI wrapper — Android has no framework MP3 encoder),
+   FLAC (MediaCodec + hand-framed `fLaC` STREAMINFO), Opus (MediaCodec into a
+   `MediaMuxer` Ogg container, 44.1 kHz sources resampled to 48 kHz). No
+   intermediate file exists in any path. Downloads survive backgrounding and
+   the screen turning off.
 5. Progress flows two ways: the required foreground-service notification
    (percent + bytes), and a `downloadProgress` Capacitor listener the UI
    renders as a progress bar with a **Cancel** action. Cancelled/failed
@@ -86,10 +105,11 @@ Licensed **GPL-3.0-or-later**, like the rest of the repository — see
   suffix only) before it reaches the WebView. The download entry point and
   foreground service independently re-check **both** adaptive track URLs
   before anything is enqueued or fetched.
-- **Honest labelling.** Audio stays M4A/AAC (never renamed to `.mp3`); a
-  combined-stream audio download has only its AAC track saved as an
-  audio-only `.m4a` (stream-copied, no re-encode) — it is never silently
-  saved as a video MP4.
+- **Honest labelling.** M4A is the original AAC, never renamed; MP3 files
+  are genuinely MP3 (LAME re-encode, not a renamed stream); FLAC/Opus/WAV
+  are really re-encoded in those formats; a combined-stream audio download
+  has only its AAC track saved — never a silently saved video MP4. Devices
+  too old to encode FLAC/Opus see those chips disabled with the reason.
 
 ## Roadmap (one PR each, in order)
 
@@ -98,7 +118,8 @@ Licensed **GPL-3.0-or-later**, like the rest of the repository — see
 3. Native progressive MP4 / original-audio MVP ✓
 4. Background downloads + MediaStore (foreground service, progress) ✓
 5. Adaptive MP4/AAC muxing on-device (HD >360p) ✓
-6. Audio-only M4A extraction from combined streams ✓ ← this one
+6. Audio-only M4A extraction from combined streams ✓
+7. Audio format picker: M4A/MP3/WAV/FLAC/Opus (LAME vendored) ← this one
 
 ## Build it yourself
 

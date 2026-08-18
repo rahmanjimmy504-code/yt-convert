@@ -26,10 +26,12 @@ import java.util.concurrent.atomic.AtomicInteger
  *
  * Storage: MediaStore.Downloads on API 29+ (scoped storage, no permission),
  * plain Downloads/YTConvert file on API 23–28 (permission requested by the
- * plugin before the service starts). Adaptive H.264/AAC jobs are stream-copy
- * muxed directly into that same final target by OnDeviceMuxer, and a
- * combined-stream audio download has only its AAC track stream-copied into an
- * audio-only M4A (never the whole video).
+ * plugin before the service starts). Format-picker transcode jobs (MP3/WAV/
+ * FLAC/Opus) are decoded and re-encoded straight into the final target by
+ * AudioTranscoder. Adaptive H.264/AAC jobs are stream-copy muxed directly
+ * into that same final target by OnDeviceMuxer, and a combined-stream audio
+ * download has only its AAC track stream-copied into an audio-only M4A
+ * (never the whole video).
  *
  * Progress flows two ways: the notification, and DownloadProgressBroadcaster
  * → YTExtractorPlugin → the WebView's downloadProgress listener.
@@ -43,6 +45,9 @@ class DownloadService : Service() {
         const val EXTRA_AUDIO_URL = "yt-convert-download-audio-url"
         const val EXTRA_EXPECTED_BYTES = "yt-convert-download-expected-bytes"
         const val EXTRA_EXTRACT_AUDIO = "yt-convert-download-extract-audio"
+        const val EXTRA_TARGET = "yt-convert-download-target"
+        const val EXTRA_TRANSCODE = "yt-convert-download-transcode"
+        const val EXTRA_AUDIO_BITRATE = "yt-convert-download-audio-bitrate"
         const val EXTRA_FILENAME = "yt-convert-download-filename"
         const val EXTRA_MIME = "yt-convert-download-mime"
         const val EXTRA_TITLE = "yt-convert-download-title"
@@ -84,6 +89,9 @@ class DownloadService : Service() {
                 audioUrl = it.getStringExtra(EXTRA_AUDIO_URL)?.ifBlank { null },
                 expectedBytes = it.getLongExtra(EXTRA_EXPECTED_BYTES, -1L),
                 extractAudio = it.getBooleanExtra(EXTRA_EXTRACT_AUDIO, false),
+                target = it.getStringExtra(EXTRA_TARGET) ?: "mp4",
+                transcode = it.getBooleanExtra(EXTRA_TRANSCODE, false),
+                audioBitrate = it.getIntExtra(EXTRA_AUDIO_BITRATE, -1),
             )
         }
         if (job == null) {
@@ -131,7 +139,25 @@ class DownloadService : Service() {
                 }
             }
 
-            val transfer = if (job.extractAudio) {
+            val transfer = if (job.transcode) {
+                // Format-picker transcode: decode the source (audio-only
+                // stream or the audio track of a progressive MP4) and
+                // re-encode into the chosen file type. Runs before every
+                // other branch so a transcode job never falls through to a
+                // stream-copy path.
+                val written = AudioTranscoder.transcode(
+                    context = this,
+                    target = target,
+                    sourceUrl = job.url,
+                    outputTarget = job.target,
+                    audioBitrateBps = job.audioBitrate,
+                    isCancelled = { cancelFlag.get() },
+                    onProgress = publishProgress,
+                )
+                // Progress units were decoded-PCM bytes; the final size is
+                // only known once the encoder finished.
+                TransferResult(written, -1L)
+            } else if (job.extractAudio) {
                 // Audio-only remux of a combined progressive MP4: stream-copy
                 // just its AAC track into an audio-only M4A. Runs before the
                 // adaptive two-track branch so an extractAudio job can never
@@ -298,6 +324,7 @@ class DownloadService : Service() {
     ): android.app.Notification {
         val builder = baseBuilder(job, ongoing = true)
         val action = when {
+            job.transcode -> "Converting"
             job.extractAudio -> "Saving audio"
             job.muxing -> "Combining on device"
             else -> "Downloading"

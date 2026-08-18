@@ -14,6 +14,7 @@
  * plain browser the plugin is unimplemented and every call would reject.
  */
 import { registerPlugin } from '@capacitor/core';
+import { targetInfo, type DownloadTarget } from './formats';
 
 export interface NativeExtractOptions {
   url: string;
@@ -21,6 +22,12 @@ export interface NativeExtractOptions {
   format: 'video' | 'audio';
   /** 'best' | numeric height (video) / kbps (audio), website-compatible. */
   quality: string;
+  /**
+   * Output file type from the format picker ('m4a' | 'mp3' | 'wav' | 'flac' |
+   * 'opus' | 'mp4'). Drives what download() saves; transcode targets are
+   * re-encoded on the device, M4A/MP4 stay stream-copies.
+   */
+  target?: DownloadTarget;
 }
 
 export interface NativeExtractResult {
@@ -59,6 +66,12 @@ export interface NativeDownloadOptions {
   mimeType: string;
   /** True for the combined-stream audio fallback: save an audio-only M4A. */
   extractAudio?: boolean;
+  /** Output file type from the format picker ('m4a'|'mp3'|'wav'|'flac'|'opus'|'mp4'). */
+  target?: string;
+  /** True when the service must decode + re-encode into `target` on-device. */
+  transcode?: boolean;
+  /** 'best' | numeric kbps from the bitrate row, applied to the encoder. */
+  audioBitrate?: string;
 }
 
 export interface NativeDownloadResult {
@@ -66,6 +79,10 @@ export interface NativeDownloadResult {
   filename: string;
   muxing: boolean;
   extractAudio?: boolean;
+  /** Echo of the requested output file type. */
+  target?: string;
+  /** True when the phone decodes + re-encodes the audio for this job. */
+  transcoding?: boolean;
 }
 
 export interface NativePingResult {
@@ -75,6 +92,8 @@ export interface NativePingResult {
   muxing: boolean;
   /** True from the background-download step on. */
   backgroundDownloads: boolean;
+  /** Android API level of this device, for encoder feature gating. */
+  apiLevel?: number;
 }
 
 export type NativeDownloadState = 'progress' | 'completed' | 'failed' | 'cancelled';
@@ -93,6 +112,8 @@ export interface DownloadProgressEvent {
   muxing: boolean;
   /** True while only the AAC track is being saved as an audio-only M4A. */
   extractAudio: boolean;
+  /** True while the audio is being decoded + re-encoded on this device. */
+  transcoding?: boolean;
   /** Set when state is 'failed'. */
   error?: string;
 }
@@ -149,11 +170,13 @@ export function humanBytes(bytes: number): string {
 
 /** Progress row under the download button; honest about unknown lengths. */
 export function describeProgressLine(event: DownloadProgressEvent): string {
-  const action = event.extractAudio
-    ? 'Saving audio'
-    : event.muxing
-      ? 'Combining on device'
-      : '';
+  const action = event.transcoding
+    ? 'Converting on this phone'
+    : event.extractAudio
+      ? 'Saving audio'
+      : event.muxing
+        ? 'Combining on device'
+        : '';
   if (event.percent >= 0 && event.totalBytes > 0) {
     const prefix = action ? `${action} · ` : '';
     return `${prefix}${event.percent}% · ${humanBytes(event.receivedBytes)} of ${humanBytes(event.totalBytes)}`;
@@ -163,9 +186,10 @@ export function describeProgressLine(event: DownloadProgressEvent): string {
 
 /**
  * One-line summary of a successful start for the status row. Honest about
- * what is actually saved: original audio stays M4A/AAC (no MP3 transcode on
- * the phone), and a combined-stream audio download has only its AAC track
- * stream-copied into an audio-only M4A — never the whole video.
+ * what is actually saved: M4A is the original AAC stream-copied (a combined
+ * source has just its AAC track copied — never the whole video), MP4 is
+ * stream-copied or combined, and every other target is decoded and
+ * re-encoded on this device.
  */
 export function describeDownloadedFile(result: NativeExtractResult, download: NativeDownloadResult): string {
   const quality = result.qualityLabel
@@ -173,8 +197,11 @@ export function describeDownloadedFile(result: NativeExtractResult, download: Na
     : result.bitrate
       ? ` (${Math.round(result.bitrate / 1000)} kbps)`
       : '';
-  const how = result.extractAudio
-    ? ' Its AAC track is stream-copied into an audio-only M4A — no re-encoding.'
-    : '';
+  const info = targetInfo(download.target ?? '');
+  const how = info !== null && info.transcode
+    ? ` It is decoded and re-encoded into ${info.label} on this phone${info.bitrateRelevant ? ' at the chosen bitrate' : ''} — a small quality loss is unavoidable.`
+    : result.extractAudio
+      ? ' Its AAC track is stream-copied into an audio-only M4A — no re-encoding.'
+      : '';
   return `Downloading “${result.title}”${quality} in the background — progress in the notification bar, file lands in Downloads/YTConvert/${download.filename}.${how}`;
 }

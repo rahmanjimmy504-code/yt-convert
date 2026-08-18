@@ -1,0 +1,31 @@
+/* config.h.in — CMake template for the vendored LAME build.
+ * Type sizes are detected per ABI at configure time; header availability is
+ * probed on the NDK toolchain. Generated into the build dir as config.h. */
+
+#define STDC_HEADERS 1
+
+#cmakedefine HAVE_SYS_TYPES_H 1
+#cmakedefine HAVE_SYS_STAT_H 1
+#cmakedefine HAVE_STDLIB_H 1
+#cmakedefine HAVE_STRING_H 1
+#cmakedefine HAVE_MEMORY_H 1
+#cmakedefine HAVE_STRINGS_H 1
+#cmakedefine HAVE_INTTYPES_H 1
+#cmakedefine HAVE_STDINT_H 1
+#cmakedefine HAVE_UNISTD_H 1
+#cmakedefine HAVE_ERRNO_H 1
+#cmakedefine HAVE_FCNTL_H 1
+#cmakedefine HAVE_LIMITS_H 1
+#cmakedefine HAVE_FENV_H 1
+
+#cmakedefine SIZEOF_SHORT @SIZEOF_SHORT@
+#cmakedefine SIZEOF_INT @SIZEOF_INT@
+#cmakedefine SIZEOF_LONG @SIZEOF_LONG@
+#cmakedefine SIZEOF_LONG_LONG @SIZEOF_LONG_LONG@
+#cmakedefine SIZEOF_FLOAT @SIZEOF_FLOAT@
+#cmakedefine SIZEOF_DOUBLE @SIZEOF_DOUBLE@
+
+/* bionic (like musl) does not export glibc's ieee754_* typedefs that LAME's
+ * fast_log2 uses; a plain float has the required IEEE-754 layout on every
+ * ABI this app ships (arm/arm64/x86/x86_64). */
+#define ieee754_float32_t float

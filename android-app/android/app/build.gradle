@@ -12,10 +12,29 @@ android {
         versionCode 1
         versionName "1.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        // The runner image's default NDK; pinning avoids a multi-hundred-MB
+        // SDK auto-download (and any license/network flake that comes with it).
+        ndkVersion "27.3.13750724"
+        externalNativeBuild {
+            cmake {
+                // LAME is plain C with no C++ runtime dependency; skipping the
+                // STL keeps libytconvert_mp3.so small.
+                arguments "-DANDROID_STL=none"
+            }
+        }
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
              // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
             ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
+        }
+    }
+    externalNativeBuild {
+        cmake {
+            // Vendored LAME MP3 encoder + JNI wrapper (see src/main/cpp/).
+            path "src/main/cpp/CMakeLists.txt"
+            // Version shipped with the CI runner image (and current Android
+            // Studio); 3.22.1 is no longer preinstalled there.
+            version "3.31.5"
         }
     }
     buildTypes {

@@ -11,7 +11,7 @@ import { cobaltFormats, isCobaltConfigured } from './cobalt';
 import { getPoToken, isPoTokenServerConfigured } from './po-token';
 import { isAllowedMediaUrl } from './media-hosts';
 import { youtubeAwareFetch } from './youtube-egress';
-import { isMuxingEnabled } from './ffmpeg';
+import { isMuxingEnabled, isTranscodeEnabled } from './ffmpeg';
 import {
   extensionForMime,
   pickYouTubeFormat,
@@ -43,6 +43,13 @@ export interface ExtractedMedia {
   note?: string;
   /** When set, the download needs a server-side remux of two adaptive tracks. */
   mux?: ExtractedMux;
+  /**
+   * When set, the download should be re-encoded to MP3 on this server (ffmpeg
+   * libmp3lame). `url`/`mimeType`/`extension` still describe the real source
+   * container (M4A/AAC, Opus/WebM...); the caller transcodes instead of
+   * relabelling the file.
+   */
+  transcodeToMp3?: boolean;
 }
 
 export type ExtractResult = ExtractedMedia | { error: string };
@@ -828,14 +835,17 @@ async function extractYouTube(
   }
 
   // MP3 requests: the direct clients/mirrors/Piped never produce a real MP3
-  // (they serve M4A/AAC or Opus/WebM). Continue to the farm and cobalt paths
-  // even when formats exist so a transcoded MP3 is preferred over silently
-  // handing back a renamed M4A. MP4 keeps the existing "formats present → use
-  // them" fast path.
+  // (they serve M4A/AAC or Opus/WebM). When this server cannot transcode,
+  // continue to the farm and cobalt paths even when formats exist so a real
+  // MP3 is preferred over silently handing back a renamed M4A. When ffmpeg is
+  // available we keep the local M4A/Opus source and re-encode it on this
+  // server instead — first-party, no third-party egress. MP4 keeps the
+  // existing "formats present → use them" fast path.
+  const canTranscodeMp3 = want === 'audio' && isTranscodeEnabled();
   const needTranscodedMp3 = want === 'audio'
     && formats.length > 0
     && !formats.some(f => /audio\/(mpeg|mp3)/i.test(f.mimeType || ''));
-  if (needTranscodedMp3) formats = [];
+  if (needTranscodedMp3 && !canTranscodeMp3) formats = [];
 
   // Public 9Convert family farm. It performs extraction/conversion on its own
   // egress IP and returns a completed allowlisted dlink, which is why it can
@@ -918,27 +928,48 @@ async function extractYouTube(
     const mp3 = pickYouTubeFormat(formats, 'audio', quality);
     if (mp3?.url) {
       const mimeType = mp3.mimeType || 'audio/mpeg';
-      const gvsMatchesPickedClient = source === 'innertube'
-        && Boolean(gvsToken?.client)
-        && gvsToken?.client === mp3.sourceClient;
-      const mediaUrl = gvsMatchesPickedClient
-        ? attachMediaUrlToken(mp3.url, gvsToken?.poToken)
-        : mp3.url;
-      const notes: Partial<Record<typeof source, string>> = {
-        piped: 'Piped fallback stream',
-        'invidious-latest': 'Invidious relayed stream',
-        'invidious-api': 'Invidious fallback stream',
-        'youtube-embed': 'YouTube embed fallback stream',
-        '9convert': '9Convert farm fallback',
-        cobalt: 'Cobalt fallback stream',
-      };
-      return ok({
-        url: mediaUrl,
-        mimeType: /audio\/(mpeg|mp3)/i.test(mimeType) ? 'audio/mpeg' : mimeType,
-        extension: 'mp3',
-        qualityLabel: mp3.qualityLabel,
-        note: notes[source],
-      });
+      const isRealMp3 = /audio\/(mpeg|mp3)/i.test(mimeType);
+      if (isRealMp3) {
+        const gvsMatchesPickedClient = source === 'innertube'
+          && Boolean(gvsToken?.client)
+          && gvsToken?.client === mp3.sourceClient;
+        const mediaUrl = gvsMatchesPickedClient
+          ? attachMediaUrlToken(mp3.url, gvsToken?.poToken)
+          : mp3.url;
+        const notes: Partial<Record<typeof source, string>> = {
+          piped: 'Piped fallback stream',
+          'invidious-latest': 'Invidious relayed stream',
+          'invidious-api': 'Invidious fallback stream',
+          'youtube-embed': 'YouTube embed fallback stream',
+          '9convert': '9Convert farm fallback',
+          cobalt: 'Cobalt fallback stream',
+        };
+        return ok({
+          url: mediaUrl,
+          mimeType: 'audio/mpeg',
+          extension: 'mp3',
+          qualityLabel: mp3.qualityLabel,
+          note: notes[source],
+        });
+      }
+    }
+    // No real MP3 source: if this deployment ships ffmpeg, hand back the best
+    // audio stream with a transcode hint instead of failing. The convert route
+    // re-encodes it to MP3 on this server (libmp3lame); the URL is re-checked
+    // against the allowlist there immediately before spawning.
+    if (isTranscodeEnabled()) {
+      const best = pickYouTubeFormat(formats, 'audio', 'best');
+      if (best?.url && isAllowedMediaUrl(best.url)) {
+        const mimeType = best.mimeType || 'audio/mp4';
+        return ok({
+          url: best.url,
+          mimeType,
+          extension: extensionForMime(mimeType, 'm4a'),
+          qualityLabel: best.qualityLabel,
+          transcodeToMp3: true,
+          note: 'Converted to MP3 on this server (ffmpeg libmp3lame) — no third-party service.',
+        });
+      }
     }
     return fail(
       'No real MP3 source is available from this server. The available streams are M4A/AAC or Opus/WebM — use the converter below for an MP3.',

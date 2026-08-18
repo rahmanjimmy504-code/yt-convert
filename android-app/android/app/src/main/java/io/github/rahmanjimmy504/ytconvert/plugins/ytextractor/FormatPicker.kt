@@ -216,4 +216,67 @@ object FormatPicker {
         val safeExt = if (cleanExt.isEmpty()) "bin" else cleanExt.lowercase()
         return "$safeBase.$safeExt"
     }
+    /* ---------- on-device output targets (format picker) ---------- */
+
+    private val AUDIO_TARGET_SET = setOf("m4a", "mp3", "wav", "flac", "opus")
+    private val TRANSCODE_TARGET_SET = setOf("mp3", "wav", "flac", "opus")
+
+    /** The app's minSdk: every non-encoder-gated target works from here. */
+    const val BASE_API_LEVEL = 23
+
+    /** FLAC needs the framework encoder first relied on from Android 12. */
+    const val FLAC_MIN_API = 31
+
+    /** Opus needs the framework encoder from Android 10. */
+    const val OPUS_MIN_API = 29
+
+    fun isAudioTarget(target: String): Boolean = target in AUDIO_TARGET_SET
+
+    fun isVideoTarget(target: String): Boolean = target == "mp4"
+
+    /** True when download() must decode + re-encode on-device. */
+    fun isTranscodeTarget(target: String): Boolean = target in TRANSCODE_TARGET_SET
+
+    /** File extension the service actually saves for a picker target. */
+    fun extensionForTarget(target: String): String = when (target) {
+        "m4a", "mp3", "wav", "flac", "opus", "mp4" -> target
+        else -> "bin"
+    }
+
+    /** MediaStore MIME for a picker target (mirrors formats.ts). */
+    fun mimeForTarget(target: String): String = when (target) {
+        "m4a" -> "audio/mp4"
+        "mp3" -> "audio/mpeg"
+        "wav" -> "audio/x-wav"
+        "flac" -> "audio/flac"
+        "opus" -> "audio/opus"
+        "mp4" -> "video/mp4"
+        else -> "application/octet-stream"
+    }
+
+    /** Minimum API level of the on-device encoder for a picker target. */
+    fun minApiLevelForTarget(target: String): Int = when (target) {
+        "flac" -> FLAC_MIN_API
+        "opus" -> OPUS_MIN_API
+        else -> BASE_API_LEVEL
+    }
+
+    /** Whether this device's Android version can encode [target]. */
+    fun targetSupportedOnApi(target: String, apiLevel: Int): Boolean =
+        isAudioTarget(target) && apiLevel >= minApiLevelForTarget(target)
+
+    /**
+     * Encoder bitrate (bps) for the UI kbps row ('best' | numeric string).
+     * 'best' picks a sensible per-codec default: 320 kbps CBR MP3, 192 kbps
+     * Opus (transparent stereo at half the MP3 rate).
+     */
+    fun encoderBitrateFor(target: String, quality: String): Int {
+        val numeric = quality.toIntOrNull()
+        return when {
+            numeric != null && target == "opus" -> numeric.coerceIn(6, 320) * 1000
+            numeric != null -> numeric.coerceIn(8, 320) * 1000
+            target == "opus" -> 192_000
+            else -> 320_000
+        }
+    }
 }
