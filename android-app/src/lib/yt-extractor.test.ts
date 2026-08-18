@@ -183,3 +183,115 @@ describe('progress wording', () => {
     expect(line).not.toContain('Combining on device');
   });
 });
+
+describe('transcode targets (format picker)', () => {
+  const base = {
+    videoId: 'dQw4w9WgXcQ',
+    url: 'https://rr1---sn-test.googlevideo.com/videoplayback',
+    mimeType: 'audio/mp4',
+    extension: 'm4a',
+    sourceClient: 'ANDROID_MUSIC',
+    muxing: false,
+  };
+
+  it('describes a re-encode download with its target and the honest quality cost', () => {
+    const msg = describeDownloadedFile(
+      { ...base, title: 'Track', bitrate: 129000 },
+      { downloadId: 3, filename: 'Track.mp3', muxing: false, target: 'mp3', transcoding: true },
+    );
+    expect(msg).toContain('Track.mp3');
+    expect(msg).toContain('re-encoded into MP3');
+    expect(msg).toContain('quality loss');
+  });
+
+  it('mentions the chosen bitrate only for bitrate-relevant targets', () => {
+    const mp3 = describeDownloadedFile(
+      { ...base, title: 'T' },
+      { downloadId: 1, filename: 'T.mp3', muxing: false, target: 'mp3', transcoding: true },
+    );
+    const flac = describeDownloadedFile(
+      { ...base, title: 'T' },
+      { downloadId: 2, filename: 'T.flac', muxing: false, target: 'flac', transcoding: true },
+    );
+    expect(mp3).toContain('chosen bitrate');
+    expect(flac).not.toContain('chosen bitrate');
+    expect(flac).toContain('FLAC');
+  });
+
+  it('keeps the stream-copy wording for M4A/MP4 downloads that carry no target', () => {
+    const msg = describeDownloadedFile(
+      { ...base, title: 'T' },
+      { downloadId: 4, filename: 'T.m4a', muxing: false },
+    );
+    expect(msg).not.toContain('re-encoded');
+  });
+
+  it('labels transcode progress as on-device converting', () => {
+    const line = describeProgressLine({
+      downloadId: 9,
+      state: 'progress',
+      filename: 'T.flac',
+      title: 'T',
+      receivedBytes: 131072,
+      totalBytes: -1,
+      percent: -1,
+      muxing: false,
+      extractAudio: false,
+      transcoding: true,
+    });
+    expect(line).toBe('Converting on this phone… 128.0 KB');
+    expect(line).not.toContain('Downloading');
+  });
+
+  it('prefers converting copy when both transcoding and muxing flags arrive', () => {
+    const line = describeProgressLine({
+      downloadId: 9,
+      state: 'progress',
+      filename: 'T.mp3',
+      title: 'T',
+      receivedBytes: 10,
+      totalBytes: -1,
+      percent: -1,
+      muxing: true,
+      extractAudio: true,
+      transcoding: true,
+    });
+    expect(line).toContain('Converting on this phone');
+  });
+});
+
+describe('bridge types for the format picker', () => {
+  it('carries target/transcode/audioBitrate through download options', () => {
+    const options: import('./yt-extractor').NativeDownloadOptions = {
+      url: 'https://rr1---sn-test.googlevideo.com/videoplayback',
+      title: 'Track',
+      extension: 'mp3',
+      mimeType: 'audio/mpeg',
+      target: 'mp3',
+      transcode: true,
+      audioBitrate: '192',
+    };
+    expect(options.target).toBe('mp3');
+    expect(options.transcode).toBe(true);
+    expect(options.audioBitrate).toBe('192');
+  });
+
+  it('carries target through extract options and apiLevel through ping results', () => {
+    const extract: import('./yt-extractor').NativeExtractOptions = {
+      url: 'https://youtu.be/dQw4w9WgXcQ',
+      format: 'audio',
+      quality: 'best',
+      target: 'flac',
+    };
+    const ping: import('./yt-extractor').NativePingResult = {
+      ok: true,
+      version: 4,
+      muxing: true,
+      backgroundDownloads: true,
+      apiLevel: 33,
+    };
+    expect(extract.target).toBe('flac');
+    expect(ping.version).toBeGreaterThanOrEqual(4);
+    expect(ping.apiLevel).toBe(33);
+  });
+});

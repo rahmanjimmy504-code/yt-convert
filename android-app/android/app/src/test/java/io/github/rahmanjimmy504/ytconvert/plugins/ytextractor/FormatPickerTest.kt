@@ -146,4 +146,77 @@ class FormatPickerTest {
             FormatPicker.sanitizeDownloadFilename("a".repeat(200), "m4a"),
         )
     }
+    /* ---------- format-picker targets ---------- */
+
+    @Test
+    fun targetClassificationMatchesTheWebCatalog() {
+        for (t in listOf("m4a", "mp3", "wav", "flac", "opus")) {
+            assertTrue(FormatPicker.isAudioTarget(t))
+        }
+        assertTrue(FormatPicker.isVideoTarget("mp4"))
+        assertEquals(false, FormatPicker.isAudioTarget("mp4"))
+        assertEquals(false, FormatPicker.isVideoTarget("webm"))
+    }
+
+    @Test
+    fun onlyM4aAndMp4AvoidTheTranscoder() {
+        for (t in listOf("mp3", "wav", "flac", "opus")) {
+            assertTrue(FormatPicker.isTranscodeTarget(t))
+        }
+        assertEquals(false, FormatPicker.isTranscodeTarget("m4a"))
+        assertEquals(false, FormatPicker.isTranscodeTarget("mp4"))
+        assertEquals(false, FormatPicker.isTranscodeTarget("mkv"))
+    }
+
+    @Test
+    fun extensionsAndMimesMatchTheSavedFiles() {
+        assertEquals("m4a", FormatPicker.extensionForTarget("m4a"))
+        assertEquals("mp3", FormatPicker.extensionForTarget("mp3"))
+        assertEquals("wav", FormatPicker.extensionForTarget("wav"))
+        assertEquals("flac", FormatPicker.extensionForTarget("flac"))
+        assertEquals("opus", FormatPicker.extensionForTarget("opus"))
+        assertEquals("mp4", FormatPicker.extensionForTarget("mp4"))
+        assertEquals("bin", FormatPicker.extensionForTarget("webm"))
+        assertEquals("audio/mp4", FormatPicker.mimeForTarget("m4a"))
+        assertEquals("audio/mpeg", FormatPicker.mimeForTarget("mp3"))
+        assertEquals("audio/x-wav", FormatPicker.mimeForTarget("wav"))
+        assertEquals("audio/flac", FormatPicker.mimeForTarget("flac"))
+        assertEquals("audio/opus", FormatPicker.mimeForTarget("opus"))
+        assertEquals("video/mp4", FormatPicker.mimeForTarget("mp4"))
+    }
+
+    @Test
+    fun encoderGatesMatchTheWebCatalog() {
+        assertEquals(23, FormatPicker.BASE_API_LEVEL)
+        assertEquals(31, FormatPicker.FLAC_MIN_API)
+        assertEquals(29, FormatPicker.OPUS_MIN_API)
+        assertEquals(23, FormatPicker.minApiLevelForTarget("m4a"))
+        assertEquals(23, FormatPicker.minApiLevelForTarget("mp3"))
+        assertEquals(23, FormatPicker.minApiLevelForTarget("wav"))
+        assertEquals(31, FormatPicker.minApiLevelForTarget("flac"))
+        assertEquals(29, FormatPicker.minApiLevelForTarget("opus"))
+    }
+
+    @Test
+    fun targetSupportFollowsTheApiGates() {
+        assertTrue(FormatPicker.targetSupportedOnApi("m4a", 23))
+        assertTrue(FormatPicker.targetSupportedOnApi("mp3", 23))
+        assertEquals(false, FormatPicker.targetSupportedOnApi("opus", 28))
+        assertTrue(FormatPicker.targetSupportedOnApi("opus", 29))
+        assertEquals(false, FormatPicker.targetSupportedOnApi("flac", 30))
+        assertTrue(FormatPicker.targetSupportedOnApi("flac", 31))
+        // Unknown targets are never "supported".
+        assertEquals(false, FormatPicker.targetSupportedOnApi("webm", 34))
+    }
+
+    @Test
+    fun encoderBitrateParsesTheKbpsRow() {
+        assertEquals(320_000, FormatPicker.encoderBitrateFor("mp3", "best"))
+        assertEquals(192_000, FormatPicker.encoderBitrateFor("opus", "best"))
+        assertEquals(192_000, FormatPicker.encoderBitrateFor("mp3", "192"))
+        assertEquals(96_000, FormatPicker.encoderBitrateFor("opus", "96"))
+        // Nonsense values clamp into codec-legal ranges instead of failing.
+        assertEquals(8_000, FormatPicker.encoderBitrateFor("mp3", "1"))
+        assertEquals(320_000, FormatPicker.encoderBitrateFor("mp3", "999"))
+    }
 }

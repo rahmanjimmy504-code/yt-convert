@@ -13,6 +13,7 @@ import android.provider.OpenableColumns
 import java.io.Closeable
 import java.io.File
 import java.io.OutputStream
+import java.io.RandomAccessFile
 
 /**
  * Where finished bytes land, per Android generation:
@@ -90,22 +91,124 @@ object MediaStoreSaver {
      * exist on API 29+, where MediaMuxer's FileDescriptor constructor is
      * available; API 23–28 use the final public Downloads file path directly.
      */
-    fun openMuxer(context: Context, target: Target): MuxerHandle? {
+    fun openMuxer(context: Context, target: Target): MuxerHandle? =
+        openMuxer(context, target, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+
+    /**
+     * [openMuxer] with an explicit [MediaMuxer.OutputFormat] — the OGG
+     * container for Opus transcodes (API 26+). The caller is responsible for
+     * gating formats newer than the muxer's FileDescriptor constructor.
+     */
+    fun openMuxer(context: Context, target: Target, outputFormat: Int): MuxerHandle? {
         return try {
             if (target.uri != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 val descriptor = context.contentResolver.openFileDescriptor(target.uri, "rw") ?: return null
                 try {
-                    MuxerHandle(
-                        MediaMuxer(descriptor.fileDescriptor, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4),
-                        descriptor,
-                    )
+                    MuxerHandle(MediaMuxer(descriptor.fileDescriptor, outputFormat), descriptor)
                 } catch (e: Exception) {
                     descriptor.close()
                     throw e
                 }
             } else {
                 val path = target.file?.absolutePath ?: return null
-                MuxerHandle(MediaMuxer(path, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4), null)
+                MuxerHandle(MediaMuxer(path, outputFormat), null)
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /**
+     * Seekable raw byte target for the WAV/MP3/FLAC writers, which need to
+     * patch header bytes (sizes, MD5) at EOF. The stream writes append; patch
+     * repositions and rewrites. Exactly one of pfd (API 29+) / raf (23–28)
+     * backs the handle.
+     */
+    class RawHandle(
+        private val stream: OutputStream,
+        private val descriptor: ParcelFileDescriptor?,
+        private val randomAccess: RandomAccessFile?,
+    ) : Closeable {
+        private var count = 0L
+        private val copy = ByteArray(16 * 1024)
+
+        fun write(bytes: ByteArray, offset: Int, length: Int) {
+            stream.write(bytes, offset, length)
+            count += length
+        }
+
+        fun write(src: java.nio.ByteBuffer) {
+            while (src.hasRemaining()) {
+                val n = minOf(copy.size, src.remaining())
+                src.get(copy, 0, n)
+                stream.write(copy, 0, n)
+                count += n
+            }
+        }
+
+        /** Rewrite [bytes] at absolute file [offset] (headers are patched at EOS). */
+        fun patch(offset: Long, bytes: ByteArray) {
+            stream.flush()
+            val raf = randomAccess
+            if (raf != null) {
+                raf.seek(offset)
+                raf.write(bytes)
+                return
+            }
+            val pfd = descriptor ?: return
+            java.io.FileInputStream(pfd.fileDescriptor).use { fis ->
+                val channel = fis.channel
+                channel.position(offset)
+                channel.write(java.nio.ByteBuffer.wrap(bytes))
+            }
+        }
+
+        fun bytesWritten(): Long = count
+
+        override fun close() {
+            try {
+                stream.flush()
+            } catch (_: Exception) {
+            }
+            try {
+                stream.close()
+            } catch (_: Exception) {
+            }
+            descriptor?.let {
+                try {
+                    it.close()
+                } catch (_: Exception) {
+                }
+            }
+            randomAccess?.let {
+                try {
+                    it.close()
+                } catch (_: Exception) {
+                }
+            }
+        }
+    }
+
+    /** Open [target] for seekable raw byte writing (WAV/MP3/FLAC outputs). */
+    fun openRaw(context: Context, target: Target): RawHandle? {
+        return try {
+            if (target.uri != null) {
+                val pfd = context.contentResolver.openFileDescriptor(target.uri, "rw") ?: return null
+                try {
+                    RawHandle(java.io.FileOutputStream(pfd.fileDescriptor), pfd, null)
+                } catch (e: Exception) {
+                    pfd.close()
+                    throw e
+                }
+            } else {
+                val file = target.file ?: return null
+                val raf = RandomAccessFile(file, "rw")
+                try {
+                    RawHandle(java.io.FileOutputStream(raf.fd), null, raf)
+                } catch (e: Exception) {
+                    raf.close()
+                    throw e
+                }
             }
         } catch (_: Exception) {
             null

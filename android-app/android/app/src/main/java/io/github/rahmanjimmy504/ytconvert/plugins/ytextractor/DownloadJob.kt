@@ -23,9 +23,19 @@ data class DownloadJob(
      * discarded video bytes, so [expectedBytes] is not used for the total.
      */
     val extractAudio: Boolean = false,
+    /** Output file type from the format picker ('m4a'|'mp3'|'wav'|'flac'|'opus'|'mp4'). */
+    val target: String = "mp4",
+    /** True when the service decodes + re-encodes the audio into [target] on-device. */
+    val transcode: Boolean = false,
+    /** Encoder bitrate in bps from the UI kbps row; <= 0 selects a codec default. */
+    val audioBitrate: Int = -1,
 ) {
     val muxing: Boolean
         get() = !audioUrl.isNullOrBlank()
+
+    /** Event-marshalling alias for [transcode]. */
+    val transcoding: Boolean
+        get() = transcode
 
     companion object {
         /** Whole-percent progress; total <= 0 (unknown length) reports -1. */

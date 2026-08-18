@@ -71,6 +71,8 @@ class YTExtractorPlugin : Plugin() {
             event.put("percent", DownloadJob.progressPercent(received, total))
             event.put("muxing", job.muxing)
             event.put("extractAudio", job.extractAudio)
+            event.put("transcoding", job.transcoding)
+            event.put("target", job.target)
             if (error != null) event.put("error", error)
             notifyListeners("downloadProgress", event)
         }
@@ -91,9 +93,11 @@ class YTExtractorPlugin : Plugin() {
     fun ping(call: PluginCall) {
         val ret = JSObject()
         ret.put("ok", true)
-        ret.put("version", 3)
+        // version 4: format-picker targets + transcode + apiLevel reporting.
+        ret.put("version", 4)
         ret.put("muxing", true)
         ret.put("backgroundDownloads", true)
+        ret.put("apiLevel", Build.VERSION.SDK_INT)
         call.resolve(ret)
     }
 
@@ -106,6 +110,7 @@ class YTExtractorPlugin : Plugin() {
         }
         val format = call.getString("format") ?: "video"
         val quality = call.getString("quality") ?: "best"
+        val target = call.getString("target") ?: ""
 
         // Capacitor 7 already invokes plugin methods off the UI thread (the
         // "CapacitorPlugins" HandlerThread), but an extraction can hold that
@@ -114,14 +119,14 @@ class YTExtractorPlugin : Plugin() {
         // back to the WebView internally).
         Thread({
             try {
-                call.resolve(runExtraction(pageUrl.trim(), format, quality))
+                call.resolve(runExtraction(pageUrl.trim(), format, quality, target))
             } catch (e: Exception) {
                 call.reject("On-device extraction failed: ${e.message ?: "unknown error"}")
             }
         }, "YTExtractor-query").start()
     }
 
-    private fun runExtraction(pageUrl: String, format: String, quality: String): JSObject {
+    private fun runExtraction(pageUrl: String, format: String, quality: String, target: String): JSObject {
         val videoId = Innertube.extractYouTubeId(pageUrl)
             ?: throw IllegalArgumentException("Invalid YouTube URL.")
 
@@ -144,12 +149,51 @@ class YTExtractorPlugin : Plugin() {
         ret.put("title", result.title ?: videoId)
 
         if (wantAudio) {
-            val pick = FormatPicker.pickAudio(result.formats, quality)
+            // Format-picker target: 'm4a' keeps the original AAC (stream-copy);
+            // mp3/wav/flac/opus decode + re-encode on-device. Gate encoder
+            // targets honestly before promising anything.
+            val audioTarget = if (FormatPicker.isAudioTarget(target)) target else "m4a"
+            val transcode = FormatPicker.isTranscodeTarget(audioTarget)
+            if (!FormatPicker.targetSupportedOnApi(audioTarget, Build.VERSION.SDK_INT)) {
+                throw IllegalStateException(
+                    "This device\u2019s Android version cannot encode ${audioTarget.uppercase()} files.",
+                )
+            }
+            if (audioTarget == "mp3" && !Mp3Encoder.isAvailable()) {
+                throw IllegalStateException("MP3 encoder not available on this device.")
+            }
+            // Transcodes always take the best source stream; the bitrate row
+            // configures the encoder via download(). M4A keeps the website's
+            // source-bitrate selection.
+            val sourceQuality = if (transcode) "best" else quality
+            val pick = FormatPicker.pickAudio(result.formats, sourceQuality)
                 ?: throw IllegalStateException(
                     "No playable audio stream is available for this video.",
                 )
             val combined = FormatPicker.isProgressiveMp4(pick)
             ret.put("url", pick.url)
+            ret.put("target", audioTarget)
+            ret.put("transcode", transcode)
+            if (transcode) {
+                // The service decodes the audio track (from an audio-only
+                // stream or the progressive fallback alike) and re-encodes it.
+                ret.put("mimeType", FormatPicker.mimeForTarget(audioTarget))
+                ret.put("extension", FormatPicker.extensionForTarget(audioTarget))
+                if (pick.contentLength > 0 && !combined) ret.put("totalBytes", pick.contentLength)
+                pick.qualityLabel?.let { ret.put("qualityLabel", it) }
+                if (pick.bitrate > 0) ret.put("bitrate", pick.bitrate)
+                ret.put("sourceClient", pick.sourceClient)
+                ret.put("muxing", false)
+                ret.put(
+                    "note",
+                    if (combined) {
+                        "The AAC track of this combined stream will be decoded and re-encoded into ${audioTarget.uppercase()} on this device."
+                    } else {
+                        "The original track will be decoded and re-encoded into ${audioTarget.uppercase()} on this device."
+                    },
+                )
+                return ret
+            }
             if (combined) {
                 // Innertube exposed no separate audio URL: the fallback is a
                 // progressive MP4 carrying video + AAC. Report the output the
@@ -268,6 +312,31 @@ class YTExtractorPlugin : Plugin() {
         val extension = call.getString("extension") ?: "bin"
         val mimeType = call.getString("mimeType") ?: ""
         val extractAudio = call.getBoolean("extractAudio") ?: false
+        // Format-picker pass-through: target decides the output file type,
+        // transcode routes the service to AudioTranscoder, and audioBitrate
+        // ('best' | numeric kbps) configures the encoder.
+        val requestedTarget = call.getString("target") ?: "mp4"
+        val target = if (FormatPicker.isAudioTarget(requestedTarget) || FormatPicker.isVideoTarget(requestedTarget)) {
+            requestedTarget
+        } else {
+            "mp4"
+        }
+        val transcode = call.getBoolean("transcode") ?: FormatPicker.isTranscodeTarget(target)
+        val audioBitrate = if (transcode) {
+            FormatPicker.encoderBitrateFor(target, call.getString("audioBitrate") ?: "best")
+        } else {
+            -1
+        }
+        if (transcode) {
+            if (!FormatPicker.targetSupportedOnApi(target, Build.VERSION.SDK_INT)) {
+                call.reject("This device\u2019s Android version cannot encode ${target.uppercase()} files.")
+                return
+            }
+            if (target == "mp3" && !Mp3Encoder.isAvailable()) {
+                call.reject("MP3 encoder not available on this device.")
+                return
+            }
+        }
         val expectedBytes = (call.getLong("totalBytes") ?: -1L).let {
             // Display/progress hint only. Reject absurd bridge values so they
             // cannot keep a notification pinned near 0% forever.
@@ -293,7 +362,7 @@ class YTExtractorPlugin : Plugin() {
             needed.add("notifications")
         }
         if (needed.isEmpty()) {
-            startDownloadService(call, id, url, audioUrl, extractAudio, expectedBytes, filename, mimeType, title)
+            startDownloadService(call, id, url, audioUrl, extractAudio, expectedBytes, filename, mimeType, title, target, transcode, audioBitrate)
         } else {
             // Keep the job details on the call so the permission callback can
             // resume the same download (PluginCall is handed back unchanged).
@@ -306,6 +375,9 @@ class YTExtractorPlugin : Plugin() {
             data.put("jobFilename", filename)
             data.put("jobMime", mimeType)
             data.put("jobTitle", title)
+            data.put("jobTarget", target)
+            data.put("jobTranscode", transcode)
+            data.put("jobAudioBitrate", audioBitrate)
             requestPermissionForAliases(needed.toTypedArray(), call, "downloadAfterPermission")
         }
     }
@@ -329,11 +401,14 @@ class YTExtractorPlugin : Plugin() {
         val filename = data.optString("jobFilename", "")
         val mime = data.optString("jobMime", "")
         val title = data.optString("jobTitle", "download")
+        val target = data.optString("jobTarget", "mp4")
+        val transcode = data.optBoolean("jobTranscode", false)
+        val audioBitrate = data.optInt("jobAudioBitrate", -1)
         if (id < 0 || url.isEmpty() || filename.isEmpty()) {
             call.reject("Download details were lost while asking for permission. Try again.")
             return
         }
-        startDownloadService(call, id, url, audioUrl, extractAudio, expectedBytes, filename, mime, title)
+        startDownloadService(call, id, url, audioUrl, extractAudio, expectedBytes, filename, mime, title, target, transcode, audioBitrate)
     }
 
     private fun startDownloadService(
@@ -346,6 +421,9 @@ class YTExtractorPlugin : Plugin() {
         filename: String,
         mimeType: String,
         title: String,
+        target: String,
+        transcode: Boolean,
+        audioBitrate: Int,
     ) {
         try {
             val intent = Intent(context, DownloadService::class.java).apply {
@@ -357,6 +435,9 @@ class YTExtractorPlugin : Plugin() {
                 putExtra(DownloadService.EXTRA_FILENAME, filename)
                 putExtra(DownloadService.EXTRA_MIME, mimeType)
                 putExtra(DownloadService.EXTRA_TITLE, title)
+                putExtra(DownloadService.EXTRA_TARGET, target)
+                putExtra(DownloadService.EXTRA_TRANSCODE, transcode)
+                putExtra(DownloadService.EXTRA_AUDIO_BITRATE, audioBitrate)
             }
             ContextCompat.startForegroundService(context, intent)
             val ret = JSObject()
@@ -364,6 +445,8 @@ class YTExtractorPlugin : Plugin() {
             ret.put("filename", filename)
             ret.put("muxing", audioUrl != null)
             ret.put("extractAudio", extractAudio)
+            ret.put("target", target)
+            ret.put("transcoding", transcode)
             call.resolve(ret)
         } catch (e: Exception) {
             call.reject("Could not start the background download: ${e.message ?: "unknown error"}")
