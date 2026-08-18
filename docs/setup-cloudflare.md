@@ -208,6 +208,40 @@ being unpaused.
 
 ---
 
+## Troubleshooting: "I pass the CAPTCHA and it immediately asks again" (loop)
+
+Two independent causes produce the same symptom on Workers.
+
+1. **Single-use token reuse (fixed in the web client).** `/api/video-info` spends
+   the CAPTCHA proof as soon as the request arrives. If the page kept that
+   token and fired a second lookup (the 800 ms auto-lookup racing Go / Enter,
+   or an 800 ms retry after a failed lookup), the server answered
+   `403 Complete the CAPTCHA…` and the widget reset. The page now clears the
+   token before the request goes out and ignores a second trigger while one
+   lookup is in flight.
+
+2. **Missing `CAPTCHA_SECRET` on the Worker (deployment — cannot be fixed in
+   code).** If the secret is not set, each isolate signs tokens with its own
+   random fallback. A token minted on isolate A fails verification on isolate
+   B, so every lookup 403s and the widget resets forever. The deploy workflow
+   can finish green even when the secret is missing.
+
+   Set a **stable** secret (same value across deploys and isolates):
+
+   ```sh
+   printf '%s' 'a-long-random-value' | npx wrangler secret put CAPTCHA_SECRET
+   printf '%s' 'another-long-random-value' | npx wrangler secret put CONVERT_TICKET_SECRET
+   ```
+
+   Or add the same names as GitHub Action secrets and re-run **Deploy to
+   Cloudflare**.
+
+   **Most robust on Workers:** Cloudflare Turnstile
+   (`NEXT_PUBLIC_TURNSTILE_SITE_KEY` + `TURNSTILE_SECRET_KEY`) — verification
+   is stateless and does not depend on a per-isolate HMAC secret.
+
+---
+
 ## Known limits
 
 - **Error 1027** means you crossed 100K requests/day on the free tier. See the
