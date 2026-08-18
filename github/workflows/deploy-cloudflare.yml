@@ -1,8 +1,7 @@
 # Deploys the OpenNext build to Cloudflare Workers (docs/setup-cloudflare.md).
 #
-# Trigger it from the Actions tab ("Run workflow"), or let it run on pushes to
-# main. Until the Cloudflare credentials are added it finishes green with a
-# "skipped — token missing" warning, so an empty Actions setup does not fail CI.
+# Auto-deploys on every push/merge to main. The "Run workflow" button
+# (workflow_dispatch) is kept for redeploying the same code without a commit.
 
 name: Deploy to Cloudflare
 
@@ -10,12 +9,15 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    
+
 permissions:
   contents: read
 
 jobs:
   # Gate on credentials so a missing-token run is a clean no-op, not a failure.
+  # The "Skipped — token missing" step is a HELPER: it only runs (and prints a
+  # warning) when the Cloudflare secrets are absent. When they ARE set, that
+  # step is skipped and the deploy job below runs — that is the good outcome.
   check:
     name: Check Cloudflare credentials
     runs-on: ubuntu-latest
@@ -36,7 +38,6 @@ jobs:
         if: steps.check.outputs.have_credentials == 'false'
         run: |
           echo "::warning title=Cloudflare deploy skipped::CLOUDFLARE_API_TOKEN and/or CLOUDFLARE_ACCOUNT_ID are not set. Add them under Settings → Secrets and variables → Actions, then run this workflow again (see docs/setup-cloudflare.md)."
-          echo "skipped — token missing"
 
   deploy:
     name: Build and deploy Worker
@@ -62,10 +63,12 @@ jobs:
       - name: Build the Workers bundle
         run: npm run cf:build
         env:
-          # Public canonical URL, inlined at build time. Empty on first deploy;
-          # set the NEXT_PUBLIC_SITE_URL Actions variable to the *.workers.dev
-          # URL (printed by the deploy step) and re-run. See docs/setup-cloudflare.md.
           NEXT_PUBLIC_SITE_URL: ${{ vars.NEXT_PUBLIC_SITE_URL }}
+          # Public NEXT_PUBLIC_* values are inlined into the client bundle at build time.
+          NEXT_PUBLIC_TURNSTILE_SITE_KEY: ${{ secrets.NEXT_PUBLIC_TURNSTILE_SITE_KEY }}
+          NEXT_PUBLIC_RECAPTCHA_SITE_KEY: ${{ secrets.NEXT_PUBLIC_RECAPTCHA_SITE_KEY }}
+          NEXT_PUBLIC_HCAPTCHA_SITE_KEY: ${{ secrets.NEXT_PUBLIC_HCAPTCHA_SITE_KEY }}
+          NEXT_PUBLIC_YT_COOKIES_ENABLED: ${{ secrets.NEXT_PUBLIC_YT_COOKIES_ENABLED }}
 
       - name: Upload runtime secrets
         env:
@@ -74,9 +77,15 @@ jobs:
           CAPTCHA_SECRET: ${{ secrets.CAPTCHA_SECRET }}
           CONVERT_TICKET_SECRET: ${{ secrets.CONVERT_TICKET_SECRET }}
           ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
+          TURNSTILE_SECRET_KEY: ${{ secrets.TURNSTILE_SECRET_KEY }}
+          RECAPTCHA_SECRET_KEY: ${{ secrets.RECAPTCHA_SECRET_KEY }}
+          HCAPTCHA_SECRET_KEY: ${{ secrets.HCAPTCHA_SECRET_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL: ${{ secrets.OPENAI_MODEL }}
         run: |
           set -e
-          for name in CAPTCHA_SECRET CONVERT_TICKET_SECRET ADMIN_TOKEN; do
+          for name in CAPTCHA_SECRET CONVERT_TICKET_SECRET ADMIN_TOKEN TURNSTILE_SECRET_KEY RECAPTCHA_SECRET_KEY HCAPTCHA_SECRET_KEY GROQ_API_KEY OPENAI_API_KEY OPENAI_MODEL; do
             eval "value=\"\${$name}\""
             if [ -n "$value" ]; then
               printf '%s' "$value" | npx wrangler secret put "$name"
