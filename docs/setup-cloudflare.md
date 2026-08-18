@@ -210,7 +210,7 @@ being unpaused.
 
 ## Troubleshooting: "I pass the CAPTCHA and it immediately asks again" (loop)
 
-Three independent causes produce the same symptom on Workers.
+Four independent causes produce the same symptom on Workers.
 
 1. **Single-use token reuse (fixed in the web client).** `/api/video-info` spends
    the CAPTCHA proof as soon as the request arrives. If the page kept that
@@ -250,6 +250,18 @@ Three independent causes produce the same symptom on Workers.
 
    Or add the same names as GitHub Action secrets and re-run **Deploy to
    Cloudflare**.
+
+4. **`CAPTCHA_SECRET` read at module load, so it was never consulted (fixed in
+   `src/lib/captcha.ts`).** Even with the secret set, the module captured it in
+   a top-level `const` at import time. Cloudflare Workers evaluate a module
+   *before* the request context exists, and secrets/bindings only appear on
+   `process.env` once a request is being handled — so the read returned empty
+   and every isolate fell back to its own random secret. A challenge signed on
+   isolate A therefore never verified on isolate B, no matter what
+   `CAPTCHA_SECRET` was set to. The secret is now resolved per request.
+   **General rule: on Workers, never read `process.env` at module scope for
+   anything sourced from a secret or binding** — read it inside the function
+   that needs it, so it is evaluated once a request is being handled.
 
    **Most robust on Workers:** Cloudflare Turnstile
    (`NEXT_PUBLIC_TURNSTILE_SITE_KEY` + `TURNSTILE_SECRET_KEY`) — verification

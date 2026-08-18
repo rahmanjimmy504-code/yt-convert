@@ -60,10 +60,24 @@ const tokens = new Map<string, StoredToken>();
 // stable CAPTCHA_SECRET is still required when a deployment has more than one
 // instance, otherwise an instance restart invalidates outstanding checks.
 const globalForCaptcha = globalThis as typeof globalThis & { __ytConvertCaptchaSecret?: string };
-const secret = process.env.CAPTCHA_SECRET || (globalForCaptcha.__ytConvertCaptchaSecret ??= randomBytes(32).toString('hex'));
+
+/**
+ * Resolve the signing secret per call, never at module load. On Cloudflare
+ * Workers a module is evaluated before the request context exists, so
+ * process.env is not populated until a request is being handled — reading
+ * CAPTCHA_SECRET at module scope would capture an empty value and silently
+ * fall back to a per-isolate random secret, making every cross-isolate check
+ * fail no matter what the secret is set to.
+ */
+function captchaSecret(): string {
+  return (
+    process.env.CAPTCHA_SECRET ||
+    (globalForCaptcha.__ytConvertCaptchaSecret ??= randomBytes(32).toString('hex'))
+  );
+}
 
 function sign(value: string): string {
-  return createHmac('sha256', secret).update(value).digest('base64url');
+  return createHmac('sha256', captchaSecret()).update(value).digest('base64url');
 }
 
 function safeSignatureEquals(actual: string, expected: string): boolean {

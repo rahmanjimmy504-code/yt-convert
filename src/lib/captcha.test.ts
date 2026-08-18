@@ -184,6 +184,50 @@ describe('stateless challenges (multi-isolate deployments)', () => {
       reason: 'expired',
     });
   });
+
+  it('reads CAPTCHA_SECRET lazily, not at module load', async () => {
+    // On Workers a module is evaluated before the request context exists, so
+    // process.env.CAPTCHA_SECRET is empty at import time and only appears once
+    // a request is handled. A secret captured at module load would therefore
+    // never be consulted. Simulate an isolate booting with no env, then the
+    // secret arriving afterwards.
+    vi.stubEnv('CAPTCHA_SECRET', '');
+    delete (globalThis as any).__ytConvertCaptchaSecret;
+    vi.resetModules();
+    const firstIsolate = await import('./captcha');
+
+    // The secret is present by the time the challenge is minted.
+    vi.stubEnv('CAPTCHA_SECRET', 'lazy-secret');
+    const challenge = firstIsolate.createLocalCaptcha('math');
+    const answer = mathAnswer(challenge.question as string);
+
+    // A second isolate boots the same way (no env at module load), then sees
+    // the same secret. It must be able to verify the first isolate's challenge.
+    vi.stubEnv('CAPTCHA_SECRET', '');
+    delete (globalThis as any).__ytConvertCaptchaSecret;
+    vi.resetModules();
+    const secondIsolate = await import('./captcha');
+    vi.stubEnv('CAPTCHA_SECRET', 'lazy-secret');
+
+    expect(secondIsolate.verifyLocalCaptchaDetailed(challenge.challengeId, answer).ok).toBe(true);
+  });
+
+  it('rejects a challenge signed with a different secret', async () => {
+    vi.stubEnv('CAPTCHA_SECRET', 'secret-one');
+    delete (globalThis as any).__ytConvertCaptchaSecret;
+    vi.resetModules();
+    const firstIsolate = await import('./captcha');
+    const challenge = firstIsolate.createLocalCaptcha('math');
+    const answer = mathAnswer(challenge.question as string);
+
+    // A second isolate with a different secret must not verify the challenge.
+    vi.stubEnv('CAPTCHA_SECRET', 'secret-two');
+    delete (globalThis as any).__ytConvertCaptchaSecret;
+    vi.resetModules();
+    const secondIsolate = await import('./captcha');
+
+    expect(secondIsolate.verifyLocalCaptchaDetailed(challenge.challengeId, answer).ok).toBe(false);
+  });
 });
 
 describe('verifyLocalCaptcha (convenience wrapper)', () => {
