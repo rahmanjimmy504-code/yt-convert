@@ -102,6 +102,90 @@ describe('verifyLocalCaptchaDetailed', () => {
   });
 });
 
+describe('stateless challenges (multi-isolate deployments)', () => {
+  // On Cloudflare Workers / serverless, GET /api/captcha and POST /api/captcha
+  // routinely land on different isolates, which do not share module memory.
+  // A fresh module instance stands in for "another isolate".
+  async function otherIsolate() {
+    vi.resetModules();
+    return import('./captcha');
+  }
+
+  it('verifies a challenge minted by another isolate', async () => {
+    const challenge = createLocalCaptcha('math');
+    const answer = mathAnswer(challenge.question as string);
+
+    const remote = await otherIsolate();
+    const result = remote.verifyLocalCaptchaDetailed(challenge.challengeId, answer);
+
+    expect(result.ok).toBe(true);
+  });
+
+  it('lets a third isolate consume the token minted by the second', async () => {
+    const challenge = createLocalCaptcha('math');
+    const answer = mathAnswer(challenge.question as string);
+
+    const verifier = await otherIsolate();
+    const result = verifier.verifyLocalCaptchaDetailed(challenge.challengeId, answer);
+    if (!result.ok) throw new Error('expected a token');
+
+    const consumer = await otherIsolate();
+    expect(consumer.consumeLocalCaptchaToken(result.token)).toBe(true);
+  });
+
+  it('still rejects a wrong answer on another isolate', async () => {
+    const challenge = createLocalCaptcha('math');
+    const remote = await otherIsolate();
+    expect(remote.verifyLocalCaptchaDetailed(challenge.challengeId, '999')).toEqual({
+      ok: false,
+      reason: 'wrong-answer',
+    });
+  });
+
+  it('rejects a forged or tampered challenge id', async () => {
+    const challenge = createLocalCaptcha('math');
+    const answer = mathAnswer(challenge.question as string);
+    const remote = await otherIsolate();
+
+    expect(remote.verifyLocalCaptchaDetailed('not-a-signed-id', answer).ok).toBe(false);
+
+    // Flip a character in the signature: the id must no longer validate.
+    const separator = challenge.challengeId.lastIndexOf('.');
+    const body = challenge.challengeId.slice(0, separator);
+    const signature = challenge.challengeId.slice(separator + 1);
+    const tampered = `${body}.${(signature[0] === 'A' ? 'B' : 'A')}${signature.slice(1)}`;
+    expect(remote.verifyLocalCaptchaDetailed(tampered, answer).ok).toBe(false);
+  });
+
+  it('does not leak the answer in the challenge id', () => {
+    // The visual code is the meaningful secret (a short math sum would match
+    // the timestamp digits by chance, so it is not a useful assertion).
+    const visual = createLocalCaptcha('visual');
+    const code = ((visual.image as string).match(/>([A-Z2-9])<\/text>/g) ?? [])
+      .map(tag => tag.replace(/[^A-Z2-9]/g, ''))
+      .join('');
+    expect(code).toHaveLength(5);
+    expect(visual.challengeId).not.toContain(code);
+    // The id carries only an HMAC of the answer, so a second challenge with the
+    // same answer still gets a different id.
+    expect(visual.challengeId).not.toBe(createLocalCaptcha('visual').challengeId);
+  });
+
+  it('honours the expiry carried in the signed id on another isolate', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+    const challenge = createLocalCaptcha('math');
+    const answer = mathAnswer(challenge.question as string);
+    vi.setSystemTime(new Date('2026-01-01T00:06:00Z'));
+
+    const remote = await otherIsolate();
+    expect(remote.verifyLocalCaptchaDetailed(challenge.challengeId, answer)).toEqual({
+      ok: false,
+      reason: 'expired',
+    });
+  });
+});
+
 describe('verifyLocalCaptcha (convenience wrapper)', () => {
   it('returns the token string on success and null otherwise', () => {
     const challenge = createLocalCaptcha('math');

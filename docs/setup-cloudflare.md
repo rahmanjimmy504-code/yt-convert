@@ -210,7 +210,7 @@ being unpaused.
 
 ## Troubleshooting: "I pass the CAPTCHA and it immediately asks again" (loop)
 
-Two independent causes produce the same symptom on Workers.
+Three independent causes produce the same symptom on Workers.
 
 1. **Single-use token reuse (fixed in the web client).** `/api/video-info` spends
    the CAPTCHA proof as soon as the request arrives. If the page kept that
@@ -220,7 +220,22 @@ Two independent causes produce the same symptom on Workers.
    token before the request goes out and ignores a second trigger while one
    lookup is in flight.
 
-2. **Missing `CAPTCHA_SECRET` on the Worker (deployment — cannot be fixed in
+2. **Per-isolate challenge store (fixed in `src/lib/captcha.ts`).** The local
+   challenge used to keep its answer in an in-memory `Map`. `GET /api/captcha`
+   and the `POST` that checks the answer routinely land on *different* Workers
+   isolates, which share no memory, so the check returned *"This CAPTCHA is no
+   longer valid. Get a new one."* and the widget reloaded — the loop, even with
+   `CAPTCHA_SECRET` set correctly. The `challengeId` is now a **signed,
+   self-contained value** carrying the expiry and an HMAC of the answer (never
+   the answer itself), so any isolate holding the same `CAPTCHA_SECRET` can
+   verify a challenge minted by another. The in-memory map is kept only as a
+   best-effort attempt limiter and replay guard on whichever instance serves
+   the request.
+
+   This makes a stable `CAPTCHA_SECRET` **required** on Workers rather than
+   merely recommended — see the next item.
+
+3. **Missing `CAPTCHA_SECRET` on the Worker (deployment — cannot be fixed in
    code).** If the secret is not set, each isolate signs tokens with its own
    random fallback. A token minted on isolate A fails verification on isolate
    B, so every lookup 403s and the widget resets forever. The deploy workflow

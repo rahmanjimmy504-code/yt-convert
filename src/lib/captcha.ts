@@ -12,10 +12,18 @@ import { getScopedEnv } from './captcha-env';
  * - hCaptcha (fallback alternative)
  * - Local visual/math challenge (always available as ultimate fallback / backup)
  *
- * The stores intentionally follow the same in-memory convention as the
- * metadata cache/rate limiter in this project. Set CAPTCHA_SECRET in a
- * multi-instance deployment so signed values remain valid across restarts;
- * use a shared store if challenge persistence must span serverless instances.
+ * Local challenges are **stateless**: the challengeId is a signed value that
+ * carries its own expiry plus an HMAC of the answer (never the answer itself),
+ * so a challenge minted by one serverless instance verifies on any other that
+ * shares CAPTCHA_SECRET. This matters on Cloudflare Workers, where the GET that
+ * issues a challenge and the POST that checks it routinely hit different
+ * isolates. The in-memory maps below follow the same convention as the metadata
+ * cache/rate limiter and are only a best-effort attempt limiter / replay guard
+ * on whichever instance serves a request.
+ *
+ * Setting a stable CAPTCHA_SECRET is therefore REQUIRED in any multi-instance
+ * deployment — without it each instance signs with its own random fallback and
+ * every cross-instance check fails.
  */
 
 export type LocalCaptchaMode = 'visual' | 'math';
@@ -28,9 +36,10 @@ export interface LocalCaptchaChallenge {
 }
 
 interface StoredChallenge {
-  answer: string;
   expiresAt: number;
   attempts: number;
+  /** Set once the challenge is solved or locked out, so it cannot be replayed. */
+  consumed: boolean;
 }
 
 interface StoredToken {
@@ -73,6 +82,20 @@ function validSignedValue(value: string): string | null {
   const payload = value.slice(0, separator);
   const signature = value.slice(separator + 1);
   return safeSignatureEquals(signature, sign(payload)) ? payload : null;
+}
+
+/** Answers are compared case- and whitespace-insensitively. */
+function normalizeAnswer(answer: string): string {
+  return answer.trim().replace(/\s+/g, '').toUpperCase();
+}
+
+/**
+ * Bind an answer to a challenge id without ever putting the answer in it.
+ * A distinct HMAC label keeps this digest from colliding with the id/token
+ * signatures produced by sign().
+ */
+function answerDigest(answer: string): string {
+  return sign(`answer:${normalizeAnswer(answer)}`);
 }
 
 function randomCode(length: number): string {
@@ -140,7 +163,6 @@ function pruneStores(now = Date.now()): void {
 }
 
 export function createLocalCaptcha(mode: LocalCaptchaMode = 'visual'): LocalCaptchaChallenge {
-  const challengeId = randomBytes(18).toString('base64url');
   let answer: string;
   let image: string | undefined;
   let question: string | undefined;
@@ -155,7 +177,15 @@ export function createLocalCaptcha(mode: LocalCaptchaMode = 'visual'): LocalCapt
     image = renderCaptchaSvg(answer);
   }
 
-  challenges.set(challengeId, { answer, expiresAt: Date.now() + CHALLENGE_TTL_MS, attempts: 0 });
+  // The id is self-contained and signed: it carries the expiry plus an HMAC of
+  // the answer, never the answer itself. A challenge minted by one serverless
+  // isolate is therefore verifiable by any other isolate that shares
+  // CAPTCHA_SECRET — without a shared store. The in-memory record below only
+  // adds attempt-limiting and single-use on the instance that happens to serve
+  // the verification.
+  const challengeId = signedValue(`${randomBytes(12).toString('base64url')}.${Date.now() + CHALLENGE_TTL_MS}.${answerDigest(answer)}`);
+
+  challenges.set(challengeId, { expiresAt: Date.now() + CHALLENGE_TTL_MS, attempts: 0, consumed: false });
   pruneStores();
   return { challengeId, mode, image, question };
 }
@@ -171,27 +201,50 @@ export type LocalCaptchaVerifyResult =
  * for missing, expired, rejected, or locked challenges.
  */
 export function verifyLocalCaptchaDetailed(challengeId: string, answer: string): LocalCaptchaVerifyResult {
-  const challenge = challenges.get(challengeId);
   const now = Date.now();
-  if (!challenge) return { ok: false, reason: 'missing' };
-  if (challenge.expiresAt <= now) {
+
+  // The id is self-validating, so a challenge issued by another isolate still
+  // verifies. An unsigned/tampered id is indistinguishable from an unknown one.
+  const payload = validSignedValue(challengeId);
+  if (!payload) return { ok: false, reason: 'missing' };
+
+  const parts = payload.split('.');
+  if (parts.length !== 3) return { ok: false, reason: 'missing' };
+  const expiresAt = Number(parts[1]);
+  const expectedDigest = parts[2];
+  if (!Number.isFinite(expiresAt)) return { ok: false, reason: 'missing' };
+
+  // A challenge consumed on this instance must not be replayed here.
+  const challenge = challenges.get(challengeId);
+  if (challenge?.consumed) return { ok: false, reason: 'missing' };
+
+  if (expiresAt <= now) {
     challenges.delete(challengeId);
     return { ok: false, reason: 'expired' };
   }
 
-  challenge.attempts += 1;
-  const normalized = answer.trim().replace(/\s+/g, '').toUpperCase();
-  if (normalized !== challenge.answer) {
-    if (challenge.attempts >= MAX_ATTEMPTS) {
-      challenges.delete(challengeId);
+  // Attempt counting is per-instance (it always effectively was: before this,
+  // a challenge only existed on its minting instance). A determined caller can
+  // therefore retry a challenge on another isolate, so the per-IP rate limit in
+  // the route handler — not this counter — is the real brute-force guard. The
+  // default visual mode has a 32^5 answer space, which makes guessing moot.
+  const attempts = (challenge?.attempts ?? 0) + 1;
+  if (!safeSignatureEquals(answerDigest(answer), expectedDigest)) {
+    if (attempts >= MAX_ATTEMPTS) {
+      // Mark it consumed rather than forgetting it: a deleted entry would let
+      // the attempt counter restart from zero on the very next request.
+      challenges.set(challengeId, { expiresAt, attempts, consumed: true });
+      pruneStores(now);
       return { ok: false, reason: 'too-many-attempts' };
     }
+    challenges.set(challengeId, { expiresAt, attempts, consumed: false });
+    pruneStores(now);
     return { ok: false, reason: 'wrong-answer' };
   }
 
-  challenges.delete(challengeId);
-  const payload = `${randomBytes(18).toString('base64url')}.${now + TOKEN_TTL_MS}`;
-  const token = signedValue(payload);
+  challenges.set(challengeId, { expiresAt, attempts, consumed: true });
+  const tokenPayload = `${randomBytes(18).toString('base64url')}.${now + TOKEN_TTL_MS}`;
+  const token = signedValue(tokenPayload);
   tokens.set(token, { expiresAt: now + TOKEN_TTL_MS, used: false });
   pruneStores(now);
   return { ok: true, token };
