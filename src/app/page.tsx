@@ -185,6 +185,9 @@ export default function Home() {
   // reqId ensures a slow older response can never overwrite a newer one.
   const abortRef = useRef<AbortController | null>(null);
   const reqIdRef = useRef(0);
+  // One lookup at a time. The CAPTCHA token is single-use: a second request
+  // (800 ms auto-lookup racing Go/Enter) would 403 and reset the widget.
+  const inFlightRef = useRef(false);
   // dragenter/dragleave fire for every child element crossed, so a depth
   // counter is needed to know when the pointer actually left the window.
   const dragDepth = useRef(0);
@@ -352,6 +355,11 @@ export default function Home() {
       setPhase('error');
       return;
     }
+    // Token is spent the moment the request goes out — clear it so nothing
+    // can resubmit it (auto-timer vs Go/Enter race, or a failed retry).
+    setCaptchaToken('');
+    if (inFlightRef.current) return;
+    inFlightRef.current = true;
     setError(''); setPhase('loading'); setVideoInfo(null); setLaunched(null); setLinkCopied(false); setPreviewOpen(false); setConvertError('');
     setShowWakeMessage(false);
     if (wakeTimer.current) clearTimeout(wakeTimer.current);
@@ -383,7 +391,6 @@ export default function Home() {
         // a fresh CAPTCHA instead of leaving the user with a dead Go button.
         if (r.status === 403 && msg.toLowerCase().includes('captcha')) {
           if (!stale()) {
-            setCaptchaToken('');
             setCaptchaResetKey(key => key + 1);
             setError(msg);
             setPhase('error');
@@ -392,8 +399,13 @@ export default function Home() {
         }
         // Other 4xx responses mean the link itself was rejected — show that
         // message in the regular error state instead of the graceful card.
+        // Re-arm CAPTCHA: the spent token must not sit in a stale "passed" widget.
         if (r.status >= 400 && r.status < 500) {
-          if (!stale()) { setError(msg); setPhase('error'); }
+          if (!stale()) {
+            setCaptchaResetKey(key => key + 1);
+            setError(msg);
+            setPhase('error');
+          }
           return;
         }
         throw new Error(msg);
@@ -431,6 +443,7 @@ export default function Home() {
       setPhase('ready');
       scrollToResult();
     } finally {
+      inFlightRef.current = false;
       if (!stale()) {
         if (wakeTimer.current) clearTimeout(wakeTimer.current);
         wakeTimer.current = null;
