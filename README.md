@@ -163,7 +163,7 @@ The dev server runs at **http://localhost:3000** by default. Edit any file under
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `NEXT_PUBLIC_SITE_URL` | `https://yt-convert-xi.vercel.app` | Canonical URL used by metadata, `robots.ts`, and `sitemap.ts` — set to your **custom production domain** |
+| `NEXT_PUBLIC_SITE_URL` | `https://yt-convert.rahmanjimmy504.workers.dev/` | Canonical URL used by metadata, `robots.ts`, and `sitemap.ts` — set to your **custom production domain** |
 | `NEXT_PUBLIC_TURNSTILE_SITE_KEY` *(+ `_PROD` / `_PREVIEW` / `_DEV`)* | *(empty)* | Public Cloudflare Turnstile site key (per-environment scoping, see below) |
 | `TURNSTILE_SECRET_KEY` *(+ `_PROD` / `_PREVIEW` / `_DEV`)* | *(empty)* | Server-only Cloudflare Turnstile secret used to verify the human proof |
 | `NEXT_PUBLIC_RECAPTCHA_SITE_KEY` / `RECAPTCHA_SECRET_KEY` *(+ scoped variants)* | *(empty)* | Google reCAPTCHA v2 (optional fallback / alternative) |
