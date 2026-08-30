@@ -1,7 +1,3 @@
-# >>> SOURCE-OF-TRUTH COPY — the Arena/GitHub integration cannot write to
-# >>> .github/workflows/. To activate, create .github/workflows/android-release.yml
-# >>> via the GitHub web UI (repo > Add file > new file) and paste this content.
-#
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Signed release APK + AAB, published as a GitHub Release (and a v<version>
 # git tag, which is F-Droid's release marker).
@@ -100,22 +96,33 @@ jobs:
               echo "ANDROID_KEYSTORE_FILE=$PWD/android/release.keystore"
               echo "ANDROID_KEYSTORE_PASSWORD=$STORED_STORE_PASSWORD"
               echo "ANDROID_KEY_ALIAS=$STORED_KEY_ALIAS"
-              echo "ANDROID_KEY_PASSWORD=$STORED_KEY_PASSWORD"
+              # PKCS12 (keytool's default) encrypts the private key with the
+              # STORE password and ignores a distinct -keypass, so the correct
+              # key password is always the store password. Forcing it here also
+              # self-heals a keystore saved by the old buggy workflow, which
+              # recorded a different ANDROID_KEY_PASSWORD and therefore failed
+              # ':app:packageRelease' with "final block not properly padded".
+              echo "ANDROID_KEY_PASSWORD=$STORED_STORE_PASSWORD"
             } >> "$GITHUB_ENV"
           else
             echo "No stored keystore secret — generating a THROWAWAY keystore."
+            # ONE password for both the store and the private key. A distinct
+            # -keypass is exactly what broke the first run: for the default
+            # PKCS12 store, Gradle's getKey() then decrypts the key with a
+            # password that does not match how it was encrypted, failing with
+            # "Given final block not properly padded". Equal passwords are the
+            # standard, universally-readable recipe.
             PASS="$(openssl rand -base64 24 | tr -d '/+=' | cut -c1-20)"
-            KEYPASS="$(openssl rand -base64 24 | tr -d '/+=' | cut -c1-20)"
             keytool -genkeypair -v -keystore android/release.keystore \
               -alias release -keyalg RSA -keysize 2048 -validity 10000 \
-              -storepass "$PASS" -keypass "$KEYPASS" \
+              -storepass "$PASS" -keypass "$PASS" \
               -dname "CN=YT Convert, O=yt-convert" > /dev/null
             KB64="$(base64 -w0 android/release.keystore)"
             {
               echo "ANDROID_KEYSTORE_FILE=$PWD/android/release.keystore"
               echo "ANDROID_KEYSTORE_PASSWORD=$PASS"
               echo "ANDROID_KEY_ALIAS=release"
-              echo "ANDROID_KEY_PASSWORD=$KEYPASS"
+              echo "ANDROID_KEY_PASSWORD=$PASS"
             } >> "$GITHUB_ENV"
             {
               echo "### :rotating_light: SAVE THESE SIGNING SECRETS"
@@ -127,7 +134,7 @@ jobs:
               echo "- \`ANDROID_KEYSTORE_BASE64\` = \`${KB64}\`"
               echo "- \`ANDROID_KEYSTORE_PASSWORD\` = \`${PASS}\`"
               echo "- \`ANDROID_KEY_ALIAS\` = \`release\`"
-              echo "- \`ANDROID_KEY_PASSWORD\` = \`${KEYPASS}\`"
+              echo "- \`ANDROID_KEY_PASSWORD\` = \`${PASS}\` (same as the store password)"
             } >> "$GITHUB_STEP_SUMMARY"
             echo "Throwaway keystore base64 (save as ANDROID_KEYSTORE_BASE64): $KB64"
           fi
@@ -160,4 +167,3 @@ jobs:
           files: |
             android-app/android/app/build/outputs/apk/release/app-release.apk
             android-app/android/app/build/outputs/bundle/release/app-release.aab
-            
