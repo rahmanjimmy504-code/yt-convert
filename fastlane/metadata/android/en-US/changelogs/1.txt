@@ -1,0 +1,6 @@
+First release.
+
+Download YouTube video as MP4, or save audio as M4A, MP3, WAV, FLAC or Opus,
+all converted on your device. High-definition video is muxed into a single MP4
+without re-encoding. Background downloads with a progress notification, saved
+to your Downloads folder. No account, no tracking.
