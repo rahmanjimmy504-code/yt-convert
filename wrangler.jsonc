@@ -23,10 +23,28 @@
       "binding": "WORKER_SELF_REFERENCE",
       "service": "yt-convert"
     }
-  ]
+  ],
+  // Plain-text (non-secret) runtime vars. Declaring a var here makes wrangler
+  // the owner of it, which is what keeps the deploy workflow green: a name that
+  // exists as a dashboard *Text var* cannot also be written by
+  // `wrangler secret put` (Cloudflare answers "Binding name 'X' already in
+  // use [code 10053]"), so anything non-sensitive belongs here instead of in
+  // the secrets loop. To change the FAQ assistant's model, edit this value and
+  // let the next deploy apply it.
+  "vars": {
+    // Matches the in-code default in src/app/api/faq-assistant/route.ts and
+    // .env.example. A model name is not a credential — there is no reason for
+    // it to be an encrypted secret.
+    "OPENAI_MODEL": "gpt-4o-mini"
+  }
   // Runtime secrets (CAPTCHA_SECRET, CONVERT_TICKET_SECRET, ADMIN_TOKEN, …)
   // are NOT listed here: they go in .dev.vars for local preview and are
   // uploaded as encrypted secrets by the deploy workflow. Build-time
   // NEXT_PUBLIC_* values are inlined during `npm run cf:build`, so they are
   // supplied in the build environment instead.
+  //
+  // The Turnstile *site key* (NEXT_PUBLIC_TURNSTILE_SITE_KEY) is deliberately
+  // not a runtime var either — it is inlined into the web bundle at build time,
+  // and the server only needs TURNSTILE_SECRET_KEY to verify tokens. See
+  // docs/setup-cloudflare.md → "Troubleshooting: … (loop)", cause 5.
 }

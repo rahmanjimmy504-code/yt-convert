@@ -1,0 +1,162 @@
+# >>> SOURCE-OF-TRUTH COPY — the Arena/GitHub integration cannot write to
+# >>> .github/workflows/. To activate, create .github/workflows/android-release.yml
+# >>> via the GitHub web UI (repo > Add file > new file) and paste this content.
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Signed release APK + AAB, published as a GitHub Release (and a v<version>
+# git tag, which is F-Droid's release marker).
+#
+# Run from the Actions tab: "Android release APK/AAB" -> Run workflow.
+#
+# First run: if ANDROID_KEYSTORE_BASE64 is NOT yet a repository secret, this
+# workflow generates a *throwaway* keystore and prints its base64 plus the
+# passwords in the job log and step summary. Save those four values as
+# repository secrets (see docs/fdroid-publish.md) so every later release is
+# signed with the same key — F-Droid rejects an app whose signing key changes.
+name: Android release APK/AAB
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (becomes the git tag, e.g. 1.0 -> v1.0)'
+        required: true
+        default: '1.0'
+
+permissions:
+  contents: write
+
+# A new run supersedes an in-flight one for the same ref.
+concurrency:
+  group: android-release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  release:
+    name: Build and publish signed release
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: android-app
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: android-app/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type-check
+        run: npm run typecheck
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build web bundle
+        run: npm run build
+
+      - name: Setup JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          build-root-directory: android-app/android
+
+      - name: Sync web assets into the native project
+        run: npx cap sync android
+
+      # Either restore the stored signing key, or mint a throwaway one and
+      # loudly print its base64 so it can be saved as a secret before the next
+      # release. Values are exported via GITHUB_ENV so the Gradle step signs
+      # with them. The build.gradle signing config is a no-op when no keystore
+      # file is present, so nothing here is ever required to compile.
+      - name: Prepare release signing
+        env:
+          STORED_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          STORED_STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          STORED_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          STORED_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -e
+          if [ -n "$STORED_KEYSTORE" ]; then
+            echo "Using the stored ANDROID_KEYSTORE_BASE64 secret."
+            echo "$STORED_KEYSTORE" | base64 --decode > android/release.keystore
+            {
+              echo "ANDROID_KEYSTORE_FILE=$PWD/android/release.keystore"
+              echo "ANDROID_KEYSTORE_PASSWORD=$STORED_STORE_PASSWORD"
+              echo "ANDROID_KEY_ALIAS=$STORED_KEY_ALIAS"
+              echo "ANDROID_KEY_PASSWORD=$STORED_KEY_PASSWORD"
+            } >> "$GITHUB_ENV"
+          else
+            echo "No stored keystore secret — generating a THROWAWAY keystore."
+            PASS="$(openssl rand -base64 24 | tr -d '/+=' | cut -c1-20)"
+            KEYPASS="$(openssl rand -base64 24 | tr -d '/+=' | cut -c1-20)"
+            keytool -genkeypair -v -keystore android/release.keystore \
+              -alias release -keyalg RSA -keysize 2048 -validity 10000 \
+              -storepass "$PASS" -keypass "$KEYPASS" \
+              -dname "CN=YT Convert, O=yt-convert" > /dev/null
+            KB64="$(base64 -w0 android/release.keystore)"
+            {
+              echo "ANDROID_KEYSTORE_FILE=$PWD/android/release.keystore"
+              echo "ANDROID_KEYSTORE_PASSWORD=$PASS"
+              echo "ANDROID_KEY_ALIAS=release"
+              echo "ANDROID_KEY_PASSWORD=$KEYPASS"
+            } >> "$GITHUB_ENV"
+            {
+              echo "### :rotating_light: SAVE THESE SIGNING SECRETS"
+              echo ""
+              echo "This first release used a throwaway keystore. Add these as repository"
+              echo "secrets (Settings → Secrets and variables → Actions) so future releases"
+              echo "keep the same signature:"
+              echo ""
+              echo "- \`ANDROID_KEYSTORE_BASE64\` = \`${KB64}\`"
+              echo "- \`ANDROID_KEYSTORE_PASSWORD\` = \`${PASS}\`"
+              echo "- \`ANDROID_KEY_ALIAS\` = \`release\`"
+              echo "- \`ANDROID_KEY_PASSWORD\` = \`${KEYPASS}\`"
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "Throwaway keystore base64 (save as ANDROID_KEYSTORE_BASE64): $KB64"
+          fi
+
+      - name: Assemble signed release APK
+        working-directory: android-app/android
+        run: ./gradlew --no-daemon assembleRelease
+
+      - name: Bundle signed release AAB
+        working-directory: android-app/android
+        run: ./gradlew --no-daemon bundleRelease
+
+      - name: Report outputs
+        working-directory: android-app/android
+        run: |
+          ls -lh app/build/outputs/apk/release/app-release.apk app/build/outputs/bundle/release/app-release.aab
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ github.event.inputs.version }}
+          name: YT Convert ${{ github.event.inputs.version }}
+          body: |
+            Signed Android release ${{ github.event.inputs.version }}.
+
+            - `app-release.apk` — install on your phone.
+            - `app-release.aab` — for stores (Play / F-Droid build servers).
+
+            The `v${{ github.event.inputs.version }}` tag is the release marker F-Droid builds from.
+          files: |
+            android-app/android/app/build/outputs/apk/release/app-release.apk
+            android-app/android/app/build/outputs/bundle/release/app-release.aab

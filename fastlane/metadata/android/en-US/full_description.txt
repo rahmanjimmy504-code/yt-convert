@@ -1,0 +1,36 @@
+YT Convert saves YouTube videos and audio straight to your phone, doing the
+conversion entirely on your device — nothing is uploaded, and no server ever
+sees what you download.
+
+<b>What it does</b>
+
+• Download any YouTube video as a progressive MP4, in the quality you pick.
+• Save audio as M4A (the original AAC track, untouched) or transcode it on your
+  phone to MP3, WAV, FLAC or Opus.
+• For high-definition videos the app stream-copies the compatible H.264 video
+  and AAC audio tracks into a single MP4 with no re-encode and no intermediate
+  file.
+• Downloads run as a background service with a progress notification, survive
+  the screen turning off, and can be cancelled at any time.
+• Finished files are saved into your Downloads / MediaStore so every other app
+  can see them.
+
+<b>Privacy, stated plainly</b>
+
+• No account, no sign-in, no tracking and no advertising.
+• No secrets, cookies or tokens are collected or sent; the app talks to YouTube
+  over its public interface exactly like a normal player.
+• Every stream address is checked against a strict allow-list before anything
+  is fetched.
+
+<b>Requirements and honesty</b>
+
+MP3 encoding uses the bundled LAME encoder (LGPL). FLAC and Opus output need
+Android 12+ and Android 10+ respectively; on older devices those choices are
+disabled with the reason shown, and M4A/MP3 remain available.
+
+This app downloads media for your personal use. Respect copyright and YouTube's
+terms of service when you use it.
+
+Licensed GPL-3.0-or-later. Source code:
+https://github.com/rahmanjimmy504-code/yt-convert

@@ -1,0 +1,54 @@
+# F-Droid build metadata for local `fdroid build` and as a ready reference for
+# reviewers. This file lives at the *repository root* — the location documented
+# by F-Droid for in-source build metadata
+# (https://f-droid.org/docs/Building_Applications/, "Running fdroid build in
+# your app's source").
+#
+# NOTE on the submission flow: for inclusion in the *main* F-Droid repository
+# the metadata is created by reviewers in fdroiddata from a Request-For-
+# Packaging (RFP) issue; they will reuse the recipe below. The human-readable
+# name/summary/description come from the fastlane structure at
+# fastlane/metadata/android/en-US/ in this same repo.
+#
+# Maintainers: keep versionName/versionCode in Builds[0] in step with
+# android-app/android/app/build.gradle (versionName "1.0" / versionCode 1).
+
+Categories:
+  - Internet
+  - Multimedia
+License: GPL-3.0-or-later
+AuthorName: rahmanjimmy504
+AuthorWebSite: https://github.com/rahmanjimmy504-code
+SourceCode: https://github.com/rahmanjimmy504-code/yt-convert
+IssueTracker: https://github.com/rahmanjimmy504-code/yt-convert/issues
+
+AutoName: YT Convert
+
+RepoType: git
+Repo: https://github.com/rahmanjimmy504-code/yt-convert
+
+Builds:
+  - versionName: '1.0'
+    versionCode: 1
+    commit: v1.0
+    subdir: android-app/android
+    sudo:
+      - apt-get update
+      - apt-get install -y openjdk-21-jdk-headless nodejs npm
+    # Build the Capacitor web bundle from android-app/, then sync it into the
+    # native project before Gradle runs. (`subdir` is android-app/android, so
+    # one level up is android-app/ where the web package lives.)
+    prebuild:
+      - cd .. && npm ci && npm run build && npx cap sync android
+    # Vendored LAME sources are built from source by CMake below; keep the
+    # scanner from flagging them as prebuilt binaries.
+    scanignore:
+      - android-app/android/app/src/main/cpp/lame
+    ndk: 27.3.13750724
+    gradle:
+      - 'yes'
+
+AutoUpdateMode: None
+UpdateCheckMode: None
+CurrentVersion: '1.0'
+CurrentVersionCode: 1

@@ -37,6 +37,26 @@ android {
             version "3.31.5"
         }
     }
+    // Release signing. The keystore and its passwords come from the CI
+    // environment (the android-release workflow decodes ANDROID_KEYSTORE_BASE64
+    // to a file and exports the password/alias variables) or, for local signed
+    // builds, from a git-ignored keystore.properties next to this project.
+    // When neither is present the release build type is left *unsigned* so
+    // plain local builds and the debug CI keep working exactly as before —
+    // signing material is never required to compile the app.
+    signingConfigs {
+        release {
+            def props = new Properties()
+            def propsFile = rootProject.file("keystore.properties")
+            if (propsFile.exists()) {
+                props.load(new FileInputStream(propsFile))
+            }
+            storeFile file(System.getenv("ANDROID_KEYSTORE_FILE") ?: props.getProperty("storeFile", "release.keystore"))
+            storePassword System.getenv("ANDROID_KEYSTORE_PASSWORD") ?: props.getProperty("storePassword", "")
+            keyAlias System.getenv("ANDROID_KEY_ALIAS") ?: props.getProperty("keyAlias", "")
+            keyPassword System.getenv("ANDROID_KEY_PASSWORD") ?: props.getProperty("keyPassword", "")
+        }
+    }
     buildTypes {
         debug {
             // CI ships this build type. The suffix lets a tester keep a signed
@@ -45,6 +65,12 @@ android {
             versionNameSuffix "-debug"
         }
         release {
+            // Sign only when a keystore was actually provided. A missing or
+            // empty keystore leaves the release unsigned rather than failing
+            // the build (the release workflow always provides one).
+            if (signingConfigs.release.storeFile.exists() && signingConfigs.release.storePassword) {
+                signingConfig signingConfigs.release
+            }
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }

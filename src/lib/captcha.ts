@@ -294,7 +294,18 @@ export function consumeLocalCaptchaToken(token: string): boolean {
 }
 
 export function isTurnstileConfigured(): boolean {
-  return Boolean(getScopedEnv('TURNSTILE_SECRET_KEY') && getScopedEnv('NEXT_PUBLIC_TURNSTILE_SITE_KEY'));
+  // The site key is a build-time *client* concern: NEXT_PUBLIC_* values are
+  // inlined into the web bundle at build time, so the server never needs one.
+  // The server only needs the secret to verify tokens.
+  //
+  // Requiring the site key here made the server always answer
+  // `provider: local` on Cloudflare Workers — the deploy workflow uploads
+  // TURNSTILE_SECRET_KEY but never the site key, because at runtime there is
+  // nothing to read it for. Every completed Turnstile check was then rejected
+  // with 403 ("Complete the CAPTCHA before requesting media information."),
+  // the widget reset, and the page looped forever even though the client was
+  // correctly rendering the Turnstile box from its inlined site key.
+  return Boolean(getScopedEnv('TURNSTILE_SECRET_KEY'));
 }
 
 export function isRecaptchaConfigured(): boolean {
