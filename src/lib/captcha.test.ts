@@ -278,18 +278,26 @@ describe('consumeLocalCaptchaToken', () => {
 });
 
 describe('isTurnstileConfigured', () => {
-  it('requires both the secret and the site key', () => {
+  it('is configured by the secret alone — the site key is a build-time client concern', () => {
     vi.stubEnv('TURNSTILE_SECRET_KEY', '');
     vi.stubEnv('NEXT_PUBLIC_TURNSTILE_SITE_KEY', '');
     expect(isTurnstileConfigured()).toBe(false);
 
-    vi.stubEnv('TURNSTILE_SECRET_KEY', TURNSTILE_SECRET);
-    vi.stubEnv('NEXT_PUBLIC_TURNSTILE_SITE_KEY', '');
-    expect(isTurnstileConfigured()).toBe(false);
-
+    // The site key on its own must NOT enable Turnstile: without the secret the
+    // server cannot verify anything, and advertising `provider: turnstile`
+    // would make every client submission fail.
     vi.stubEnv('TURNSTILE_SECRET_KEY', '');
     vi.stubEnv('NEXT_PUBLIC_TURNSTILE_SITE_KEY', TURNSTILE_SITE_KEY);
     expect(isTurnstileConfigured()).toBe(false);
+
+    // The secret on its own MUST enable Turnstile. The site key is inlined into
+    // the web bundle at build time as NEXT_PUBLIC_*, so the deploy never
+    // uploads it — requiring it at runtime made the server answer
+    // `provider: local` forever and reject every Turnstile token with a 403,
+    // which reset the widget and looped the page.
+    vi.stubEnv('TURNSTILE_SECRET_KEY', TURNSTILE_SECRET);
+    vi.stubEnv('NEXT_PUBLIC_TURNSTILE_SITE_KEY', '');
+    expect(isTurnstileConfigured()).toBe(true);
 
     vi.stubEnv('TURNSTILE_SECRET_KEY', TURNSTILE_SECRET);
     vi.stubEnv('NEXT_PUBLIC_TURNSTILE_SITE_KEY', TURNSTILE_SITE_KEY);

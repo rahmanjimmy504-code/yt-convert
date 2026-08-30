@@ -210,7 +210,7 @@ being unpaused.
 
 ## Troubleshooting: "I pass the CAPTCHA and it immediately asks again" (loop)
 
-Four independent causes produce the same symptom on Workers.
+Five independent causes produce the same symptom on Workers.
 
 1. **Single-use token reuse (fixed in the web client).** `/api/video-info` spends
    the CAPTCHA proof as soon as the request arrives. If the page kept that
@@ -263,9 +263,87 @@ Four independent causes produce the same symptom on Workers.
    anything sourced from a secret or binding** — read it inside the function
    that needs it, so it is evaluated once a request is being handled.
 
+5. **The server required the Turnstile *site key* at runtime, but the site key
+   is only ever inlined into the client (fixed in `src/lib/captcha.ts`).**
+   This is the one that outlives a correct `CAPTCHA_SECRET`, because it has
+   nothing to do with the local fallback at all.
+
+   `isTurnstileConfigured()` used to return true only when **both**
+   `TURNSTILE_SECRET_KEY` **and** `NEXT_PUBLIC_TURNSTILE_SITE_KEY` were present
+   in `process.env` *at request time*. But `NEXT_PUBLIC_*` values are a
+   **build-time client concern**: Next.js inlines them into the web bundle
+   while it builds, so there is never a runtime copy for a server to read — and
+   the deploy workflow uploads only `TURNSTILE_SECRET_KEY`. The consequence was
+   a stable, 100 %-reproducible loop:
+
+   | Step | What happened |
+   |---|---|
+   | Page load | Client bundle has the site key inlined → renders the **Turnstile** widget |
+   | `GET /api/captcha` | Server sees no runtime site key → answers `{"provider":"local"}` |
+   | You solve the Turnstile box | Client submits a **Turnstile** token |
+   | `POST /api/video-info` | Server never treats Turnstile as configured → **403** *"Complete the CAPTCHA before requesting media information."* |
+   | Client | Widget **resets** → you solve it again → loop |
+
+   The server now treats Turnstile as configured from the **secret alone**
+   (`verifyTurnstileToken` only ever needed the secret). No dashboard variable
+   is required to make the live site work. If you already added
+   `NEXT_PUBLIC_TURNSTILE_SITE_KEY` as a dashboard Text var while debugging, it
+   is harmless — leave it or delete it.
+
+   **Reproduce it locally on the real workerd runtime** (this is how the cause
+   was confirmed — `npm run dev` cannot show it, because Node reads the shell
+   environment directly):
+
+   ```sh
+   cp .dev.vars.example .dev.vars
+   # A) secret only — reproduces the bug:
+   printf 'CAPTCHA_SECRET=local-repro-secret\nTURNSTILE_SECRET_KEY=any-non-empty-value\n' > .dev.vars
+   NEXT_PUBLIC_TURNSTILE_SITE_KEY=0xYourSiteKey npm run cf:build
+   npm run cf:preview        # leave running in another shell/tab
+   curl -s -H 'User-Agent: Mozilla/5.0' http://localhost:8787/api/captcha
+   #   -> {"provider":"local", ...}          <- bug: a Turnstile token would 403
+
+   # B) secret + site key at runtime — the old workaround:
+   printf 'CAPTCHA_SECRET=local-repro-secret\nTURNSTILE_SECRET_KEY=any-non-empty-value\nNEXT_PUBLIC_TURNSTILE_SITE_KEY=0xYourSiteKey\n' > .dev.vars
+   npm run cf:preview
+   curl -s -H 'User-Agent: Mozilla/5.0' http://localhost:8787/api/captcha
+   #   -> {"provider":"turnstile"}
+   ```
+
+   With the fix, **(A) also answers `{"provider":"turnstile"}`**, which is what
+   a Workers deploy actually has.
+
+   **If it still loops after `provider:turnstile`**, the remaining suspect is a
+   mismatched key *pair*: a `TURNSTILE_SECRET_KEY` that belongs to a different
+   Turnstile widget than the site key inlined at build time. Siteverify then
+   answers `invalid-input-secret`. Check both halves in
+   **dash.cloudflare.com → Turnstile** and rotate them together. The exact
+   wording of the API error still identifies which layer failed, so read it
+   before changing anything else.
+
    **Most robust on Workers:** Cloudflare Turnstile
-   (`NEXT_PUBLIC_TURNSTILE_SITE_KEY` + `TURNSTILE_SECRET_KEY`) — verification
-   is stateless and does not depend on a per-isolate HMAC secret.
+   (`NEXT_PUBLIC_TURNSTILE_SITE_KEY` at build time + `TURNSTILE_SECRET_KEY` at
+   runtime) — verification is stateless and does not depend on a per-isolate
+   HMAC secret.
+
+### "The deploy fails at the runtime-secrets step"
+
+Two recurring failures and their fixes (both already applied to the workflow
+source at `github/workflows/deploy-cloudflare.yml`, which you copy over
+`.github/workflows/deploy-cloudflare.yml` — the Arena integration can't write
+to `.github/workflows/` itself):
+
+1. **`Binding name 'OPENAI_MODEL' already in use [code 10053]`.** You have
+   `OPENAI_MODEL` as a dashboard *Text var*, and `wrangler secret put` refuses
+   any name that already exists as a non-secret binding. It's a model name, not
+   a credential, so it now lives in `wrangler.jsonc` `vars` and is gone from the
+   secrets loop. (To change the model, edit `wrangler.jsonc` and redeploy.)
+
+2. **`Secret edit failed … the latest version of your Worker isn't currently
+   deployed.`** A dashboard edit left an undeployed version, and Cloudflare
+   blocks secret edits in that state. The workflow now deploys **first**, then
+   uploads secrets, then redeploys — so the newest version is always deployed
+   before any secret edit, and the final deploy carries the new secrets.
 
 ---
 
