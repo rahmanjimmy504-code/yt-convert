@@ -182,6 +182,11 @@ The dev server runs at **http://localhost:3000** by default. Edit any file under
 | `COBALT_API_AUTH` | *(empty)* | Cobalt API token — a bare token (sent as `Bearer …`) or an explicit scheme like `Api-Key aaaa-bbbb` |
 | `COBALT_PROXY_HOSTS` | *(empty)* | Comma-separated extra host suffixes to allow as cobalt tunnel hosts. Only needed when your instance serves media from a **different** hostname than `COBALT_API_URL` — the configured API host is trusted automatically |
 | `COBALT_PUBLIC_DISCOVERY` | `1` | Set to `0` to disable querying `cobalt.directory` for reviewed public instances, leaving only `COBALT_API_URL` |
+| `APIFY_TOKEN` | *(empty)* | Apify API token — enables the **paid** Apify Actor as the absolute-last-resort YouTube fallback (after cobalt). Unset = disabled. See [docs/apify-provider.md](docs/apify-provider.md) |
+| `APIFY_ACTOR_ID` | `marielise.dev~youtube-video-downloader` | Actor the Apify fallback runs (`username~name` or internal ID) |
+| `APIFY_MONTHLY_CAP_USD` | `8` | Soft monthly USD spend stop: before every run the account's monthly usage is fetched from Apify and the fallback is skipped once usage ≥ this. `0` disables the fallback |
+| `APIFY_RUN_TIMEOUT_S` | `90` | Per-run timeout in seconds (clamped to 30–300). One request performs exactly one run — no retries |
+| `APIFY_PROXY_HOSTS` | *(empty)* | Comma-separated **exact** hosts to allow as Apify media hosts, for an Actor that serves files from a host other than `api.apify.com` (which is trusted automatically while `APIFY_TOKEN` is set) |
 | `YT_API_KEY` | *(built-in)* | Override the public, non-secret Innertube API key used by the `WEB_EMBEDDED_PLAYER` client if YouTube rotates it |
 
 Set values in a `.env.local` file (excluded from Git via `.gitignore`) or in your hosting platform's environment settings.
@@ -210,7 +215,8 @@ YouTube / YT Music downloads try sources in order, stopping at the first that re
 1. **Innertube clients** — `ANDROID_MUSIC` then `IOS_MUSIC` first (matching the 9Convert extractor family), followed by `ANDROID`, `IOS`, `ANDROID_VR`, `VISIONOS`, `WEB_EMBEDDED_PLAYER`, and finally `TVHTML5`. Direct adaptive AAC is preferred; progressive itag 18 is the honest last-resort audio source when no adaptive audio exists.
 2. **Public mirrors, raced** — Piped `/streams`, Invidious `/latest_version?local=true`, the often-disabled Invidious JSON API, and YouTube embed HTML. Relayed Piped/`latest_version` URLs keep the googlevideo fetch on the mirror's egress IP.
 3. **9Convert/dlsrv public farm** — the current `embed.dlsrv.online/api/info` + `/api/download/{mp3|mp4}` contract, with the legacy `ajaxSearch/index` (`query` + `vt`) → `ajaxConvert/convert` (`vid` + `k`) flow retained for 9convert.org/dlsrv-compatible hosts. A 404, empty response, or dlink outside the 9Convert/dlsrv/googlevideo allowlist is non-fatal.
-4. **Cobalt** (last resort) — the operator's own instance (`COBALT_API_URL`) first, then up to three **reviewed** public instances that `cobalt.directory` currently reports as passing its YouTube test. The resulting muxed mp4 / mp3 is used. See the caveat below.
+4. **Cobalt** (last free resort) — the operator's own instance (`COBALT_API_URL`) first, then up to three **reviewed** public instances that `cobalt.directory` currently reports as passing its YouTube test. The resulting muxed mp4 / mp3 is used. See the caveat below.
+5. **Apify Actor** (absolute last resort — paid, opt-in) — one bounded `run-sync-get-dataset-items` run of `APIFY_ACTOR_ID` (yt-dlp on Apify's own egress, which is why it can succeed when this server's IP is bot-blocked). Tried only when `APIFY_TOKEN` is set, only after everything above — including cobalt — returned nothing, and only while the account's monthly usage is under `APIFY_MONTHLY_CAP_USD`. See the caveat below and [docs/apify-provider.md](docs/apify-provider.md).
 
 Alongside the chain, **External PO-token server** (optional) — if `PO_TOKEN_SERVER_URL` + `PO_TOKEN_SERVER_AUTH` are configured, a token is fetched once (cached ~30 min) and attached to the Innertube requests under `serviceIntegrityDimensions`.
 
@@ -235,6 +241,12 @@ Because the allowlist is a compile-time constant, every serverless instance deri
 **Honest limitation:** as of 2026-08-14 every public instance passing the directory's YouTube test also advertises a `turnstileSitekey`, meaning it only issues Bearer tokens to clients that solved a Cloudflare Turnstile challenge in a browser. Server-to-server calls therefore usually return `error.api.auth.turnstile.missing`. The candidates are still tried — the check is one bounded request and instance policies change often — but this app does **not** solve challenges. The official `api.cobalt.tools` and `*.imput.net` instances are deliberately excluded, because the cobalt docs state hosted instances are not intended for use by other projects without permission. A reliably working fallback still means pointing `COBALT_API_URL` at an instance you run.
 
 Every URL cobalt returns is re-checked against the media allowlist before the convert proxy will fetch it, and the streamed bytes are sniffed so an HTML/CAPTCHA page or a JSON error body can never be saved as your `.mp3`/`.mp4`.
+
+#### Apify fallback caveat
+
+The Apify step is **opt-in and costs real credit**, so it is fenced in on every axis: it runs only when `APIFY_TOKEN` is set, only after the entire free chain (including cobalt) produced nothing, only while the account's monthly usage — read live from `GET /v2/users/me/limits` before every run — is under `APIFY_MONTHLY_CAP_USD` (the check fails closed: no answer means no run), and exactly once per request with a run timeout (`APIFY_RUN_TIMEOUT_S`) bounding the per-minute bill. At or over the cap the request simply falls through to the normal "try a converter" message.
+
+The Actor stores the finished file in the run's key-value store and returns a `downloadUrl` on `api.apify.com`. That one host — exact match, never a suffix rule — is added to the media allowlist only while `APIFY_TOKEN` is set, and `extract.ts` re-checks every URL against the allowlist before the convert proxy can fetch it. The operator's token is attached to the `api.apify.com` download URL server-side so a non-public store can still be read; it never reaches the browser, because `/api/convert` streams the bytes through this app. If an Actor ever serves files from a different host, the operator must name it explicitly in `APIFY_PROXY_HOSTS` (exact hosts only). See [docs/apify-provider.md](docs/apify-provider.md) for the operator guide.
 
 ### Custom production domain
 

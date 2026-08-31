@@ -195,6 +195,10 @@ second deploy advertises the correct canonical URL.
   Workers isolates.
 - **R2 cache**: create an R2 bucket and switch `open-next.config.ts` to
   `incrementalCache: r2IncrementalCache` for a persistent Next.js cache.
+- **Apify Actor fallback (paid, opt-in)**: set `APIFY_TOKEN` (secret),
+  `APIFY_ACTOR_ID` and `APIFY_MONTHLY_CAP_USD` on the Worker — a last-resort
+  YouTube converter that runs on Apify's proxies when every free source is
+  bot-blocked. Tap-by-tap guide: [docs/apify-provider.md](apify-provider.md).
 
 ---
 

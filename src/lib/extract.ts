@@ -8,6 +8,7 @@ import { pipedFormats } from './piped';
 import { nineConvertFormats } from './nineconvert';
 import { youtubeEmbedFormats } from './youtube-embed';
 import { cobaltFormats, isCobaltConfigured } from './cobalt';
+import { apifyFormats, isApifyConfigured } from './apify';
 import { getPoToken, isPoTokenServerConfigured } from './po-token';
 import { isAllowedMediaUrl } from './media-hosts';
 import { youtubeAwareFetch } from './youtube-egress';
@@ -802,7 +803,7 @@ async function extractYouTube(
   // straight to 9Convert then cobalt.
   const ipBotBlocked = Boolean(innertube.botChallenged || isBotChallenge(innertube.status, innertube.reason));
   let formats = ipBotBlocked ? [] : innertube.formats;
-  let source: 'innertube' | 'piped' | 'invidious-latest' | 'invidious-api' | 'youtube-embed' | '9convert' | 'cobalt' = 'innertube';
+  let source: 'innertube' | 'piped' | 'invidious-latest' | 'invidious-api' | 'youtube-embed' | '9convert' | 'cobalt' | 'apify' = 'innertube';
   let pipedError: string | undefined;
 
   const want = format === 'mp4' ? 'video' : 'audio';
@@ -881,6 +882,28 @@ async function extractYouTube(
     }
   }
 
+  // ABSOLUTE last resort: a paid Apify Actor run (opt-in via APIFY_TOKEN).
+  // Apify executes yt-dlp on its own egress, so this is the one source that
+  // can still succeed when every free source above — including cobalt — is
+  // bot-blocked on this server's IP. It runs only when nothing else produced
+  // a usable format, only while the account's monthly usage is under
+  // APIFY_MONTHLY_CAP_USD, and exactly once per request. Every URL it hands
+  // back is re-checked against the media-host allowlist here (api.apify.com
+  // is only proxiable while APIFY_TOKEN is set), so a hostile or changed
+  // Actor cannot make /api/convert fetch an arbitrary host.
+  let apifyError: string | undefined;
+  if (!formats.length && isApifyConfigured()) {
+    const apify = await apifyFormats(pageUrl, want, quality);
+    const apifyUrls = apify.formats.filter(f => f.url && isAllowedMediaUrl(f.url));
+    if (apifyUrls.length) {
+      formats = apifyUrls;
+      source = 'apify';
+    } else {
+      apifyError =
+        apify.error ?? (apify.formats.length ? 'returned a non-allowlisted media host' : undefined);
+    }
+  }
+
   if (!formats.length) {
     // Prefer an honest, specific reason over the generic message when YouTube
     // told us why (age-gate, private, region-lock, removed...).
@@ -897,12 +920,16 @@ async function extractYouTube(
     if (pipedIsDescriptive) {
       return fail(withFallbackHint(friendlyPipedError(pipedError!)));
     }
-    if (cobaltError) {
-      // `cobaltError` carries raw instance diagnostics ("kitty.tame.gg:
-      // error.api.auth.turnstile.missing"). Log it for the operator, but show
-      // the visitor a plain sentence with one instruction — an internal host
-      // name and error code mean nothing to them.
-      console.warn('[cobalt] all candidates failed:', cobaltError);
+    if (cobaltError || apifyError) {
+      // `cobaltError`/`apifyError` carry raw diagnostics ("kitty.tame.gg:
+      // error.api.auth.turnstile.missing", "monthly usage $8.02 has reached
+      // the $8.00 cap"). Log them for the operator, but show the visitor a
+      // plain sentence with one instruction — an internal host name and
+      // error code mean nothing to them. A cap-reached Apify skip lands here
+      // too, which is exactly the intended behaviour: the request falls
+      // through to the normal "try a converter" message.
+      if (cobaltError) console.warn('[cobalt] all candidates failed:', cobaltError);
+      if (apifyError) console.warn('[apify] last-resort fallback not used:', apifyError);
       return fail(
         withFallbackHint('No independent conversion service could fetch this video right now.'),
       );
@@ -943,6 +970,7 @@ async function extractYouTube(
           'youtube-embed': 'YouTube embed fallback stream',
           '9convert': '9Convert farm fallback',
           cobalt: 'Cobalt fallback stream',
+          apify: 'Apify Actor fallback download',
         };
         return ok({
           url: mediaUrl,
@@ -1042,6 +1070,7 @@ async function extractYouTube(
     'youtube-embed': 'YouTube embed fallback stream',
     '9convert': '9Convert farm fallback',
     cobalt: 'Cobalt fallback stream',
+    apify: 'Apify Actor fallback download',
   };
   return ok({
     url: mediaUrl,

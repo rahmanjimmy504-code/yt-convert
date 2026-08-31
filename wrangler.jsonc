@@ -16,6 +16,12 @@
     "directory": ".open-next/assets",
     "binding": "ASSETS"
   },
+  // By default `wrangler deploy` DELETES dashboard-set variables and secrets
+  // that are not declared in this file. The Apify fallback (APIFY_TOKEN and
+  // friends, see docs/apify-provider.md) is configured in the Cloudflare
+  // dashboard rather than here, so deploys from the GitHub workflow must
+  // keep them instead of silently wiping the operator's configuration.
+  "keep_vars": true,
   "services": [
     {
       // Self-reference so OpenNext's cache can re-enter this Worker. The
