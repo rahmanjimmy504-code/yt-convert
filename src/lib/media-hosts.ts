@@ -94,11 +94,12 @@ function configuredCobaltHost(): string | null {
 }
 
 /**
- * Parse a comma-separated host-suffix allowlist from an environment variable.
- * Entries are sanitised so an operator cannot accidentally widen the
- * allowlist to a bare TLD or inject a wildcard.
+ * Parse a comma-separated host list from an environment variable. Entries
+ * are sanitised so an operator cannot accidentally widen the allowlist to a
+ * bare TLD or inject a wildcard. Whether an entry then matches EXACTLY or
+ * as a parent-domain suffix is decided by the caller, not here.
  */
-function parseSuffixEnv(raw: string): string[] {
+function parseHostListEnv(raw: string): string[] {
   if (!raw) return [];
   const out: string[] = [];
   for (const part of raw.split(',')) {
@@ -117,7 +118,7 @@ function parseSuffixEnv(raw: string): string[] {
  * bare TLD or inject a wildcard.
  */
 function extraPipedSuffixes(): string[] {
-  return parseSuffixEnv(process.env.PIPED_PROXY_HOSTS || '');
+  return parseHostListEnv(process.env.PIPED_PROXY_HOSTS || '');
 }
 
 /**
@@ -125,13 +126,31 @@ function extraPipedSuffixes(): string[] {
  * self-hosted cobalt instance, which is the only kind that serves YouTube.
  */
 function extraCobaltSuffixes(): string[] {
-  return parseSuffixEnv(process.env.COBALT_PROXY_HOSTS || '');
+  return parseHostListEnv(process.env.COBALT_PROXY_HOSTS || '');
+}
+
+/**
+ * Parse the optional APIFY_PROXY_HOSTS allowlist. Unlike the Piped/Cobalt
+ * lists these entries match EXACTLY — no sub-host, no suffix: the Apify
+ * fallback hands back one specific file host, and "files.example.com" must
+ * never authorise "x.files.example.com" or "files.example.com.evil.example".
+ * It is only needed when an Actor serves its output from a host other than
+ * api.apify.com (which is trusted while APIFY_TOKEN is set, see below).
+ */
+function extraApifyExactHosts(): string[] {
+  return parseHostListEnv(process.env.APIFY_PROXY_HOSTS || '');
 }
 
 function isAllowedHost(host: string): boolean {
   const h = host.toLowerCase();
   if (ALLOWED_EXACT_HOSTS.some(allowed => h === allowed)) return true;
   if (h === configuredCobaltHost()) return true;
+  // The paid Apify Actor fallback serves its finished files from the API's
+  // own host. Gated on APIFY_TOKEN so deployments that never opt in keep
+  // the smallest possible proxiable surface — and exact-host only, so no
+  // subdomain of api.apify.com becomes proxiable by implication.
+  if (h === 'api.apify.com' && (process.env.APIFY_TOKEN || '').trim()) return true;
+  if (extraApifyExactHosts().some(allowed => h === allowed)) return true;
   if (ALLOWED_SUFFIXES.some(suffix => h === suffix || h.endsWith(`.${suffix}`))) return true;
   const extras = [...extraPipedSuffixes(), ...extraCobaltSuffixes()];
   return extras.some(suffix => h === suffix || h.endsWith(`.${suffix}`));

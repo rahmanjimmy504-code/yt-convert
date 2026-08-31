@@ -230,3 +230,58 @@ describe('cobalt fallback hosts', () => {
     expect(isAllowedMediaUrl('https://a.example.org/x')).toBe(true);
   });
 });
+
+describe('apify fallback hosts', () => {
+  const SAVED = { ...process.env };
+  beforeEach(() => {
+    delete process.env.APIFY_TOKEN;
+    delete process.env.APIFY_PROXY_HOSTS;
+  });
+  afterEach(() => {
+    process.env = { ...SAVED };
+  });
+
+  it('does not allow api.apify.com until the fallback is configured', () => {
+    // Unconfigured deployments keep the smallest proxiable surface: the
+    // paid fallback is opt-in, so its file host must not be proxiable.
+    expect(isAllowedMediaUrl('https://api.apify.com/v2/key-value-stores/x/records/a.mp4')).toBe(false);
+    process.env.APIFY_TOKEN = 'apify-token';
+    expect(isAllowedMediaUrl('https://api.apify.com/v2/key-value-stores/x/records/a.mp4')).toBe(true);
+    // The download URL carries the operator's token as a query parameter;
+    // that must not change the verdict.
+    expect(isAllowedMediaUrl('https://api.apify.com/v2/key-value-stores/x/records/a.mp4?token=secret'))
+      .toBe(true);
+  });
+
+  it('allows api.apify.com as an EXACT host only', () => {
+    process.env.APIFY_TOKEN = 'apify-token';
+    // No suffix rule: a subdomain, a lookalike, and a nested host are all
+    // refused, so nobody can become proxiable by borrowing the domain.
+    expect(isAllowedMediaUrl('https://api.apify.com.evil.example/x.mp4')).toBe(false);
+    expect(isAllowedMediaUrl('https://xapi.apify.com/x.mp4')).toBe(false);
+    expect(isAllowedMediaUrl('https://evil.api.apify.com/x.mp4')).toBe(false);
+    expect(isAllowedMediaUrl('https://apify.com/x.mp4')).toBe(false);
+    // Still HTTPS-only, still no credentials.
+    expect(isAllowedMediaUrl('http://api.apify.com/v2/key-value-stores/x/records/a.mp4')).toBe(false);
+    expect(isAllowedMediaUrl('https://user:pass@api.apify.com/x')).toBe(false);
+  });
+
+  it('allows operator-named Apify media hosts via APIFY_PROXY_HOSTS as EXACT hosts', () => {
+    process.env.APIFY_TOKEN = 'apify-token';
+    expect(isAllowedMediaUrl('https://files.apify.example/out.mp4')).toBe(false);
+    process.env.APIFY_PROXY_HOSTS = 'files.apify.example';
+    expect(isAllowedMediaUrl('https://files.apify.example/out.mp4')).toBe(true);
+    // Exact means exact: unlike COBALT/PIPED_PROXY_HOSTS there is no suffix
+    // semantics, so a subdomain of the named host stays refused.
+    expect(isAllowedMediaUrl('https://x.files.apify.example/out.mp4')).toBe(false);
+    expect(isAllowedMediaUrl('https://files.apify.example.evil.example/out.mp4')).toBe(false);
+  });
+
+  it('sanitises junk APIFY_PROXY_HOSTS entries', () => {
+    process.env.APIFY_PROXY_HOSTS = 'com, *, /evil, https://files.apify.example, .files.apify.example.';
+    expect(isAllowedMediaUrl('https://anything.com/x')).toBe(false);
+    expect(isAllowedMediaUrl('https://files.apify.example/out.mp4')).toBe(true);
+    expect(isAllowedMediaUrl('https://a.files.apify.example/x')).toBe(false);
+  });
+});
+

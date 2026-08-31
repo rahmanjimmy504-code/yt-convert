@@ -715,6 +715,202 @@ describe('cobalt last-resort fallback through extractMedia', () => {
   });
 });
 
+describe('apify last-resort fallback through extractMedia', () => {
+  const SAVED = { ...process.env };
+
+  beforeEach(() => {
+    // Pin the cobalt path off so only the Apify endpoint is stubbed and no
+    // directory lookup can reach the network.
+    process.env.COBALT_PUBLIC_DISCOVERY = '0';
+    delete process.env.COBALT_API_URL;
+    delete process.env.APIFY_TOKEN;
+    delete process.env.APIFY_ACTOR_ID;
+    delete process.env.APIFY_MONTHLY_CAP_USD;
+    resetCobaltDirectoryCache();
+  });
+
+  afterEach(() => {
+    process.env = { ...SAVED };
+    vi.unstubAllGlobals();
+    resetCobaltDirectoryCache();
+  });
+
+  const APIFY_FILE = 'https://api.apify.com/v2/key-value-stores/store1/records/jNQXAC9IVRw.mp4';
+
+  /**
+   * Every free source returns nothing; the two Apify endpoints answer from
+   * fixtures. Returns the recorded fetch URLs so tests can assert that the
+   * Actor ran (or did not).
+   */
+  function stubDeadUpstreamsAndApify(options: {
+    usedUsd?: number;
+    limitsStatus?: number;
+    items?: unknown;
+    runStatus?: number;
+  }) {
+    const calls: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        calls.push(url);
+        if (url.startsWith('https://api.apify.com/v2/users/me/limits')) {
+          if (options.limitsStatus && options.limitsStatus !== 200) {
+            return new Response(JSON.stringify({ error: { type: 'invalid-token' } }), {
+              status: options.limitsStatus,
+              headers: { 'Content-Type': 'application/json' },
+            });
+          }
+          return new Response(
+            JSON.stringify({ data: { current: { monthlyUsageUsd: options.usedUsd ?? 0.25 } } }),
+            { headers: { 'Content-Type': 'application/json' } },
+          );
+        }
+        if (url.includes('/run-sync-get-dataset-items')) {
+          return new Response(JSON.stringify(options.items ?? []), {
+            status: options.runStatus ?? 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        return new Response('{}', { status: 404 });
+      }),
+    );
+    return calls;
+  }
+
+  function successItem(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      videoId: 'jNQXAC9IVRw',
+      originalUrl: 'https://www.youtube.com/watch?v=jNQXAC9IVRw',
+      quality: '720p',
+      format: 'MP4',
+      downloadUrl: APIFY_FILE,
+      status: 'success',
+      ...overrides,
+    };
+  }
+
+  it('serves an mp3 the Actor produced when every free source is empty', async () => {
+    process.env.APIFY_TOKEN = 'apify-token';
+    const calls = stubDeadUpstreamsAndApify({
+      items: [successItem({
+        format: 'MP3',
+        quality: '',
+        contentType: 'audio/mpeg',
+        downloadUrl: 'https://api.apify.com/v2/key-value-stores/store1/records/jNQXAC9IVRw.mp3',
+      })],
+    });
+
+    const result = await extractMedia('youtube', 'https://www.youtube.com/watch?v=jNQXAC9IVRw', 'mp3', 'best');
+    expect(isExtractError(result)).toBe(false);
+    if (!isExtractError(result)) {
+      expect(result.url).toBe(
+        'https://api.apify.com/v2/key-value-stores/store1/records/jNQXAC9IVRw.mp3?token=apify-token',
+      );
+      expect(result.mimeType).toBe('audio/mpeg');
+      expect(result.extension).toBe('mp3');
+      expect(result.note).toBe('Apify Actor fallback download');
+    }
+    // Exactly one Actor run was started for this request.
+    expect(calls.filter(u => u.includes('/acts/'))).toHaveLength(1);
+  });
+
+  it('serves an mp4 the Actor produced', async () => {
+    process.env.APIFY_TOKEN = 'apify-token';
+    const calls = stubDeadUpstreamsAndApify({ items: [successItem()] });
+
+    const result = await extractMedia('youtube', 'https://www.youtube.com/watch?v=jNQXAC9IVRw', 'mp4', '720');
+    expect(isExtractError(result)).toBe(false);
+    if (!isExtractError(result)) {
+      expect(result.mimeType).toBe('video/mp4');
+      expect(result.extension).toBe('mp4');
+      expect(result.qualityLabel).toBe('720p');
+    }
+    expect(calls.filter(u => u.includes('/acts/'))).toHaveLength(1);
+  });
+
+  it('refuses an Actor download URL that is not on the media allowlist', async () => {
+    process.env.APIFY_TOKEN = 'apify-token';
+    stubDeadUpstreamsAndApify({
+      items: [successItem({ downloadUrl: 'https://evil.example/file.mp4' })],
+    });
+
+    const result = await extractMedia('youtube', 'https://www.youtube.com/watch?v=jNQXAC9IVRw', 'mp4', 'best');
+    expect(isExtractError(result)).toBe(true);
+  });
+
+  it('tries Apify only after cobalt, and not at all when cobalt succeeds', async () => {
+    process.env.APIFY_TOKEN = 'apify-token';
+    process.env.COBALT_API_URL = 'https://cobalt.example.com';
+    process.env.COBALT_PROXY_HOSTS = 'cobalt.example.com';
+
+    const calls: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        calls.push(url);
+        if (url.startsWith('https://cobalt.example.com')) {
+          return new Response(
+            JSON.stringify({ status: 'tunnel', url: 'https://cobalt.example.com/tunnel?id=9' }),
+            { headers: { 'Content-Type': 'application/json' } },
+          );
+        }
+        return new Response('{}', { status: 404 });
+      }),
+    );
+
+    const result = await extractMedia('youtube', 'https://www.youtube.com/watch?v=jNQXAC9IVRw', 'mp4', 'best');
+    expect(isExtractError(result)).toBe(false);
+    if (!isExtractError(result)) expect(result.url).toBe('https://cobalt.example.com/tunnel?id=9');
+    // Cobalt answered, so the paid Actor must never have been started.
+    expect(calls.some(u => u.includes('api.apify.com'))).toBe(false);
+  });
+
+  it('skips the paid run and falls through to the normal converter message at the cap', async () => {
+    process.env.APIFY_TOKEN = 'apify-token';
+    process.env.APIFY_MONTHLY_CAP_USD = '8';
+    const calls = stubDeadUpstreamsAndApify({ usedUsd: 8.13 });
+
+    const result = await extractMedia('youtube', 'https://www.youtube.com/watch?v=jNQXAC9IVRw', 'mp3', 'best');
+    expect(isExtractError(result)).toBe(true);
+    if (isExtractError(result)) {
+      // The plain, single-instruction message visitors always get when no
+      // independent service answered — nothing about Apify, caps, or credit.
+      expect(result.error).toBe(
+        'No independent conversion service could fetch this video right now. Try a converter below.',
+      );
+      expect(result.error).not.toMatch(/apify|cap|credit/i);
+    }
+    // The limits endpoint was asked, but the Actor was never started.
+    expect(calls.some(u => u.includes('/users/me/limits'))).toBe(true);
+    expect(calls.some(u => u.includes('/acts/'))).toBe(false);
+  });
+
+  it('is never called when APIFY_TOKEN is unset', async () => {
+    const calls = stubDeadUpstreamsAndApify({ items: [successItem()] });
+
+    const result = await extractMedia('youtube', 'https://www.youtube.com/watch?v=jNQXAC9IVRw', 'mp4', 'best');
+    expect(isExtractError(result)).toBe(true);
+    expect(calls.some(u => u.includes('api.apify.com'))).toBe(false);
+  });
+
+  it('shows the plain converter message when the Actor itself fails', async () => {
+    process.env.APIFY_TOKEN = 'apify-token';
+    stubDeadUpstreamsAndApify({
+      items: [successItem({ status: 'failed', downloadUrl: '', error: 'Video is private' })],
+    });
+
+    const result = await extractMedia('youtube', 'https://www.youtube.com/watch?v=jNQXAC9IVRw', 'mp4', 'best');
+    expect(isExtractError(result)).toBe(true);
+    if (isExtractError(result)) {
+      expect(result.error).toBe(
+        'No independent conversion service could fetch this video right now. Try a converter below.',
+      );
+      // Actor internals never reach the visitor.
+      expect(result.error).not.toMatch(/apify|Video is private/i);
+    }
+  });
+});
+
 describe('withFallbackHint (one actionable instruction, never two)', () => {
   it('does not append a second pointer when the message already has one', () => {
     const bot = playabilityMessage('LOGIN_REQUIRED', "Sign in to confirm you're not a bot");
