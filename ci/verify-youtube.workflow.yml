@@ -55,6 +55,11 @@ jobs:
         run: npm ci
 
       - name: Verify against live YouTube
+        # PR/push runs are INFORMATIONAL: YouTube bot-walls the runner IP and
+        # the third-party fallbacks (9Convert farm, AllDL) are flaky from
+        # datacenter ranges, so a red X here must never block a PR. The
+        # weekly schedule runs WITHOUT this override and is the hard gate.
+        continue-on-error: ${{ github.event_name == 'pull_request' }}
         env:
           # The AllDL live audit is TOLERANT in PR/push CI (one retry, warning
           # only — a flaky third-party hobby API must not block PRs). The
