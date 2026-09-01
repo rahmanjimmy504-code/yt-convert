@@ -40,16 +40,18 @@ describe('isAllowedMediaUrl', () => {
     expect(isAllowedMediaUrl('https://evil9convert.org/file')).toBe(false);
   });
 
-  it('allows the AHM7xMakki AllDL hosts as exact names only', () => {
-    // The AllDL provider (./alldl.ts) hands back finished files on the
-    // operator's CDN host; the API host is allowlisted alongside it.
+  it('allows the AllDL API host exactly and its ymcdn.org CDN as a suffix', () => {
+    // The AllDL provider (./alldl.ts) hands back finished files on
+    // c.ymcdn.org, which live-traffic (2026-09-01) 30x-redirects to rotating
+    // dlNN.ymcdn.org hosts — so the CDN domain is a suffix, like the farm's.
     expect(isAllowedMediaUrl('https://c.ymcdn.org/api/v2/download/x/Y1Z3Q3O7IRE?_=mac')).toBe(true);
+    expect(isAllowedMediaUrl('https://dl20.ymcdn.org/api/v2/download/x/Y1Z3Q3O7IRE?_=mac')).toBe(true);
+    expect(isAllowedMediaUrl('https://ymcdn.org/file.mp4')).toBe(true);
+    // The API host stays exact: no subdomain may be proxied by implication.
     expect(isAllowedMediaUrl('https://ahm7xmakki.com/api/alldl?url=x')).toBe(true);
-    // Exact hosts only: no subdomain or lookalike may be proxied by implication.
-    expect(isAllowedMediaUrl('https://sub.c.ymcdn.org/file.mp4')).toBe(false);
-    expect(isAllowedMediaUrl('https://ymcdn.org/file.mp4')).toBe(false);
-    expect(isAllowedMediaUrl('https://c.ymcdn.org.evil.example/file.mp4')).toBe(false);
     expect(isAllowedMediaUrl('https://api.ahm7xmakki.com/x')).toBe(false);
+    expect(isAllowedMediaUrl('https://ahm7xmakki.com.evil.example/x')).toBe(false);
+    expect(isAllowedMediaUrl('https://ymcdn.org.evil.example/file.mp4')).toBe(false);
   });
 
   it('allows local Invidious latest_version streams only on configured mirror suffixes', () => {

@@ -37,6 +37,11 @@ export function refererForMediaUrl(url: string): string | null {
     if (host === '9convert.com' || host.endsWith('.9convert.com')) {
       return 'https://9convert.com/';
     }
+    // The AllDL CDN (c.ymcdn.org and its rotating dlNN. redirect targets) is
+    // fed by the ahm7xmakki.com API; keep the Referer same-site for it too.
+    if (host === 'ymcdn.org' || host.endsWith('.ymcdn.org')) {
+      return 'https://ahm7xmakki.com/';
+    }
   } catch {
     return null;
   }

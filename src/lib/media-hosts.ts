@@ -37,6 +37,12 @@ const ALLOWED_SUFFIXES = [
   'dlsrv.online',
   '9convert.org',
   '9convert.com',
+  // AHM7xMakki AllDL fallback CDN (./alldl.ts). The API hands back links on
+  // c.ymcdn.org, but live traffic (verified 2026-09-01) 30x-redirects them to
+  // rotating dlNN.ymcdn.org hosts, so the whole operator domain is allowlisted
+  // as a suffix — the same convention as the 9Convert farm above. An exact
+  // c.ymcdn.org entry alone would refuse every download at the first hop.
+  'ymcdn.org',
   // Piped mirror fallback — each instance serves streams from its own proxy
   // host. Keep these suffixes in step with PIPED_INSTANCES in ./piped.ts.
   'kavin.rocks',
@@ -58,11 +64,10 @@ const ALLOWED_EXACT_HOSTS = [
   'invidious.f5.si',
   'yt.chocolatemoo53.com',
   'invidious.nerdvpn.de',
-  // AHM7xMakki AllDL fallback (./alldl.ts): the API host and the CDN host its
-  // finished files are served from. Exact hosts only — no suffix rule, so no
-  // other subdomain of either name becomes proxiable by implication.
+  // AHM7xMakki AllDL API host (./alldl.ts) — exact only. Its CDN family
+  // (ymcdn.org, including the rotating dlNN. redirect targets) is allowlisted
+  // as a suffix above.
   'ahm7xmakki.com',
-  'c.ymcdn.org',
   // Reviewed public cobalt APIs. A cobalt `tunnel` URL is always served from
   // the API's own origin (GET /tunnel), so allowing the exact API host is
   // enough — and, being exact, it cannot be widened by a subdomain the

@@ -21,10 +21,12 @@
  *       "audioUrl": "https://c.ymcdn.org/api/v2/download/<token>/<id>?_=<mac>",
  *       … } }
  *
- * The finished files are served by the operator's own CDN host
- * `c.ymcdn.org`; both it and the API host `ahm7xmakki.com` are on the media
- * allowlist as EXACT hosts (see ./media-hosts.ts — no suffix rule, so no
- * other subdomain becomes proxiable by implication).
+ * The finished files are announced on the operator's CDN host `c.ymcdn.org`
+ * and live traffic 30x-redirects them to rotating `dlNN.ymcdn.org` hosts
+ * (verified 2026-09-01). The media allowlist therefore covers the operator's
+ * `ymcdn.org` domain as a suffix (like the 9Convert farm CDNs) while the API
+ * host `ahm7xmakki.com` stays an exact-host entry; ./media-fetch.ts also
+ * pins the Referer to the API origin for every ymcdn.org hop.
  *
  * ── Failure posture ──────────────────────────────────────────────────────
  * Exactly like the farm: this is a best-effort hop. Timeout, HTTP error,
