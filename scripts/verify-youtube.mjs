@@ -312,12 +312,16 @@ if (!formats.length || process.env.VERIFY_ALLDL === '1' || process.env.GITHUB_AC
     formats = [...alldlVideo, ...alldlAudio];
     if (formats.length) via = 'alldl';
   }
-  // Mirror the farm block: when the chain NEEDS AllDL (or strict mode), the
-  // result is a hard check and surfaces as a workflow annotation; otherwise
-  // it is a warning-level audit that can never block a PR on its own.
+  // Tolerance rule (operator guidance): a flaky third-party hobby API must
+  // never hard-block a PR. Outside ALLDL_STRICT the audits are ALWAYS
+  // warning-level — even when the chain currently needs AllDL, because the
+  // same runner-IP conditions that starve the primary path also starve this
+  // endpoint, and that must not read as a code regression. Strict mode (the
+  // scheduled weekly health check) is the place where a hard failure is
+  // wanted.
   const reportAlldl = (ok, label, detail) => {
-    const result = alldlIsRequired || alldlStrict ? check(ok, label, detail) : audit(ok, label, detail);
-    if ((alldlIsRequired || alldlStrict) && process.env.GITHUB_ACTIONS === 'true') {
+    const result = alldlStrict ? check(ok, label, detail) : audit(ok, label, detail);
+    if (alldlStrict && process.env.GITHUB_ACTIONS === 'true') {
       console.log(`::${ok ? 'notice' : 'error'} title=${label}::${detail}`);
     }
     return result;
