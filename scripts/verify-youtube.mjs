@@ -64,6 +64,7 @@ import {
 } from '../src/lib/extract.ts';
 import { pipedFormats } from '../src/lib/piped.ts';
 import { nineConvertFormats } from '../src/lib/nineconvert.ts';
+import { ALLDL_MEDIA_HOSTS, alldlFormats } from '../src/lib/alldl.ts';
 import { cobaltFormats, cobaltConfigFromEnv, isCobaltConfigured } from '../src/lib/cobalt.ts';
 import { isPoTokenServerConfigured } from '../src/lib/po-token.ts';
 import { extensionForMime, isUsableFormatUrl, pickYouTubeFormat, planVideoDownload } from '../src/lib/youtube-formats.ts';
@@ -201,7 +202,7 @@ for (const client of INNERTUBE_CLIENTS) {
   );
 }
 
-/* -- 2. The extraction sources: Innertube -> mirrors -> 9Convert -> cobalt -- */
+/* -- 2. The extraction sources: Innertube -> mirrors -> 9Convert -> AllDL -> cobalt -- */
 console.log('\n--- innertubeFormats() ---');
 const result = await retryOnce('innertubeFormats', () => innertubeFormats(videoId), isInnertubeTransient);
 let formats = result.formats;
@@ -274,6 +275,57 @@ if (!formats.length || process.env.VERIFY_PUBLIC_FARM === '1' || process.env.GIT
   reportFarm(farmAudio.length > 0, '9Convert MP3 live audit', `${farmAudio.length} probed files for ${videoId}`);
 }
 
+/* -- AHM7xMakki AllDL, between the farm and cobalt. Same posture as the farm
+   audit above: probed on every CI run from a datacenter IP, but TOLERANT —
+   one automatic retry and only a warning in PR/push CI, because a flaky
+   third-party hobby API must not block every future PR. It is a hard
+   requirement when the chain actually needs it (no earlier source worked),
+   and strict when ALLDL_STRICT=1 (the scheduled weekly health check sets
+   that). The default probe video is the music-label fixture Y1Z3Q3O7IRE,
+   which the free Innertube/mirror/farm chain cannot serve — a success there
+   can only have come from AllDL, which makes the audit unambiguous. -- */
+if (!formats.length || process.env.VERIFY_ALLDL === '1' || process.env.GITHUB_ACTIONS === 'true') {
+  const alldlIsRequired = !formats.length;
+  const alldlStrict = process.env.ALLDL_STRICT === '1';
+  const alldlProbeId = process.env.ALLDL_PROBE_VIDEO_ID || 'Y1Z3Q3O7IRE';
+  console.log(
+    alldlIsRequired
+      ? '  → falling back to the AHM7xMakki AllDL endpoint…'
+      : `  → independently auditing the AHM7xMakki AllDL endpoint (probe video ${alldlProbeId}${alldlStrict ? ', STRICT' : ''})…`,
+  );
+  const attemptAlldl = async () => {
+    const [alldlVideo, alldlAudio] = await Promise.all([
+      alldlFormats(alldlProbeId, 'mp4'),
+      alldlFormats(alldlProbeId, 'mp3'),
+    ]);
+    return { alldlVideo, alldlAudio };
+  };
+  // Tolerant by design: exactly one automatic retry on total failure, then
+  // the result stands (and is only a warning in PR/push CI).
+  let { alldlVideo, alldlAudio } = await attemptAlldl();
+  if (!alldlVideo.length && !alldlAudio.length) {
+    console.log(`  (AllDL came up empty — one retry after ${RETRY_WAIT_MS / 1000}s…)`);
+    await sleep(RETRY_WAIT_MS);
+    ({ alldlVideo, alldlAudio } = await attemptAlldl());
+  }
+  if (!formats.length) {
+    formats = [...alldlVideo, ...alldlAudio];
+    if (formats.length) via = 'alldl';
+  }
+  const reportAlldl = alldlIsRequired || alldlStrict ? check : audit;
+  const alldlDetail = urls => {
+    if (!urls.length) return 'no allowlisted, byte-verified download';
+    try {
+      return `${urls.length} probed file(s) from ${new URL(urls[0].url).hostname}` +
+        ` (expected: ${ALLDL_MEDIA_HOSTS.join(' or ')})`;
+    } catch {
+      return `${urls.length} probed file(s)`;
+    }
+  };
+  reportAlldl(alldlVideo.length > 0, 'AllDL MP4 live audit', alldlDetail(alldlVideo));
+  reportAlldl(alldlAudio.length > 0, 'AllDL MP3 live audit', alldlDetail(alldlAudio));
+}
+
 /* -- Last resort: cobalt. Public discovery is enabled by default even when
    there is no private COBALT_API_URL, so never dereference a null config in
    the diagnostic path. -- */
@@ -301,7 +353,7 @@ if (!formats.length) {
 }
 
 if (!formats.length) {
-  console.log('\n✗ No formats from any source (Innertube, Invidious, Piped, 9Convert, or cobalt).');
+  console.log('\n✗ No formats from any source (Innertube, Invidious, Piped, 9Convert, AllDL, or cobalt).');
   console.log('  If every Innertube client says "Sign in to confirm you\'re not a bot", the runner IP is');
   console.log('  being BotGuard-challenged. An operator-owned PO-token path helps only when token minting,');
   console.log('  Innertube, and googlevideo share this same public egress IP (one VPS/site or YT_EGRESS_PROXY).');

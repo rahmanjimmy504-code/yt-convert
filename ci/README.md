@@ -11,6 +11,17 @@ a file under `.github/workflows/` is rejected outright.
 A GitHub Actions workflow that runs the **live** YouTube extraction check
 (`npm run verify:youtube`) from a GitHub-hosted runner.
 
+> **PENDING CHANGE (2026-09-01, AllDL live audit).** This staged copy now
+> differs from the applied `.github/workflows/verify-youtube.yml` in two
+> ways that a human needs to copy over: (1) the `pull_request.paths` list
+> gains `src/lib/alldl.ts` and `src/lib/cobalt-directory.ts`; (2) the
+> "Verify against live YouTube" step gains `env: ALLDL_STRICT:
+> ${{ github.event_name == 'schedule' && '1' || '' }}` so the weekly
+> scheduled health check hard-fails on a broken AllDL endpoint while
+> PR/push runs stay warn-only. Copy this whole file over
+> `.github/workflows/verify-youtube.yml` (web UI: edit → replace all →
+> commit) after merging its PR.
+
 ### Why it lives here instead of `.github/workflows/`
 
 The automation account that opened this PR does not hold the `workflows`
