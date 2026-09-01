@@ -6,6 +6,7 @@ import {
 } from './invidious';
 import { pipedFormats } from './piped';
 import { nineConvertFormats } from './nineconvert';
+import { alldlFormats } from './alldl';
 import { youtubeEmbedFormats } from './youtube-embed';
 import { cobaltFormats, isCobaltConfigured } from './cobalt';
 import { apifyFormats, isApifyConfigured } from './apify';
@@ -803,7 +804,7 @@ async function extractYouTube(
   // straight to 9Convert then cobalt.
   const ipBotBlocked = Boolean(innertube.botChallenged || isBotChallenge(innertube.status, innertube.reason));
   let formats = ipBotBlocked ? [] : innertube.formats;
-  let source: 'innertube' | 'piped' | 'invidious-latest' | 'invidious-api' | 'youtube-embed' | '9convert' | 'cobalt' | 'apify' = 'innertube';
+  let source: 'innertube' | 'piped' | 'invidious-latest' | 'invidious-api' | 'youtube-embed' | '9convert' | 'alldl' | 'cobalt' | 'apify' = 'innertube';
   let pipedError: string | undefined;
 
   const want = format === 'mp4' ? 'video' : 'audio';
@@ -861,10 +862,25 @@ async function extractYouTube(
     }
   }
 
-  // Last resort: cobalt — the operator's own instance first, then the
+  // AHM7xMakki AllDL — one free, key-less, single-endpoint hop between the
+  // 9Convert farm and cobalt. It converts on the operator's own egress (so it
+  // survives a bot wall on this server's IP) and hands back a finished file
+  // on its CDN host c.ymcdn.org. Like the farm it is best-effort: one
+  // timeout-bounded attempt, byte-sniffed for container honesty, and any
+  // failure returns nothing so cobalt (and only then Apify) still runs.
+  if (!formats.length) {
+    const alldl = await alldlFormats(id, format === 'mp4' ? 'mp4' : 'mp3');
+    if (alldl.length) {
+      formats = alldl;
+      source = 'alldl';
+    }
+  }
+
+  // Last free resort: cobalt — the operator's own instance first, then the
   // reviewed public instances the directory reports as YouTube-healthy. It
   // returns a finished muxed file rather than a format list, so it runs only
-  // when everything else produced nothing.
+  // when everything else (now including the AllDL hop above) produced
+  // nothing.
   //
   // Every URL it hands back is re-checked against the media-host allowlist
   // here, so even a compromised instance cannot make /api/convert fetch an
@@ -969,6 +985,7 @@ async function extractYouTube(
           'invidious-api': 'Invidious fallback stream',
           'youtube-embed': 'YouTube embed fallback stream',
           '9convert': '9Convert farm fallback',
+          alldl: 'AllDL fallback download',
           cobalt: 'Cobalt fallback stream',
           apify: 'Apify Actor fallback download',
         };
@@ -1069,6 +1086,7 @@ async function extractYouTube(
     'invidious-api': 'Invidious fallback stream',
     'youtube-embed': 'YouTube embed fallback stream',
     '9convert': '9Convert farm fallback',
+    alldl: 'AllDL fallback download',
     cobalt: 'Cobalt fallback stream',
     apify: 'Apify Actor fallback download',
   };

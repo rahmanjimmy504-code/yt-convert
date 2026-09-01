@@ -402,6 +402,110 @@ describe('extractMedia YouTube fallbacks', () => {
     expect(contacted.some(url => url.startsWith('https://cobalt.'))).toBe(false);
   });
 
+  it('uses the AHM7xMakki AllDL endpoint after the farm and before cobalt', async () => {
+    const saved = { ...process.env };
+    try {
+      process.env.COBALT_API_URL = 'https://cobalt.example.com';
+      process.env.COBALT_PUBLIC_DISCOVERY = '0';
+      resetCobaltDirectoryCache();
+    const audioUrl =
+      'https://c.ymcdn.org/api/v2/download/eef9ff80791e5318dcbf27358fc5f02c/Y1Z3Q3O7IRE?_=GXvuAnvhcXBbnBii';
+    const contacted: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: RequestInit) => {
+        contacted.push(url);
+        const method = (init?.method || 'GET').toUpperCase();
+        if (url.includes('youtubei/v1/player')) {
+          return new Response(JSON.stringify(emptyPlayer()), { headers: { 'Content-Type': 'application/json' } });
+        }
+        if (url.startsWith('https://ahm7xmakki.com/api/alldl')) {
+          return new Response(JSON.stringify({
+            success: true,
+            mediaInfo: {
+              title: 'Tobu - Hope (Original Mix)',
+              audioUrl,
+              videoUrl: `${audioUrl}&kind=video`,
+            },
+          }), { headers: { 'Content-Type': 'application/json' } });
+        }
+        if (url === audioUrl) {
+          // ID3 + MPEG sync: a real MP3 head for the Range probe.
+          const bytes = new Uint8Array(64);
+          bytes.set(new TextEncoder().encode('ID3'), 0);
+          bytes[10] = 0xff; bytes[11] = 0xfb;
+          return new Response(bytes as BodyInit, {
+            status: 206,
+            headers: { 'Content-Type': 'audio/mpeg', 'Content-Range': 'bytes 0-63/4000000' },
+          });
+        }
+        return new Response('{}', { status: 404 });
+      }),
+    );
+
+    const result = await extractMedia('youtube', 'https://www.youtube.com/watch?v=Y1Z3Q3O7IRE', 'mp3', 'best');
+    expect(isExtractError(result)).toBe(false);
+    if (!isExtractError(result)) {
+      expect(result.url).toBe(audioUrl);
+      expect(result.note).toMatch(/AllDL/i);
+    }
+    expect(contacted.some(url => url.startsWith('https://ahm7xmakki.com/'))).toBe(true);
+    // AllDL slots in BEFORE cobalt: the cobalt endpoint must never be reached.
+    expect(contacted.some(url => url.startsWith('https://cobalt.example.com'))).toBe(false);
+    } finally {
+      process.env = saved;
+      resetCobaltDirectoryCache();
+    }
+  });
+
+  it('falls through AllDL to cobalt when the AllDL endpoint has nothing', async () => {
+    const saved = { ...process.env };
+    try {
+      process.env.COBALT_API_URL = 'https://cobalt.example.com';
+      process.env.COBALT_PROXY_HOSTS = 'cobalt.example.com';
+      process.env.COBALT_PUBLIC_DISCOVERY = '0';
+      resetCobaltDirectoryCache();
+    const contacted: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: RequestInit) => {
+        contacted.push(url);
+        const method = (init?.method || 'GET').toUpperCase();
+        if (url.includes('youtubei/v1/player')) {
+          return new Response(JSON.stringify(emptyPlayer()), { headers: { 'Content-Type': 'application/json' } });
+        }
+        if (url.startsWith('https://ahm7xmakki.com/api/alldl')) {
+          return new Response(JSON.stringify({ success: false }), {
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        if (url.startsWith('https://cobalt.example.com') && method === 'POST') {
+          return new Response(JSON.stringify({
+            status: 'tunnel',
+            url: 'https://cobalt.example.com/tunnel?id=alldl-fallthrough',
+          }), { headers: { 'Content-Type': 'application/json' } });
+        }
+        return new Response('{}', { status: 404 });
+      }),
+    );
+
+    const result = await extractMedia('youtube', 'https://www.youtube.com/watch?v=Y1Z3Q3O7IRE', 'mp3', 'best');
+    expect(isExtractError(result)).toBe(false);
+    if (!isExtractError(result)) {
+      expect(result.url).toBe('https://cobalt.example.com/tunnel?id=alldl-fallthrough');
+      expect(result.note).toMatch(/cobalt/i);
+    }
+    // AllDL was tried first, cobalt second.
+    const alldlAt = contacted.findIndex(url => url.startsWith('https://ahm7xmakki.com/'));
+    const cobaltAt = contacted.findIndex(url => url.startsWith('https://cobalt.example.com'));
+    expect(alldlAt).toBeGreaterThan(-1);
+    expect(cobaltAt).toBeGreaterThan(alldlAt);
+    } finally {
+      process.env = saved;
+      resetCobaltDirectoryCache();
+    }
+  });
+
   it('skips direct googlevideo URLs and Piped/Invidious when the IP is bot-challenged, falls through to 9Convert', async () => {
     const contacted: string[] = [];
     let callCount = 0;

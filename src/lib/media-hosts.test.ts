@@ -40,6 +40,18 @@ describe('isAllowedMediaUrl', () => {
     expect(isAllowedMediaUrl('https://evil9convert.org/file')).toBe(false);
   });
 
+  it('allows the AHM7xMakki AllDL hosts as exact names only', () => {
+    // The AllDL provider (./alldl.ts) hands back finished files on the
+    // operator's CDN host; the API host is allowlisted alongside it.
+    expect(isAllowedMediaUrl('https://c.ymcdn.org/api/v2/download/x/Y1Z3Q3O7IRE?_=mac')).toBe(true);
+    expect(isAllowedMediaUrl('https://ahm7xmakki.com/api/alldl?url=x')).toBe(true);
+    // Exact hosts only: no subdomain or lookalike may be proxied by implication.
+    expect(isAllowedMediaUrl('https://sub.c.ymcdn.org/file.mp4')).toBe(false);
+    expect(isAllowedMediaUrl('https://ymcdn.org/file.mp4')).toBe(false);
+    expect(isAllowedMediaUrl('https://c.ymcdn.org.evil.example/file.mp4')).toBe(false);
+    expect(isAllowedMediaUrl('https://api.ahm7xmakki.com/x')).toBe(false);
+  });
+
   it('allows local Invidious latest_version streams only on configured mirror suffixes', () => {
     expect(isAllowedMediaUrl('https://invidious.tiekoetter.com/latest_version?id=x&itag=18&local=true')).toBe(true);
     expect(isAllowedMediaUrl('https://inv.nadeko.net/videoplayback?id=x')).toBe(true);

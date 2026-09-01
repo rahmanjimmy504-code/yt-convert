@@ -19,8 +19,9 @@ The fallback is **deliberately the last thing tried**:
 1. Innertube clients (direct)
 2. Piped / Invidious / embed mirrors
 3. The 9Convert/dlsrv farm
-4. Cobalt (your instance, then reviewed public ones)
-5. **Apify — only if `APIFY_TOKEN` is set and 1–4 all produced nothing**
+4. The AHM7xMakki AllDL endpoint (one free, key-less attempt)
+5. Cobalt (your instance, then reviewed public ones)
+6. **Apify — only if `APIFY_TOKEN` is set and 1–5 all produced nothing**
 
 It is **opt-in**: with no `APIFY_TOKEN` in the environment the code path is
 dead, `api.apify.com` is not even on the proxy allowlist, and nothing about
@@ -279,7 +280,8 @@ network — no test ever talks to Apify):
   still be read; it is never sent to any other host and never reaches the
   browser.
 - `src/lib/extract.ts` — calls the provider only after Innertube, the
-  mirrors, the 9Convert farm and cobalt have all produced nothing, then
+  mirrors, the 9Convert farm, the AHM7xMakki AllDL endpoint and cobalt have
+  all produced nothing, then
   re-checks the returned URL against the media allowlist before anything else
   can fetch it.
 - `src/lib/media-hosts.ts` — allows the **exact** host `api.apify.com` while

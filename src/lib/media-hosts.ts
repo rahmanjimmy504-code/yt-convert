@@ -59,6 +59,11 @@ const ALLOWED_EXACT_HOSTS = [
   'yt.chocolatemoo53.com',
   'inv.nadeko.net',
   'invidious.nerdvpn.de',
+  // AHM7xMakki AllDL fallback (./alldl.ts): the API host and the CDN host its
+  // finished files are served from. Exact hosts only — no suffix rule, so no
+  // other subdomain of either name becomes proxiable by implication.
+  'ahm7xmakki.com',
+  'c.ymcdn.org',
   // Reviewed public cobalt APIs. A cobalt `tunnel` URL is always served from
   // the API's own origin (GET /tunnel), so allowing the exact API host is
   // enough — and, being exact, it cannot be widened by a subdomain the
