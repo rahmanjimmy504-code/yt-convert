@@ -312,7 +312,16 @@ if (!formats.length || process.env.VERIFY_ALLDL === '1' || process.env.GITHUB_AC
     formats = [...alldlVideo, ...alldlAudio];
     if (formats.length) via = 'alldl';
   }
-  const reportAlldl = alldlIsRequired || alldlStrict ? check : audit;
+  // Mirror the farm block: when the chain NEEDS AllDL (or strict mode), the
+  // result is a hard check and surfaces as a workflow annotation; otherwise
+  // it is a warning-level audit that can never block a PR on its own.
+  const reportAlldl = (ok, label, detail) => {
+    const result = alldlIsRequired || alldlStrict ? check(ok, label, detail) : audit(ok, label, detail);
+    if ((alldlIsRequired || alldlStrict) && process.env.GITHUB_ACTIONS === 'true') {
+      console.log(`::${ok ? 'notice' : 'error'} title=${label}::${detail}`);
+    }
+    return result;
+  };
   const alldlDetail = urls => {
     if (!urls.length) return 'no allowlisted, byte-verified download';
     try {
