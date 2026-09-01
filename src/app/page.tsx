@@ -166,6 +166,8 @@ export default function Home() {
   const [reportError, setReportError] = useState('');
   const [reportDone, setReportDone] = useState(false);
   const [convertError, setConvertError] = useState('');
+  /** Which source served the last download (from X-Conversion-Note). */
+  const [convertSource, setConvertSource] = useState('');
   const [converting, setConverting] = useState(false);
   // YouTube session cookies for age-gate bypass (opt-in, behind feature flag).
   // Stored in localStorage so power users don't have to re-paste every time.
@@ -553,6 +555,7 @@ export default function Home() {
     const href = `/api/convert?url=${encodeURIComponent(u)}&format=${format}&quality=${encodeURIComponent(quality)}&ticket=${encodeURIComponent(videoInfo.convertTicket)}&title=${encodeURIComponent(videoInfo.title || '')}`;
     setConverting(true);
     setConvertError('');
+    setConvertSource('');
     try {
       const response = await fetch(href, {
         headers: {
@@ -566,6 +569,9 @@ export default function Home() {
         setConvertError(data.error || 'Could not convert this link. Try a converter below.');
         return;
       }
+      // Which source served the file (Innertube, AllDL, cobalt, ...). Shown
+      // on the card; also what makes a fallback smoke test provable.
+      setConvertSource((response.headers.get('x-conversion-note') || '').trim());
       // Do not buffer response.blob(). Cancel this probe fetch and let the
       // browser stream the same URL natively (Range / resume supported).
       await response.body?.cancel().catch(() => undefined);
@@ -1072,6 +1078,12 @@ export default function Home() {
                         Choose audio/video and quality inside the app. NewPipe audio downloads may use M4A or WebM rather than MP3.
                       </p>
                     </div>
+                  )}
+
+                  {convertSource && (
+                    <p role="status" className="text-[11px] text-gray-500 dark:text-gray-400">
+                      Source: {convertSource}
+                    </p>
                   )}
 
                   {convertError && (

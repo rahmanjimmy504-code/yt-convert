@@ -90,6 +90,18 @@ function validatedMediaBody(
   return { body: mediaBranch, valid };
 }
 
+/**
+ * Expose the extraction provenance ("AllDL fallback download", "Cobalt
+ * fallback stream", "9Convert farm fallback", ...) as a response header so
+ * the client can show which source actually served the file. The values are
+ * the extractor's own fixed ASCII notes; the sanitizer is defence in depth
+ * for a header whose full content we do not control.
+ */
+function conversionNoteHeaders(note: string | undefined): Record<string, string> {
+  const value = (note || '').replace(/[^\x20-\x7E]/g, '').trim().slice(0, 200);
+  return value ? { 'X-Conversion-Note': value } : {};
+}
+
 export async function GET(request: Request) {
   const ip = clientIp(request);
   const retryAfter = await rateLimit(`convert:${ip}`, RATE_LIMIT);
@@ -245,6 +257,7 @@ export async function GET(request: Request) {
         'Content-Disposition': `attachment; filename="${filename.replace(/"/g, '')}"; filename*=UTF-8''${encodedName}`,
         'Cache-Control': 'no-store',
         'X-Content-Type-Options': 'nosniff',
+        ...conversionNoteHeaders(extracted.note),
       });
 
       recordEvent({ type: 'lookup', platform, ok: true });
@@ -296,6 +309,7 @@ export async function GET(request: Request) {
         'Content-Disposition': `attachment; filename="${filename.replace(/\"/g, '')}"; filename*=UTF-8''${encodedName}`,
         'Cache-Control': 'no-store',
         'X-Content-Type-Options': 'nosniff',
+        ...conversionNoteHeaders(extracted.note),
       });
 
       recordEvent({ type: 'lookup', platform, ok: true });
@@ -390,6 +404,7 @@ export async function GET(request: Request) {
       'Cache-Control': 'no-store',
       'X-Content-Type-Options': 'nosniff',
       'Accept-Ranges': 'bytes',
+      ...conversionNoteHeaders(extracted.note),
     });
     if (outLength) headers.set('Content-Length', outLength);
     if (outRange) headers.set('Content-Range', outRange);

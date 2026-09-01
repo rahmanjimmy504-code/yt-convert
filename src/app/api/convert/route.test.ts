@@ -133,6 +133,50 @@ describe('/api/convert HTML rejection', () => {
     expect((await res.json()).error).toMatch(/HTML/i);
   });
 
+  it('exposes the extraction provenance as X-Conversion-Note and sanitizes it', async () => {
+    mockExtract.mockResolvedValue({
+      url: 'https://c.ymcdn.org/api/v2/download/x/dQw4w9WgXcQ?_=mac',
+      mimeType: 'video/mp4',
+      extension: 'mp4',
+      note: 'AllDL fallback download',
+    });
+    const mp4 = buildMp4Bytes();
+    mockFetchAllowed.mockResolvedValue(new Response(streamOf([mp4]), {
+      status: 200, headers: { 'Content-Type': 'video/mp4' },
+    }));
+    const res = await handler(makeReq('http://x/api/convert?url=https://www.youtube.com/watch?v=v&format=mp4&quality=best&ticket=t&title=v'));
+    expect(res.status).toBe(200);
+    expect(res.headers.get('x-conversion-note')).toBe('AllDL fallback download');
+    await res.body?.cancel().catch(() => undefined);
+
+    // A note carrying non-ASCII/control characters is stripped to safe ASCII.
+    mockExtract.mockResolvedValue({
+      url: 'https://c.ymcdn.org/api/v2/download/x/dQw4w9WgXcQ?_=mac',
+      mimeType: 'video/mp4',
+      extension: 'mp4',
+      note: ' caf\u00e9 \u0007 note ',
+    });
+    mockFetchAllowed.mockResolvedValue(new Response(streamOf([mp4]), {
+      status: 200, headers: { 'Content-Type': 'video/mp4' },
+    }));
+    const res2 = await handler(makeReq('http://x/api/convert?url=https://www.youtube.com/watch?v=v&format=mp4&quality=best&ticket=t&title=v'));
+    expect(res2.headers.get('x-conversion-note')).toBe('caf  note');
+    await res2.body?.cancel().catch(() => undefined);
+
+    // No note at all: the header is simply absent.
+    mockExtract.mockResolvedValue({
+      url: 'https://c.ymcdn.org/api/v2/download/x/dQw4w9WgXcQ?_=mac',
+      mimeType: 'video/mp4',
+      extension: 'mp4',
+    });
+    mockFetchAllowed.mockResolvedValue(new Response(streamOf([mp4]), {
+      status: 200, headers: { 'Content-Type': 'video/mp4' },
+    }));
+    const res3 = await handler(makeReq('http://x/api/convert?url=https://www.youtube.com/watch?v=v&format=mp4&quality=best&ticket=t&title=v'));
+    expect(res3.headers.get('x-conversion-note')).toBeNull();
+    await res3.body?.cancel().catch(() => undefined);
+  });
+
   it('streams a real MP4 byte-for-byte after tee inspection', async () => {
     mockExtract.mockResolvedValue({
       url: 'https://rr1---sn.example.googlevideo.com/videoplayback',
