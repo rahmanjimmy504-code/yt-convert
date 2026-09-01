@@ -64,7 +64,7 @@ import {
 } from '../src/lib/extract.ts';
 import { pipedFormats } from '../src/lib/piped.ts';
 import { nineConvertFormats } from '../src/lib/nineconvert.ts';
-import { ALLDL_MEDIA_HOSTS, alldlFormats } from '../src/lib/alldl.ts';
+import { ALLDL_API_BASE, ALLDL_MEDIA_HOSTS, alldlFormats } from '../src/lib/alldl.ts';
 import { cobaltFormats, cobaltConfigFromEnv, isCobaltConfigured } from '../src/lib/cobalt.ts';
 import { isPoTokenServerConfigured } from '../src/lib/po-token.ts';
 import { extensionForMime, isUsableFormatUrl, pickYouTubeFormat, planVideoDownload } from '../src/lib/youtube-formats.ts';
@@ -333,6 +333,33 @@ if (!formats.length || process.env.VERIFY_ALLDL === '1' || process.env.GITHUB_AC
   };
   reportAlldl(alldlVideo.length > 0, 'AllDL MP4 live audit', alldlDetail(alldlVideo));
   reportAlldl(alldlAudio.length > 0, 'AllDL MP3 live audit', alldlDetail(alldlAudio));
+
+  // On a total failure, capture WHAT the endpoint actually returned to this
+  // runner (status / content-type / a short body sniff, secrets redacted —
+  // the request carries none). This lands as a warning annotation, which is
+  // the one piece of run output readable later via the API when raw logs
+  // have expired.
+  if (!alldlVideo.length && !alldlAudio.length) {
+    try {
+      const diag = await fetch(`${ALLDL_API_BASE}?url=${encodeURIComponent(`https://www.youtube.com/watch?v=${alldlProbeId}`)}`, {
+        headers: { Accept: 'application/json', 'User-Agent': 'Mozilla/5.0 (compatible; YTConvert-live-check/1.0)' },
+        signal: AbortSignal.timeout(15_000),
+      });
+      const ct = diag.headers.get('content-type') || '(no content-type)';
+      const body = (await diag.text().catch(() => '')).replace(/\s+/g, ' ').slice(0, 160);
+      const detail = `HTTP ${diag.status} ${ct} body="${body}"` +
+        (diag.url !== `${ALLDL_API_BASE}?url=` ? ` final-url-host=${new URL(diag.url).hostname}` : '');
+      console.log(`  AllDL diagnostic: ${detail}`);
+      if (process.env.GITHUB_ACTIONS === 'true') {
+        console.log(`::warning title=AllDL live diagnostic::${detail}`);
+      }
+    } catch (err) {
+      console.log(`  AllDL diagnostic: network error — ${err.message}`);
+      if (process.env.GITHUB_ACTIONS === 'true') {
+        console.log(`::warning title=AllDL live diagnostic::network error ${err.message}`);
+      }
+    }
+  }
 }
 
 /* -- Last resort: cobalt. Public discovery is enabled by default even when
