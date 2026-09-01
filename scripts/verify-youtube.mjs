@@ -350,8 +350,42 @@ if (!formats.length || process.env.VERIFY_ALLDL === '1' || process.env.GITHUB_AC
       const detail = `HTTP ${diag.status} ${ct} body="${body}"` +
         (diag.url !== `${ALLDL_API_BASE}?url=` ? ` final-url-host=${new URL(diag.url).hostname}` : '');
       console.log(`  AllDL diagnostic: ${detail}`);
+      const lines = [detail];
+
+      // Second layer: when the API succeeded, probe the media host itself —
+      // plain vs provider-style headers — so a CDN-side refusal of the
+      // byte-range probe is visible in the annotation too.
+      try {
+        const parsedBody = await (await fetch(`${ALLDL_API_BASE}?url=${encodeURIComponent(`https://www.youtube.com/watch?v=${alldlProbeId}`)}`, {
+          headers: { Accept: 'application/json', 'User-Agent': 'Mozilla/5.0 (compatible; YTConvert-live-check/1.0)' },
+          signal: AbortSignal.timeout(15_000),
+        })).json();
+        const mediaUrl = parsedBody?.mediaInfo?.videoUrl;
+        if (typeof mediaUrl === 'string' && mediaUrl.startsWith('https://')) {
+          for (const variant of ['plain', 'provider']) {
+            const headers = variant === 'provider'
+              ? { Accept: '*/*', Range: 'bytes=0-2047', Referer: 'https://ahm7xmakki.com/', 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36' }
+              : { 'User-Agent': 'Mozilla/5.0 (compatible; YTConvert-live-check/1.0)' };
+            try {
+              const media = await fetch(mediaUrl, { headers, redirect: 'follow', signal: AbortSignal.timeout(15_000) });
+              const reader = media.body?.getReader();
+              const head = reader ? await reader.read() : { value: null };
+              try { await reader?.cancel(); } catch { /* done */ }
+              const hex = [...(head.value || []).subarray(0, 16)].map(b => b.toString(16).padStart(2, '0')).join(' ');
+              lines.push(`media[${variant}] HTTP ${media.status} ${(media.headers.get('content-type') || '?')} bytes16=${hex || '(none)'} final-host=${new URL(media.url).hostname}`);
+            } catch (err) {
+              lines.push(`media[${variant}] network error — ${err.message}`);
+            }
+          }
+        } else {
+          lines.push('media probe skipped: no videoUrl in envelope');
+        }
+      } catch (err) {
+        lines.push(`media probe setup failed — ${err.message}`);
+      }
+
       if (process.env.GITHUB_ACTIONS === 'true') {
-        console.log(`::warning title=AllDL live diagnostic::${detail}`);
+        console.log(`::warning title=AllDL live diagnostic::${lines.join(' | ').slice(0, 900)}`);
       }
     } catch (err) {
       console.log(`  AllDL diagnostic: network error — ${err.message}`);
