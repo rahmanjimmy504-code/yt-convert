@@ -57,7 +57,6 @@ const ALLOWED_EXACT_HOSTS = [
   'invidious.tiekoetter.com',
   'invidious.f5.si',
   'yt.chocolatemoo53.com',
-  'inv.nadeko.net',
   'invidious.nerdvpn.de',
   // AHM7xMakki AllDL fallback (./alldl.ts): the API host and the CDN host its
   // finished files are served from. Exact hosts only — no suffix rule, so no

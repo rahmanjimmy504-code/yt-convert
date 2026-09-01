@@ -54,7 +54,9 @@ describe('isAllowedMediaUrl', () => {
 
   it('allows local Invidious latest_version streams only on configured mirror suffixes', () => {
     expect(isAllowedMediaUrl('https://invidious.tiekoetter.com/latest_version?id=x&itag=18&local=true')).toBe(true);
-    expect(isAllowedMediaUrl('https://inv.nadeko.net/videoplayback?id=x')).toBe(true);
+    // inv.nadeko.net was dropped on 2026-09-01 (API disabled, relay 500s) —
+    // the exact host must no longer be proxiable, subdomain or not.
+    expect(isAllowedMediaUrl('https://inv.nadeko.net/videoplayback?id=x')).toBe(false);
     expect(isAllowedMediaUrl('https://other.nadeko.net/videoplayback?id=x')).toBe(false);
     expect(isAllowedMediaUrl('https://random-invidious.example/latest_version?id=x')).toBe(false);
   });
