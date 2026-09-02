@@ -11,19 +11,15 @@ a file under `.github/workflows/` is rejected outright.
 A GitHub Actions workflow that runs the **live** YouTube extraction check
 (`npm run verify:youtube`) from a GitHub-hosted runner.
 
-> **PENDING CHANGE (2026-09-01, AllDL live audit).** This staged copy now
-> differs from the applied `.github/workflows/verify-youtube.yml` in three
-> ways that a human needs to copy over: (1) the `pull_request.paths` list
-> gains `src/lib/alldl.ts` and `src/lib/cobalt-directory.ts`; (2) the
-> "Verify against live YouTube" step gains
-> `continue-on-error: ${{ github.event_name == 'pull_request' }}` so the
-> live audit can never block a PR (runner IPs get bot-walled by YouTube
-> and the third-party fallback endpoints are flaky from datacenter ranges
-> — verified live 2026-09-01); (3) the same step gains `env:`
-> `ALLDL_STRICT: ${{ github.event_name == 'schedule' && '1' || '' }}` so
-> the weekly scheduled health check stays the hard gate. Copy this whole
-> file over `.github/workflows/verify-youtube.yml` (web UI: edit →
-> replace all → commit) after merging its PR.
+> **Applied (2026-09-02).** This staged copy is in sync with
+> `.github/workflows/verify-youtube.yml`. The three changes it once carried —
+> adding `src/lib/alldl.ts` and `src/lib/cobalt-directory.ts` to
+> `pull_request.paths`, making PR runs informational with
+> `continue-on-error: ${{ github.event_name == 'pull_request' }}`, and gating
+> the hard-fail AllDL audit to the weekly schedule via
+> `ALLDL_STRICT: ${{ github.event_name == 'schedule' && '1' || '' }}` — have
+> all been copied into the applied workflow. It is kept here as the
+> reviewable source of truth alongside the notes below.
 
 ### Why it lives here instead of `.github/workflows/`
 

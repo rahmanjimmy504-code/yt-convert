@@ -161,264 +161,304 @@ export async function GET(request: Request) {
   const rawCookies = request.headers.get('x-youtube-cookies') || '';
   const youTubeCookies = sanitizeYouTubeCookies(rawCookies) ?? undefined;
 
+  // Bounded auto-retry: the whole conversion runs at most twice. The ONLY
+  // thing that consumes attempt 2 is a wrong-container sniff verdict (the
+  // upstream handed back real media bytes, but of the other container — e.g.
+  // the AllDL CDN transiently serving its MP3 rendition on the video link,
+  // verified live 2026-09-01). A fresh extraction mints fresh AllDL MACs and
+  // lands on a fresh rotating dlNN.ymcdn.org node, so that transient rendition
+  // flip self-heals. Everything else — an HTML/CAPTCHA verdict, an extraction
+  // failure, a refused/non-2xx upstream, an ffmpeg failure — returns on the
+  // first attempt: those verdicts do not change on replay and retrying them
+  // would only double the work of a bot-walled or dead upstream.
+  const MAX_CONVERT_ATTEMPTS = 2;
+
   try {
-    const extracted = await extractMedia(platform, rawUrl, format, quality, { youTubeCookies });
-    if (isExtractError(extracted)) {
-      recordEvent({ type: 'lookup', platform, ok: false, error: 'convert failed' });
-      return json(extracted.error, 502);
-    }
-
-    // Enforce an honest container: do not stream a picked M4A/WebM/MP4 when
-    // the user asked for MP3, or WebM/HTML when they asked for MP4. The
-    // extension/mime from the extractor already reflects the real container
-    // (see extensionForMime), so a mismatch here means no true MP3/MP4
-    // source was available and we should not hand the user a renamed file.
-    // The one exception: an extractor-marked transcodeToMp3 result is a real
-    // audio source that this server will re-encode to MP3 (ffmpeg libmp3lame).
-    const requestedExt = format === 'mp3' ? 'mp3' : 'mp4';
-    const transcodeAvailable =
-      format === 'mp3' && extracted.transcodeToMp3 === true && isTranscodeEnabled();
-    if (extracted.extension !== requestedExt && !transcodeAvailable) {
-      recordEvent({ type: 'lookup', platform, ok: false, error: `no ${requestedExt} source` });
-      return json(
-        `No real ${requestedExt.toUpperCase()} source was available for this video. The available stream is ${extracted.extension.toUpperCase()} — try a converter below.`,
-        502,
-      );
-    }
-
-    const filename = sanitizeDownloadFilename(
-      title || 'download',
-      transcodeAvailable ? 'mp3' : extracted.extension,
-    );
-
-    // Decide the streaming source: a single upstream URL, or an ffmpeg
-    // stream-copy remux of two adaptive tracks (YouTube >360p).
-    let muxStream: ReturnType<typeof muxMediaToStream> = null;
-    let streamUrl = extracted.url;
-
-    if (extracted.mux) {
-      if (isMuxingEnabled()) {
-        const { videoUrl, audioUrl } = extracted.mux;
-        // Re-validate both URLs immediately before spawning ffmpeg; never
-        // trust the formats cached/returned at extraction time.
-        if (!isAllowedMediaUrl(videoUrl) || !isAllowedMediaUrl(audioUrl)) {
-          recordEvent({ type: 'lookup', platform, ok: false, error: 'mux ssrf' });
-          return json('Refusing to fetch a non-allowlisted media host.', 502);
-        }
-        const muxRetryAfter = await rateLimit(`mux:${ip}`, MUX_RATE_LIMIT);
-        if (muxRetryAfter > 0) {
-          return NextResponse.json(
-            { error: 'Too many HD downloads. Please wait a moment and try again.' },
-            { status: 429, headers: { 'Retry-After': String(muxRetryAfter), 'Cache-Control': 'no-store' } },
-          );
-        }
-        muxStream = muxMediaToStream(videoUrl, audioUrl);
+    for (let attempt = 1; attempt <= MAX_CONVERT_ATTEMPTS; attempt += 1) {
+      const extracted = await extractMedia(platform, rawUrl, format, quality, { youTubeCookies });
+      if (isExtractError(extracted)) {
+        recordEvent({ type: 'lookup', platform, ok: false, error: 'convert failed' });
+        return json(extracted.error, 502);
       }
-      if (!muxStream) {
-        // No ffmpeg on this process: serve the honest progressive fallback, or
-        // fail rather than stream a video-only track without audio.
-        if (extracted.mux.progressiveUrl) {
-          streamUrl = extracted.mux.progressiveUrl;
-        } else {
-          recordEvent({ type: 'lookup', platform, ok: false, error: 'mux unavailable' });
+
+      // Enforce an honest container: do not stream a picked M4A/WebM/MP4 when
+      // the user asked for MP3, or WebM/HTML when they asked for MP4. The
+      // extension/mime from the extractor already reflects the real container
+      // (see extensionForMime), so a mismatch here means no true MP3/MP4
+      // source was available and we should not hand the user a renamed file.
+      // The one exception: an extractor-marked transcodeToMp3 result is a real
+      // audio source that this server will re-encode to MP3 (ffmpeg libmp3lame).
+      const requestedExt = format === 'mp3' ? 'mp3' : 'mp4';
+      const transcodeAvailable =
+        format === 'mp3' && extracted.transcodeToMp3 === true && isTranscodeEnabled();
+      if (extracted.extension !== requestedExt && !transcodeAvailable) {
+        recordEvent({ type: 'lookup', platform, ok: false, error: `no ${requestedExt} source` });
+        return json(
+          `No real ${requestedExt.toUpperCase()} source was available for this video. The available stream is ${extracted.extension.toUpperCase()} — try a converter below.`,
+          502,
+        );
+      }
+
+      const filename = sanitizeDownloadFilename(
+        title || 'download',
+        transcodeAvailable ? 'mp3' : extracted.extension,
+      );
+
+      // Decide the streaming source: a single upstream URL, or an ffmpeg
+      // stream-copy remux of two adaptive tracks (YouTube >360p).
+      let muxStream: ReturnType<typeof muxMediaToStream> = null;
+      let streamUrl = extracted.url;
+
+      if (extracted.mux) {
+        if (isMuxingEnabled()) {
+          const { videoUrl, audioUrl } = extracted.mux;
+          // Re-validate both URLs immediately before spawning ffmpeg; never
+          // trust the formats cached/returned at extraction time.
+          if (!isAllowedMediaUrl(videoUrl) || !isAllowedMediaUrl(audioUrl)) {
+            recordEvent({ type: 'lookup', platform, ok: false, error: 'mux ssrf' });
+            return json('Refusing to fetch a non-allowlisted media host.', 502);
+          }
+          const muxRetryAfter = await rateLimit(`mux:${ip}`, MUX_RATE_LIMIT);
+          if (muxRetryAfter > 0) {
+            return NextResponse.json(
+              { error: 'Too many HD downloads. Please wait a moment and try again.' },
+              { status: 429, headers: { 'Retry-After': String(muxRetryAfter), 'Cache-Control': 'no-store' } },
+            );
+          }
+          muxStream = muxMediaToStream(videoUrl, audioUrl);
+        }
+        if (!muxStream) {
+          // No ffmpeg on this process: serve the honest progressive fallback, or
+          // fail rather than stream a video-only track without audio.
+          if (extracted.mux.progressiveUrl) {
+            streamUrl = extracted.mux.progressiveUrl;
+          } else {
+            recordEvent({ type: 'lookup', platform, ok: false, error: 'mux unavailable' });
+            return json(
+              'This resolution needs combining separate video and audio tracks, which is unavailable on this server. Choose a lower quality or a converter below.',
+              502,
+            );
+          }
+        }
+      }
+
+      if (muxStream) {
+        // Wait a bounded time for ffmpeg to produce its first MP4 bytes or fail,
+        // mirroring the single-stream HTML-sniff tradeoff. A null result means
+        // "still connecting" — stream optimistically; a false result means
+        // ffmpeg errored before emitting anything.
+        const started = await Promise.race([
+          muxStream.started,
+          new Promise<boolean | null>(resolve => setTimeout(() => resolve(null), 3000)),
+        ]);
+        if (started === false) {
+          muxStream.kill();
+          const tail = muxStream.stderrTail().trim();
+          console.warn('[convert] mux failed:', tail || '(no stderr)');
+          recordEvent({ type: 'lookup', platform, ok: false, error: 'mux failed' });
           return json(
-            'This resolution needs combining separate video and audio tracks, which is unavailable on this server. Choose a lower quality or a converter below.',
+            'Could not combine the video and audio tracks. Try a lower quality or a converter below.',
             502,
           );
         }
-      }
-    }
 
-    if (muxStream) {
-      // Wait a bounded time for ffmpeg to produce its first MP4 bytes or fail,
-      // mirroring the single-stream HTML-sniff tradeoff. A null result means
-      // "still connecting" — stream optimistically; a false result means
-      // ffmpeg errored before emitting anything.
-      const started = await Promise.race([
-        muxStream.started,
-        new Promise<boolean | null>(resolve => setTimeout(() => resolve(null), 3000)),
-      ]);
-      if (started === false) {
-        muxStream.kill();
-        const tail = muxStream.stderrTail().trim();
-        console.warn('[convert] mux failed:', tail || '(no stderr)');
-        recordEvent({ type: 'lookup', platform, ok: false, error: 'mux failed' });
-        return json(
-          'Could not combine the video and audio tracks. Try a lower quality or a converter below.',
-          502,
-        );
+        request.signal.addEventListener('abort', () => muxStream.kill(), { once: true });
+
+        const encodedName = encodeURIComponent(filename).replace(/['()]/g, '');
+        const headers = new Headers({
+          'Content-Type': 'video/mp4',
+          'Content-Disposition': `attachment; filename="${filename.replace(/"/g, '')}"; filename*=UTF-8''${encodedName}`,
+          'Cache-Control': 'no-store',
+          'X-Content-Type-Options': 'nosniff',
+          ...conversionNoteHeaders(extracted.note),
+        });
+
+        recordEvent({ type: 'lookup', platform, ok: true });
+        return new Response(muxStream.body, { status: 200, headers });
       }
 
-      request.signal.addEventListener('abort', () => muxStream.kill(), { once: true });
+      if (transcodeAvailable) {
+        // Re-validate the source URL immediately before spawning ffmpeg; never
+        // trust the URL cached/returned at extraction time.
+        if (!isAllowedMediaUrl(extracted.url)) {
+          recordEvent({ type: 'lookup', platform, ok: false, error: 'transcode ssrf' });
+          return json('Refusing to fetch a non-allowlisted media host.', 502);
+        }
+        const transcodeRetryAfter = await rateLimit(`transcode:${ip}`, TRANSCODE_RATE_LIMIT);
+        if (transcodeRetryAfter > 0) {
+          return NextResponse.json(
+            { error: 'Too many MP3 conversions. Please wait a moment and try again.' },
+            { status: 429, headers: { 'Retry-After': String(transcodeRetryAfter), 'Cache-Control': 'no-store' } },
+          );
+        }
+        const transcodeStream = transcodeAudioToStream(extracted.url, mp3BitrateKbps(quality));
+        if (!transcodeStream) {
+          recordEvent({ type: 'lookup', platform, ok: false, error: 'transcode unavailable' });
+          return json('MP3 conversion is unavailable on this server.', 502);
+        }
+
+        // Wait a bounded time for ffmpeg to produce its first MP3 bytes or
+        // fail, mirroring the mux path.
+        const started = await Promise.race([
+          transcodeStream.started,
+          new Promise<boolean | null>(resolve => setTimeout(() => resolve(null), 3000)),
+        ]);
+        if (started === false) {
+          transcodeStream.kill();
+          const tail = transcodeStream.stderrTail().trim();
+          console.warn('[convert] mp3 transcode failed:', tail || '(no stderr)');
+          recordEvent({ type: 'lookup', platform, ok: false, error: 'transcode failed' });
+          return json(
+            'Could not convert the audio to MP3 on this server. Try again, or use a converter below.',
+            502,
+          );
+        }
+
+        request.signal.addEventListener('abort', () => transcodeStream.kill(), { once: true });
+
+        const encodedName = encodeURIComponent(filename).replace(/['()]/g, '');
+        const headers = new Headers({
+          'Content-Type': 'audio/mpeg',
+          'Content-Disposition': `attachment; filename="${filename.replace(/\"/g, '')}"; filename*=UTF-8''${encodedName}`,
+          'Cache-Control': 'no-store',
+          'X-Content-Type-Options': 'nosniff',
+          ...conversionNoteHeaders(extracted.note),
+        });
+
+        recordEvent({ type: 'lookup', platform, ok: true });
+        return new Response(transcodeStream.body, { status: 200, headers });
+      }
+
+      const range = request.headers.get('range');
+      const upstreamHeaders: Record<string, string> = {
+        Accept: '*/*',
+        // This Referer identifies the ORIGINAL page the user was on. For
+        // dlsrv/9Convert farm dlinks, fetchAllowedMedia will OVERRIDE it with
+        // the correct same-site Referer before sending — sending the original
+        // youtube.com Referer to a farm endpoint caused it to serve HTML.
+        Referer: parsed.origin + '/',
+        'User-Agent': 'Mozilla/5.0 (compatible; YTConvert/1.0)',
+      };
+      if (range && /^bytes=/i.test(range) && range.length < 128) {
+        upstreamHeaders.Range = range;
+      }
+
+      const upstream = await fetchAllowedMedia(streamUrl, {
+        headers: upstreamHeaders,
+      });
+
+      if ((!upstream.ok && upstream.status !== 206) || !upstream.body) {
+        recordEvent({ type: 'lookup', platform, ok: false, error: 'convert upstream' });
+        return json('The media host refused the stream. Try a converter below.', 502);
+      }
+
+      const upstreamCT = upstream.headers.get('content-type') || extracted.mimeType || 'application/octet-stream';
+
+      // If the caller sent Range and the upstream answered 206 with a
+      // non-zero start, we can't safely sniff the beginning of the fragment
+      // for container magic — just stream it. Modern browsers don't send
+      // Range on the initial attachment download; resumable downloads will
+      // fall back to a full get if the first chunk looks wrong.
+      const isRange = upstream.status === 206;
+      const contentRange = upstream.headers.get('content-range');
+      const rangeIsFromZero = !contentRange || /^bytes\s+0-/.test(contentRange);
+
+      let outBody: BodyInit;
+      let outMime: string;
+      let outLength: string | null = null;
+      let outRange: string | null = null;
+
+      const wantedMime = format === 'mp3' ? 'audio/mpeg' : 'video/mp4';
+
+      if (isRange && !rangeIsFromZero) {
+        // Trust the upstream for mid-file ranges.
+        outBody = upstream.body;
+        outMime = wantedMime;
+        outLength = upstream.headers.get('content-length');
+        outRange = contentRange;
+      } else {
+        const { body, valid } = validatedMediaBody(upstream, format, upstreamCT);
+        // Wait for up to ~250ms or until the sniffer has enough bytes to
+        // render a verdict. If the verdict is negative we return JSON; if the
+        // sniffer hasn't decided quickly enough, we still return the body —
+        // but the valid promise will keep watching and cancel the stream if
+        // it later turns out to be HTML. That tradeoff avoids TTFB stalls.
+        const waitForSniff = await Promise.race([
+          valid,
+          new Promise<null>(resolve => setTimeout(() => resolve(null), 250)),
+        ]);
+        if (waitForSniff && !waitForSniff.ok) {
+          // Two distinct failure classes need distinct wording: an actual
+          // HTML/CAPTCHA page, and a WRONG-CONTAINER body (e.g. the AllDL CDN
+          // serving its MP3 rendition on the video link — verified live
+          // 2026-09-01). Calling the second one a "CAPTCHA page" misleads the
+          // visitor; a plain retry usually fixes it, so say that.
+          const wrongType = /upstream returned (mp3|m4a|aac|ogg|webm)|magic bytes/i.test(waitForSniff.reason);
+          // A wrong-container verdict is the ONLY thing worth the bounded
+          // second attempt: the upstream DID return real media bytes, just of
+          // the other container, which for AllDL means a rotating dlNN node
+          // served the wrong rendition. Re-running the conversion re-extracts
+          // (fresh AllDL MACs, fresh dlNN node) and re-fetches, so the
+          // transient flip self-heals. validatedMediaBody already cancels both
+          // tee branches on this negative verdict; make sure that teardown has
+          // landed so the upstream connection is free before we loop. An
+          // HTML/CAPTCHA verdict never reaches here — those do not change on
+          // replay, so they fall through to the honest error below.
+          if (wrongType && attempt < MAX_CONVERT_ATTEMPTS) {
+            console.warn(
+              `[convert] wrong container on attempt ${attempt}/${MAX_CONVERT_ATTEMPTS} (${waitForSniff.reason}); re-extracting and retrying`,
+            );
+            try {
+              await body.cancel('wrong container; retrying with a fresh extraction').catch(() => {});
+            } catch {
+              /* tee branch already torn down by the verdict */
+            }
+            continue;
+          }
+          recordEvent({ type: 'lookup', platform, ok: false, error: wrongType ? 'wrong container' : 'html challenge' });
+          return json(
+            wrongType
+              ? `The media host served the wrong file type for this download (${waitForSniff.reason}). Trying again usually gets the right file — or use a converter below.`
+              : `The media host returned an HTML/CAPTCHA page instead of ${requestedExt.toUpperCase()} bytes. Try a converter below. (${waitForSniff.reason})`,
+            502,
+          );
+        }
+        outBody = body;
+        outMime = wantedMime;
+        outLength = upstream.headers.get('content-length');
+        outRange = contentRange;
+
+        // If the verdict still resolves to failure while streaming, the
+        // cancel() in valid.then will tear down the media branch; there's no
+        // way to "take back" the 200 response at that point, but the browser
+        // will see a truncated response and the saved file will be incomplete
+        // rather than a full HTML page. That's strictly better than silently
+        // saving a CAPTCHA page as .mp3.
+      }
 
       const encodedName = encodeURIComponent(filename).replace(/['()]/g, '');
       const headers = new Headers({
-        'Content-Type': 'video/mp4',
+        'Content-Type': outMime,
+        // Never attach Content-Disposition until we've confirmed the response
+        // is genuine media. (Range-fragment responses already imply an earlier
+        // valid first chunk.)
         'Content-Disposition': `attachment; filename="${filename.replace(/"/g, '')}"; filename*=UTF-8''${encodedName}`,
         'Cache-Control': 'no-store',
         'X-Content-Type-Options': 'nosniff',
+        'Accept-Ranges': 'bytes',
         ...conversionNoteHeaders(extracted.note),
       });
+      if (outLength) headers.set('Content-Length', outLength);
+      if (outRange) headers.set('Content-Range', outRange);
 
       recordEvent({ type: 'lookup', platform, ok: true });
-      return new Response(muxStream.body, { status: 200, headers });
+      return new Response(outBody, { status: upstream.status === 206 ? 206 : 200, headers });
     }
-
-    if (transcodeAvailable) {
-      // Re-validate the source URL immediately before spawning ffmpeg; never
-      // trust the URL cached/returned at extraction time.
-      if (!isAllowedMediaUrl(extracted.url)) {
-        recordEvent({ type: 'lookup', platform, ok: false, error: 'transcode ssrf' });
-        return json('Refusing to fetch a non-allowlisted media host.', 502);
-      }
-      const transcodeRetryAfter = await rateLimit(`transcode:${ip}`, TRANSCODE_RATE_LIMIT);
-      if (transcodeRetryAfter > 0) {
-        return NextResponse.json(
-          { error: 'Too many MP3 conversions. Please wait a moment and try again.' },
-          { status: 429, headers: { 'Retry-After': String(transcodeRetryAfter), 'Cache-Control': 'no-store' } },
-        );
-      }
-      const transcodeStream = transcodeAudioToStream(extracted.url, mp3BitrateKbps(quality));
-      if (!transcodeStream) {
-        recordEvent({ type: 'lookup', platform, ok: false, error: 'transcode unavailable' });
-        return json('MP3 conversion is unavailable on this server.', 502);
-      }
-
-      // Wait a bounded time for ffmpeg to produce its first MP3 bytes or
-      // fail, mirroring the mux path.
-      const started = await Promise.race([
-        transcodeStream.started,
-        new Promise<boolean | null>(resolve => setTimeout(() => resolve(null), 3000)),
-      ]);
-      if (started === false) {
-        transcodeStream.kill();
-        const tail = transcodeStream.stderrTail().trim();
-        console.warn('[convert] mp3 transcode failed:', tail || '(no stderr)');
-        recordEvent({ type: 'lookup', platform, ok: false, error: 'transcode failed' });
-        return json(
-          'Could not convert the audio to MP3 on this server. Try again, or use a converter below.',
-          502,
-        );
-      }
-
-      request.signal.addEventListener('abort', () => transcodeStream.kill(), { once: true });
-
-      const encodedName = encodeURIComponent(filename).replace(/['()]/g, '');
-      const headers = new Headers({
-        'Content-Type': 'audio/mpeg',
-        'Content-Disposition': `attachment; filename="${filename.replace(/\"/g, '')}"; filename*=UTF-8''${encodedName}`,
-        'Cache-Control': 'no-store',
-        'X-Content-Type-Options': 'nosniff',
-        ...conversionNoteHeaders(extracted.note),
-      });
-
-      recordEvent({ type: 'lookup', platform, ok: true });
-      return new Response(transcodeStream.body, { status: 200, headers });
-    }
-
-    const range = request.headers.get('range');
-    const upstreamHeaders: Record<string, string> = {
-      Accept: '*/*',
-      // This Referer identifies the ORIGINAL page the user was on. For
-      // dlsrv/9Convert farm dlinks, fetchAllowedMedia will OVERRIDE it with
-      // the correct same-site Referer before sending — sending the original
-      // youtube.com Referer to a farm endpoint caused it to serve HTML.
-      Referer: parsed.origin + '/',
-      'User-Agent': 'Mozilla/5.0 (compatible; YTConvert/1.0)',
-    };
-    if (range && /^bytes=/i.test(range) && range.length < 128) {
-      upstreamHeaders.Range = range;
-    }
-
-    const upstream = await fetchAllowedMedia(streamUrl, {
-      headers: upstreamHeaders,
-    });
-
-    if ((!upstream.ok && upstream.status !== 206) || !upstream.body) {
-      recordEvent({ type: 'lookup', platform, ok: false, error: 'convert upstream' });
-      return json('The media host refused the stream. Try a converter below.', 502);
-    }
-
-    const upstreamCT = upstream.headers.get('content-type') || extracted.mimeType || 'application/octet-stream';
-
-    // If the caller sent Range and the upstream answered 206 with a
-    // non-zero start, we can't safely sniff the beginning of the fragment
-    // for container magic — just stream it. Modern browsers don't send
-    // Range on the initial attachment download; resumable downloads will
-    // fall back to a full get if the first chunk looks wrong.
-    const isRange = upstream.status === 206;
-    const contentRange = upstream.headers.get('content-range');
-    const rangeIsFromZero = !contentRange || /^bytes\s+0-/.test(contentRange);
-
-    let outBody: BodyInit;
-    let outMime: string;
-    let outLength: string | null = null;
-    let outRange: string | null = null;
-
-    const wantedMime = format === 'mp3' ? 'audio/mpeg' : 'video/mp4';
-
-    if (isRange && !rangeIsFromZero) {
-      // Trust the upstream for mid-file ranges.
-      outBody = upstream.body;
-      outMime = wantedMime;
-      outLength = upstream.headers.get('content-length');
-      outRange = contentRange;
-    } else {
-      const { body, valid } = validatedMediaBody(upstream, format, upstreamCT);
-      // Wait for up to ~250ms or until the sniffer has enough bytes to
-      // render a verdict. If the verdict is negative we return JSON; if the
-      // sniffer hasn't decided quickly enough, we still return the body —
-      // but the valid promise will keep watching and cancel the stream if
-      // it later turns out to be HTML. That tradeoff avoids TTFB stalls.
-      const waitForSniff = await Promise.race([
-        valid,
-        new Promise<null>(resolve => setTimeout(() => resolve(null), 250)),
-      ]);
-      if (waitForSniff && !waitForSniff.ok) {
-        // Two distinct failure classes need distinct wording: an actual
-        // HTML/CAPTCHA page, and a WRONG-CONTAINER body (e.g. the AllDL CDN
-        // serving its MP3 rendition on the video link — verified live
-        // 2026-09-01). Calling the second one a "CAPTCHA page" misleads the
-        // visitor; a plain retry usually fixes it, so say that.
-        const wrongType = /upstream returned (mp3|m4a|aac|ogg|webm)|magic bytes/i.test(waitForSniff.reason);
-        recordEvent({ type: 'lookup', platform, ok: false, error: wrongType ? 'wrong container' : 'html challenge' });
-        return json(
-          wrongType
-            ? `The media host served the wrong file type for this download (${waitForSniff.reason}). Trying again usually gets the right file — or use a converter below.`
-            : `The media host returned an HTML/CAPTCHA page instead of ${requestedExt.toUpperCase()} bytes. Try a converter below. (${waitForSniff.reason})`,
-          502,
-        );
-      }
-      outBody = body;
-      outMime = wantedMime;
-      outLength = upstream.headers.get('content-length');
-      outRange = contentRange;
-
-      // If the verdict still resolves to failure while streaming, the
-      // cancel() in valid.then will tear down the media branch; there's no
-      // way to "take back" the 200 response at that point, but the browser
-      // will see a truncated response and the saved file will be incomplete
-      // rather than a full HTML page. That's strictly better than silently
-      // saving a CAPTCHA page as .mp3.
-    }
-
-    const encodedName = encodeURIComponent(filename).replace(/['()]/g, '');
-    const headers = new Headers({
-      'Content-Type': outMime,
-      // Never attach Content-Disposition until we've confirmed the response
-      // is genuine media. (Range-fragment responses already imply an earlier
-      // valid first chunk.)
-      'Content-Disposition': `attachment; filename="${filename.replace(/"/g, '')}"; filename*=UTF-8''${encodedName}`,
-      'Cache-Control': 'no-store',
-      'X-Content-Type-Options': 'nosniff',
-      'Accept-Ranges': 'bytes',
-      ...conversionNoteHeaders(extracted.note),
-    });
-    if (outLength) headers.set('Content-Length', outLength);
-    if (outRange) headers.set('Content-Range', outRange);
-
-    recordEvent({ type: 'lookup', platform, ok: true });
-    return new Response(outBody, { status: upstream.status === 206 ? 206 : 200, headers });
+    // Unreachable: every loop iteration either returns a Response (success or
+    // an honest error) or `continue`s, and the loop is bounded. Kept so the
+    // function's return type is total even if a future edit adds a fall path.
+    recordEvent({ type: 'lookup', platform, ok: false, error: 'convert failed' });
+    return json('Could not convert this link. Try a converter below.', 502);
   } catch (err) {
     if (err instanceof MediaHostError) {
       recordEvent({ type: 'lookup', platform, ok: false, error: 'convert ssrf' });
