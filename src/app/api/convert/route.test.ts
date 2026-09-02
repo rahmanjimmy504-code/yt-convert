@@ -133,6 +133,26 @@ describe('/api/convert HTML rejection', () => {
     expect((await res.json()).error).toMatch(/HTML/i);
   });
 
+  it('words a wrong-container sniff failure honestly (not as a CAPTCHA page)', async () => {
+    // The AllDL CDN has been observed serving its MP3 rendition on the video
+    // link (2026-09-01); the visitor must hear "wrong file type, retry", not
+    // "HTML/CAPTCHA page".
+    mockExtract.mockResolvedValue({
+      url: 'https://c.ymcdn.org/api/v2/download/x/dQw4w9WgXcQ?_=mac',
+      mimeType: 'video/mp4',
+      extension: 'mp4',
+    });
+    mockFetchAllowed.mockResolvedValue(new Response(streamOf([buildMp3Bytes()]), {
+      status: 200, headers: { 'Content-Type': 'audio/mpeg' },
+    }));
+    const res = await handler(makeReq('http://x/api/convert?url=https://www.youtube.com/watch?v=v&format=mp4&quality=best&ticket=t&title=v'));
+    expect(res.status).toBe(502);
+    const json = await res.json();
+    expect(json.error).toMatch(/wrong file type/i);
+    expect(json.error).toMatch(/upstream returned mp3, not MP4 video/);
+    expect(json.error).not.toMatch(/HTML\/CAPTCHA/i);
+  });
+
   it('exposes the extraction provenance as X-Conversion-Note and sanitizes it', async () => {
     mockExtract.mockResolvedValue({
       url: 'https://c.ymcdn.org/api/v2/download/x/dQw4w9WgXcQ?_=mac',

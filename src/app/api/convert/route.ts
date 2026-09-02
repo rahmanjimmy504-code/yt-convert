@@ -375,9 +375,17 @@ export async function GET(request: Request) {
         new Promise<null>(resolve => setTimeout(() => resolve(null), 250)),
       ]);
       if (waitForSniff && !waitForSniff.ok) {
-        recordEvent({ type: 'lookup', platform, ok: false, error: 'html challenge' });
+        // Two distinct failure classes need distinct wording: an actual
+        // HTML/CAPTCHA page, and a WRONG-CONTAINER body (e.g. the AllDL CDN
+        // serving its MP3 rendition on the video link — verified live
+        // 2026-09-01). Calling the second one a "CAPTCHA page" misleads the
+        // visitor; a plain retry usually fixes it, so say that.
+        const wrongType = /upstream returned (mp3|m4a|aac|ogg|webm)|magic bytes/i.test(waitForSniff.reason);
+        recordEvent({ type: 'lookup', platform, ok: false, error: wrongType ? 'wrong container' : 'html challenge' });
         return json(
-          `The media host returned an HTML/CAPTCHA page instead of ${requestedExt.toUpperCase()} bytes. Try a converter below. (${waitForSniff.reason})`,
+          wrongType
+            ? `The media host served the wrong file type for this download (${waitForSniff.reason}). Trying again usually gets the right file — or use a converter below.`
+            : `The media host returned an HTML/CAPTCHA page instead of ${requestedExt.toUpperCase()} bytes. Try a converter below. (${waitForSniff.reason})`,
           502,
         );
       }

@@ -193,11 +193,11 @@ async function readProbePrefix(response: Response, max = PROBE_BYTES): Promise<U
 }
 
 /**
- * Bounded byte-range probe of a candidate download URL: accept only when the
- * bytes match the requested container (or the container is genuinely
- * ambiguous, which the downstream /api/convert sniffer resolves anyway).
+ * Bounded byte-range probe that reports what container the candidate URL
+ * actually serves ('other' on any failure). Network errors, HTTP errors and
+ * HTML all collapse to 'other'.
  */
-async function probeMatchesKind(url: string, kind: AlldlKind): Promise<boolean> {
+async function probeContainer(url: string): Promise<'mp3' | 'mp4' | 'other'> {
   try {
     const response = await fetch(url, {
       headers: {
@@ -211,13 +211,17 @@ async function probeMatchesKind(url: string, kind: AlldlKind): Promise<boolean> 
     });
     if (!response.ok && response.status !== 206) {
       try { await response.body?.cancel(); } catch { /* drain */ }
-      return false;
+      return 'other';
     }
-    const container = sniffAlldlContainer(await readProbePrefix(response));
-    return container === kind;
+    return sniffAlldlContainer(await readProbePrefix(response));
   } catch {
-    return false;
+    return 'other';
   }
+}
+
+/** Accept a candidate only when its bytes match the requested container. */
+function probeMatchesKind(container: 'mp3' | 'mp4' | 'other', kind: AlldlKind): boolean {
+  return container === kind;
 }
 
 /** Wrap the finished file in one PlayerFormat (same convention as apify.ts). */
@@ -283,6 +287,20 @@ export async function alldlFormats(videoId: string, kind: AlldlKind): Promise<Pl
 
   // Container honesty: accept the link only when its bytes say what the
   // request needs, so /api/convert never has to reject a mislabelled file.
-  const ok = await probeMatchesKind(candidate, kind);
-  return ok ? [toFormat(candidate, kind)] : [];
+  const container = await probeContainer(candidate);
+  if (!probeMatchesKind(container, kind)) return [];
+
+  // Rendition-distinctness check (video only): the endpoint's video and audio
+  // links share one token path and differ only in a MAC query parameter, and
+  // its rotating dlNN. CDN nodes have been observed serving the SAME bytes on
+  // both. When audioUrl also sniffs as MP4 the routing is broken right now —
+  // refusing here hands the request to cobalt instead of letting /api/convert
+  // discover a wrong-container body seconds later. (Verified live 2026-09-01:
+  // a healthy answer is videoUrl=ftyp MP4 + audioUrl=ID3/MPEG MP3.)
+  if (kind === 'mp4' && downloads.audioUrl) {
+    const audioSniff = await probeContainer(downloads.audioUrl);
+    if (audioSniff === 'mp4') return [];
+  }
+
+  return [toFormat(candidate, kind)];
 }

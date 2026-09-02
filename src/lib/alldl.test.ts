@@ -200,6 +200,49 @@ describe('alldlFormats', () => {
     expect(formats[0]).toMatchObject({ url: videoUrl, mimeType: 'video/mp4' });
   });
 
+  it('refuses the video link when audio serves the same MP4 bytes (broken rendition routing)', async () => {
+    // Verified live 2026-09-01: the two links share one token path and the
+    // rotating CDN nodes sometimes serve the same file on both. A healthy
+    // answer is videoUrl=MP4 + audioUrl=MP3.
+    const videoUrl =
+      'https://c.ymcdn.org/api/v2/download/eef9ff80791e5318dcbf27358fc5f02c/Y1Z3Q3O7IRE?_=i1-q9VlbxFziOG8';
+    const audioUrl =
+      'https://c.ymcdn.org/api/v2/download/eef9ff80791e5318dcbf27358fc5f02c/Y1Z3Q3O7IRE?_=GXvuAnvhcXBbnBii';
+    stubFetch(url => {
+      if (url.startsWith(ALLDL_API_BASE)) return json(liveEnvelope());
+      if (url === videoUrl || url === audioUrl) {
+        return new Response(mp4Bytes() as BodyInit, { status: 200, headers: { 'Content-Type': 'video/mp4' } });
+      }
+      return new Response('{}', { status: 404 });
+    });
+
+    const formats = await alldlFormats('Y1Z3Q3O7IRE', 'mp4');
+    expect(formats).toEqual([]);
+  });
+
+  it('accepts distinct renditions (videoUrl MP4 + audioUrl MP3) for video requests', async () => {
+    const videoUrl =
+      'https://c.ymcdn.org/api/v2/download/eef9ff80791e5318dcbf27358fc5f02c/Y1Z3Q3O7IRE?_=i1-q9VlbxFziOG8';
+    const audioUrl =
+      'https://c.ymcdn.org/api/v2/download/eef9ff80791e5318dcbf27358fc5f02c/Y1Z3Q3O7IRE?_=GXvuAnvhcXBbnBii';
+    const calls = stubFetch(url => {
+      if (url.startsWith(ALLDL_API_BASE)) return json(liveEnvelope());
+      if (url === videoUrl) {
+        return new Response(mp4Bytes() as BodyInit, { status: 200, headers: { 'Content-Type': 'video/mp4' } });
+      }
+      if (url === audioUrl) {
+        return new Response(mp3Bytes() as BodyInit, { status: 200, headers: { 'Content-Type': 'audio/mpeg' } });
+      }
+      return new Response('{}', { status: 404 });
+    });
+
+    const formats = await alldlFormats('Y1Z3Q3O7IRE', 'mp4');
+    expect(formats).toHaveLength(1);
+    expect(formats[0].url).toBe(videoUrl);
+    // Both renditions were probed before accepting.
+    expect(calls.filter(c => c.url === videoUrl || c.url === audioUrl)).toHaveLength(2);
+  });
+
   it('returns nothing (no probe) when the requested kind has no URL', async () => {
     const envelope = liveEnvelope();
     (envelope as Record<string, unknown>).mediaInfo = {
