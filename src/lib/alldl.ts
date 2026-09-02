@@ -40,6 +40,20 @@
  * more than its own timeout to a conversion that has already walked four
  * free sources.
  *
+ * ── Negative health cache ─────────────────────────────────────────────────
+ * That one API call still costs up to ALLDL_TIMEOUT_MS (12 s) when the host
+ * is down, and it would re-pay that on EVERY download before cobalt could
+ * run. After an endpoint-level failure (network error/timeout, non-2xx, or
+ * an HTML wall from ahm7xmakki.com itself) the provider remembers the host
+ * as down for ALLDL_NEGATIVE_TTL_MS (~5 min, in-process, same pattern as the
+ * cobalt directory cache) and the whole AllDL hop is skipped until the
+ * cooldown elapses. This is extraction-time-only and never touches
+ * authorization: the media-host allowlist is unchanged and cobalt/Apify
+ * behave exactly as before. A healthy 200 that simply has no usable
+ * rendition (success:false, a missing link, or a failed CDN byte probe) is
+ * NOT cached — those are per-video / rotating-node outcomes, including the
+ * transient MP3/MP4 flip the /api/convert auto-retry exists to heal.
+ *
  * ── Container honesty ────────────────────────────────────────────────────
  * The endpoint does not document what container `audioUrl` really is, and a
  * mislabelled file is worse than no file: /api/convert sniffs magic bytes
@@ -65,8 +79,40 @@ const ALLDL_TIMEOUT_MS = 12_000;
 const PROBE_TIMEOUT_MS = 8_000;
 const PROBE_BYTES = 2048;
 
+/**
+ * How long a dead/unreachable AllDL API endpoint is remembered as down so it
+ * is skipped instead of re-timed-out on every download. Mirrors the cobalt
+ * directory cache (COBALT_DIRECTORY_TTL_MS): a short, in-process, extraction-
+ * time-only negative cache. It never affects authorization — the media-host
+ * allowlist is unchanged and every URL is still re-checked — and it caches
+ * only the single API HOST being unreachable, never a per-video result.
+ */
+const ALLDL_NEGATIVE_TTL_MS = 5 * 60 * 1000;
+
 const BROWSER_UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36';
+
+/* -------------------- Negative health cache (endpoint down) ------------- */
+
+const globalForAlldl = globalThis as typeof globalThis & {
+  __ytConvertAlldlNegativeAt?: number;
+};
+
+/** Test seam: forget a remembered AllDL outage. */
+export function resetAlldlNegativeCache(): void {
+  delete globalForAlldl.__ytConvertAlldlNegativeAt;
+}
+
+/** True when the AllDL API host recently failed and its cooldown has not elapsed. */
+function alldlEndpointDown(now: number): boolean {
+  const at = globalForAlldl.__ytConvertAlldlNegativeAt;
+  return typeof at === 'number' && now - at < ALLDL_NEGATIVE_TTL_MS;
+}
+
+/** Remember that the AllDL API host just failed (network/timeout/HTTP wall). */
+function markAlldlEndpointDown(now: number): void {
+  globalForAlldl.__ytConvertAlldlNegativeAt = now;
+}
 
 /** True only for the two exact hosts the AllDL service is known to use. */
 export function isAllowedAlldlUrl(raw: string): boolean {
@@ -255,6 +301,16 @@ function toFormat(url: string, kind: AlldlKind): PlayerFormat {
 export async function alldlFormats(videoId: string, kind: AlldlKind): Promise<PlayerFormat[]> {
   if (!/^[A-Za-z0-9_-]{11}$/.test(videoId)) return [];
 
+  // Skip the hop entirely while the endpoint is in its short negative-cache
+  // window, so a dead AllDL API costs us a single cached flag rather than its
+  // full 12 s timeout on every download. This is purely an extraction-time
+  // optimization: cobalt/Apify still run exactly as before, and the negative
+  // entry expires on its own, so a recovered endpoint is retried after the
+  // TTL. A per-video miss (a 200 answer with no usable rendition) is NOT a
+  // dead endpoint and is deliberately never cached.
+  const now = Date.now();
+  if (alldlEndpointDown(now)) return [];
+
   const endpoint = `${ALLDL_API_BASE}?url=${encodeURIComponent(
     `https://www.youtube.com/watch?v=${videoId}`,
   )}`;
@@ -268,16 +324,25 @@ export async function alldlFormats(videoId: string, kind: AlldlKind): Promise<Pl
     });
     if (!response.ok) {
       try { await response.body?.cancel(); } catch { /* drain */ }
+      // A refused/erroring API host is the durable outage we want to skip for
+      // a few minutes.
+      markAlldlEndpointDown(Date.now());
       return [];
     }
     const contentType = (response.headers.get('content-type') || '').toLowerCase();
     if (contentType && !/json|text\/plain/i.test(contentType)) {
-      // An HTML challenge or a soft error page — never parse it.
+      // An HTML challenge or a soft error page — never parse it. An HTML wall
+      // from the API host itself is an endpoint-level failure, not a per-video
+      // miss, so it earns the short negative cooldown too.
       try { await response.body?.cancel(); } catch { /* drain */ }
+      markAlldlEndpointDown(Date.now());
       return [];
     }
     payload = await response.json().catch(() => null);
   } catch {
+    // Network error / the 12 s timeout — the outage the negative cache exists
+    // to avoid re-paying.
+    markAlldlEndpointDown(Date.now());
     return [];
   }
 
