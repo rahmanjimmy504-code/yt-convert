@@ -12,13 +12,13 @@ name: Verify YouTube extraction (live)
 # change that breaks the Innertube clients is caught before users report it.
 
 on:
-  # Runs automatically on pull requests that touch the extraction code, so the
-  # live result shows up in the PR checks without anyone needing shell access.
-  # (A workflow_dispatch button only appears once the file is on the default
-  # branch, which is no help while the change is still in review.)
+  # Runs automatically on pull requests that touch the extraction code, so
+  # the live result shows up in the PR checks.
   pull_request:
     paths:
       - 'src/lib/extract.ts'
+      - 'src/lib/alldl.ts'
+      - 'src/lib/cobalt-directory.ts'
       - 'src/lib/invidious.ts'
       - 'src/lib/piped.ts'
       - 'src/lib/po-token.ts'
@@ -55,4 +55,15 @@ jobs:
         run: npm ci
 
       - name: Verify against live YouTube
+        # PR/push runs are INFORMATIONAL: YouTube bot-walls the runner IP and
+        # the third-party fallbacks (9Convert farm, AllDL) are flaky from
+        # datacenter ranges, so a red X here must never block a PR. The
+        # weekly schedule runs WITHOUT this override and is the hard gate.
+        continue-on-error: ${{ github.event_name == 'pull_request' }}
+        env:
+          # The AllDL live audit is TOLERANT in PR/push CI (one retry, warning
+          # only — a flaky third-party hobby API must not block PRs). The
+          # weekly scheduled health check is the place where a hard failure is
+          # wanted, so it opts into strict mode here.
+          ALLDL_STRICT: ${{ github.event_name == 'schedule' && '1' || '' }}
         run: npm run verify:youtube "${{ github.event.inputs.video_url || 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' }}"

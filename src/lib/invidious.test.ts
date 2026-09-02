@@ -15,7 +15,7 @@ afterEach(() => {
 
 describe('Invidious latest_version fallback', () => {
   it('constructs local relay URLs for itag 18 and 140', () => {
-    const url = new URL(invidiousLatestVersionUrl('https://inv.nadeko.net/', 'dQw4w9WgXcQ', 18));
+    const url = new URL(invidiousLatestVersionUrl(INVIDIOUS_INSTANCES[0], 'dQw4w9WgXcQ', 18));
     expect(url.pathname).toBe('/latest_version');
     expect(url.searchParams.get('id')).toBe('dQw4w9WgXcQ');
     expect(url.searchParams.get('itag')).toBe('18');

@@ -19,8 +19,9 @@ The fallback is **deliberately the last thing tried**:
 1. Innertube clients (direct)
 2. Piped / Invidious / embed mirrors
 3. The 9Convert/dlsrv farm
-4. Cobalt (your instance, then reviewed public ones)
-5. **Apify — only if `APIFY_TOKEN` is set and 1–4 all produced nothing**
+4. The AHM7xMakki AllDL endpoint (one free, key-less attempt)
+5. Cobalt (your instance, then reviewed public ones)
+6. **Apify — only if `APIFY_TOKEN` is set and 1–5 all produced nothing**
 
 It is **opt-in**: with no `APIFY_TOKEN` in the environment the code path is
 dead, `api.apify.com` is not even on the proxy allowlist, and nothing about
@@ -241,6 +242,28 @@ or three; music videos are the most reliable candidates).
 | `APIFY_MONTHLY_CAP_USD` | Text | `8` | Soft monthly USD stop, checked live before every run. `0` = never run |
 | `APIFY_RUN_TIMEOUT_S` | Text | `90` | Per-run timeout in seconds, clamped to 30–300. Bounds the visitor's wait and the per-minute bill |
 | `APIFY_PROXY_HOSTS` | Text | *(empty)* | Extra **exact** media hosts, only if the Actor serves files from somewhere other than `api.apify.com` |
+| `APIFY_YOUTUBE_COOKIES` | Secret | *(empty = anonymous runs)* | Optional Netscape-format `cookies.txt` of a **throwaway** YouTube account, bridged into the Actor's `youtubeCookies` input so yt-dlp runs signed-in |
+
+**Optional: signed-in runs (`APIFY_YOUTUBE_COOKIES`).** Some videos refuse
+anonymous downloaders outright — an age gate, CDN-side throttling, or a bot
+wall that survives even Apify's egress. The Actor accepts a Netscape-format
+`cookies.txt` (its `youtubeCookies` input) and uses it for every attempt. To
+turn this on: install any "Get cookies.txt" browser extension, sign in to a
+**throwaway** YouTube account (not your main one — accounts can be flagged),
+export the cookies, and add the file's whole text as a **Secret** named
+`APIFY_YOUTUBE_COOKIES` in the same Cloudflare dashboard place as
+`APIFY_TOKEN` (Part 2 above), then redeploy.
+
+The app treats it like the token: it is validated first (it must be a real
+cookies.txt — a pasted `NAME=value; …` header is rejected, because yt-dlp
+would silently ignore it and run anonymously while you believe you are signed
+in), capped at 64 KiB, and then bridged verbatim into the run input. It is
+sent only to `api.apify.com`, only inside the HTTPS, Bearer-authenticated run
+body; it is never logged, never cached, and never reaches the browser. An
+unusable value never disables the fallback — the Actor just runs without
+cookies, with one `[apify] APIFY_YOUTUBE_COOKIES is set but is not a Netscape
+cookies.txt file` line in the logs. Clearing the variable returns to
+anonymous runs.
 
 **What the code actually does** (all in this repo, unit-tested with mocked
 network — no test ever talks to Apify):
@@ -249,13 +272,16 @@ network — no test ever talks to Apify):
   against `GET /v2/users/me/limits` (fails closed), the single
   `POST /v2/acts/{actorId}/run-sync-get-dataset-items?timeout=…` call, the
   input builder (`buildActorInput`: `format:"mp3"` for audio,
-  `format:"default"` + a `360|480|720|1080` ceiling for video), and the output
+  `format:"default"` + a `360|480|720|1080` ceiling for video, and the
+  operator's `youtubeCookies` cookies.txt bridged in when
+  `APIFY_YOUTUBE_COOKIES` is set), and the output
   parser (`pickDownloadUrl`). The operator's token is attached to the
   `api.apify.com` download URL **server-side** so a non-public run store can
   still be read; it is never sent to any other host and never reaches the
   browser.
 - `src/lib/extract.ts` — calls the provider only after Innertube, the
-  mirrors, the 9Convert farm and cobalt have all produced nothing, then
+  mirrors, the 9Convert farm, the AHM7xMakki AllDL endpoint and cobalt have
+  all produced nothing, then
   re-checks the returned URL against the media allowlist before anything else
   can fetch it.
 - `src/lib/media-hosts.ts` — allows the **exact** host `api.apify.com` while

@@ -182,11 +182,11 @@ describe('parseDirectoryPayload', () => {
     expect(parseDirectoryPayload({ data: { youtube: [] } })).toEqual([]);
   });
 
-  it('parses a payload shaped like the real 2026-08-14 directory response', () => {
+  it('parses a payload shaped like the real 2026-09-01 directory response', () => {
     // Trimmed copy of the live https://cobalt.directory/api/working?type=api
     // body: many services, the youtube list a strict subset of the rest.
     const origins = parseDirectoryPayload({
-      lastUpdatedUTC: '2026-08-14T09:43:40.869Z',
+      lastUpdatedUTC: '2026-09-01T18:13:15.000Z',
       data: {
         facebook: ['https://dog.kittycat.boo', 'https://nachos.imput.net'],
         youtube: [
@@ -197,12 +197,19 @@ describe('parseDirectoryPayload', () => {
           'https://cobalt-api.lamps-dev.dev',
           'https://nuko-c.meowing.de',
           'https://bergung-api.hoffnungfuerdiezukunft.net',
+          'https://api.cobalt.rpkiinval.id',
+          'https://cobaltapi.squair.xyz',
+          'https://cobalt-omega.wolfy.love',
+          // Unreviewed hosts the directory may report: parsed out below.
+          'https://api.qwkuns.me',
+          'https://fox.kittycat.boo',
         ],
         'youtube-music': ['https://kitty.tame.gg', 'https://subito-c.meowing.de'],
         reddit: ['https://kityune.imput.net'],
       },
     });
-    // All seven live YouTube-passing hosts happen to be reviewed today.
+    // Every reviewed host passes; unreviewed directory entries are narrowed
+    // away by the reviewed-allowlist intersection.
     expect(origins).toEqual([...REVIEWED_COBALT_APIS].map(h => `https://${h}`));
   });
 });

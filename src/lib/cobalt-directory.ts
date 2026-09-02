@@ -47,9 +47,17 @@ export const COBALT_MAX_PUBLIC_ATTEMPTS = 3;
  * parent-domain suffixes, so an unrelated service on the same registrable
  * domain cannot be proxied.
  *
- * Reviewed 2026-08-14 against cobalt.directory: every host below was listed
- * under `data.youtube` and serves cobalt v11.7.x from a public codebase.
- * Adding a host here is a deliberate, reviewable act.
+ * Review rules: every host was listed under cobalt.directory's
+ * `data.youtube` on the review date (the directory's own live YouTube test),
+ * serves cobalt v11.7.x from a public codebase, and belongs to an operator
+ * NOT already represented here — one independent operator per host, no
+ * padding. Adding a host is a deliberate, reviewable act.
+ *
+ * Reviewed 2026-09-01: added api.cobalt.rpkiinval.id, cobaltapi.squair.xyz
+ * and cobalt-omega.wolfy.love (all YouTube ✅ that day). Checked and
+ * deliberately left out the same day: api.qwkuns.me and cobaltapi.cjs.nz
+ * (both `error.api.youtube.login`), and melon/grapefruit.clxxped.lol (same
+ * operator as the already-reviewed lime.clxxped.lol).
  */
 export const REVIEWED_COBALT_APIS = [
   'kitty.tame.gg',
@@ -59,6 +67,9 @@ export const REVIEWED_COBALT_APIS = [
   'cobalt-api.lamps-dev.dev',
   'nuko-c.meowing.de',
   'bergung-api.hoffnungfuerdiezukunft.net',
+  'api.cobalt.rpkiinval.id',
+  'cobaltapi.squair.xyz',
+  'cobalt-omega.wolfy.love',
 ] as const;
 
 const REVIEWED_SET: ReadonlySet<string> = new Set<string>(REVIEWED_COBALT_APIS);

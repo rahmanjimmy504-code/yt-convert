@@ -5,6 +5,11 @@
  * empty even while the browser-facing /latest_version relay still works.
  * The latter is useful with `local=true`: Invidious, not Vercel, fetches the
  * IP-bound googlevideo URL.
+ *
+ * Dropped 2026-09-01: inv.nadeko.net — its /api/v1/videos answers "Endpoint
+ * disabled" and /latest_version answers "500 Internal Server Error"
+ * (verified that day), so keeping it only added a doomed request to every
+ * lookup and every metadata fallback walk.
  */
 
 import { isAllowedMediaUrl } from './media-hosts';
@@ -14,7 +19,6 @@ export const INVIDIOUS_INSTANCES = [
   'https://invidious.tiekoetter.com',
   'https://invidious.f5.si',
   'https://yt.chocolatemoo53.com',
-  'https://inv.nadeko.net',
   'https://invidious.nerdvpn.de',
 ] as const;
 

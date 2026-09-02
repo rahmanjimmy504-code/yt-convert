@@ -64,6 +64,7 @@ import {
 } from '../src/lib/extract.ts';
 import { pipedFormats } from '../src/lib/piped.ts';
 import { nineConvertFormats } from '../src/lib/nineconvert.ts';
+import { ALLDL_API_BASE, ALLDL_MEDIA_HOSTS, alldlFormats } from '../src/lib/alldl.ts';
 import { cobaltFormats, cobaltConfigFromEnv, isCobaltConfigured } from '../src/lib/cobalt.ts';
 import { isPoTokenServerConfigured } from '../src/lib/po-token.ts';
 import { extensionForMime, isUsableFormatUrl, pickYouTubeFormat, planVideoDownload } from '../src/lib/youtube-formats.ts';
@@ -201,7 +202,7 @@ for (const client of INNERTUBE_CLIENTS) {
   );
 }
 
-/* -- 2. The extraction sources: Innertube -> mirrors -> 9Convert -> cobalt -- */
+/* -- 2. The extraction sources: Innertube -> mirrors -> 9Convert -> AllDL -> cobalt -- */
 console.log('\n--- innertubeFormats() ---');
 const result = await retryOnce('innertubeFormats', () => innertubeFormats(videoId), isInnertubeTransient);
 let formats = result.formats;
@@ -274,6 +275,131 @@ if (!formats.length || process.env.VERIFY_PUBLIC_FARM === '1' || process.env.GIT
   reportFarm(farmAudio.length > 0, '9Convert MP3 live audit', `${farmAudio.length} probed files for ${videoId}`);
 }
 
+/* -- AHM7xMakki AllDL, between the farm and cobalt. Same posture as the farm
+   audit above: probed on every CI run from a datacenter IP, but TOLERANT —
+   one automatic retry and only a warning in PR/push CI, because a flaky
+   third-party hobby API must not block every future PR. It is a hard
+   requirement when the chain actually needs it (no earlier source worked),
+   and strict when ALLDL_STRICT=1 (the scheduled weekly health check sets
+   that). The default probe video is the music-label fixture Y1Z3Q3O7IRE,
+   which the free Innertube/mirror/farm chain cannot serve — a success there
+   can only have come from AllDL, which makes the audit unambiguous. -- */
+if (!formats.length || process.env.VERIFY_ALLDL === '1' || process.env.GITHUB_ACTIONS === 'true') {
+  const alldlIsRequired = !formats.length;
+  const alldlStrict = process.env.ALLDL_STRICT === '1';
+  const alldlProbeId = process.env.ALLDL_PROBE_VIDEO_ID || 'Y1Z3Q3O7IRE';
+  console.log(
+    alldlIsRequired
+      ? '  → falling back to the AHM7xMakki AllDL endpoint…'
+      : `  → independently auditing the AHM7xMakki AllDL endpoint (probe video ${alldlProbeId}${alldlStrict ? ', STRICT' : ''})…`,
+  );
+  const attemptAlldl = async () => {
+    const [alldlVideo, alldlAudio] = await Promise.all([
+      alldlFormats(alldlProbeId, 'mp4'),
+      alldlFormats(alldlProbeId, 'mp3'),
+    ]);
+    return { alldlVideo, alldlAudio };
+  };
+  // Tolerant by design: exactly one automatic retry on total failure, then
+  // the result stands (and is only a warning in PR/push CI).
+  let { alldlVideo, alldlAudio } = await attemptAlldl();
+  if (!alldlVideo.length && !alldlAudio.length) {
+    console.log(`  (AllDL came up empty — one retry after ${RETRY_WAIT_MS / 1000}s…)`);
+    await sleep(RETRY_WAIT_MS);
+    ({ alldlVideo, alldlAudio } = await attemptAlldl());
+  }
+  if (!formats.length) {
+    formats = [...alldlVideo, ...alldlAudio];
+    if (formats.length) via = 'alldl';
+  }
+  // Tolerance rule (operator guidance): a flaky third-party hobby API must
+  // never hard-block a PR. Outside ALLDL_STRICT the audits are ALWAYS
+  // warning-level — even when the chain currently needs AllDL, because the
+  // same runner-IP conditions that starve the primary path also starve this
+  // endpoint, and that must not read as a code regression. Strict mode (the
+  // scheduled weekly health check) is the place where a hard failure is
+  // wanted.
+  const reportAlldl = (ok, label, detail) => {
+    const result = alldlStrict ? check(ok, label, detail) : audit(ok, label, detail);
+    if (alldlStrict && process.env.GITHUB_ACTIONS === 'true') {
+      console.log(`::${ok ? 'notice' : 'error'} title=${label}::${detail}`);
+    }
+    return result;
+  };
+  const alldlDetail = urls => {
+    if (!urls.length) return 'no allowlisted, byte-verified download';
+    try {
+      return `${urls.length} probed file(s) from ${new URL(urls[0].url).hostname}` +
+        ` (expected: ${ALLDL_MEDIA_HOSTS.join(' or ')})`;
+    } catch {
+      return `${urls.length} probed file(s)`;
+    }
+  };
+  reportAlldl(alldlVideo.length > 0, 'AllDL MP4 live audit', alldlDetail(alldlVideo));
+  reportAlldl(alldlAudio.length > 0, 'AllDL MP3 live audit', alldlDetail(alldlAudio));
+
+  // On a total failure, capture WHAT the endpoint actually returned to this
+  // runner (status / content-type / a short body sniff, secrets redacted —
+  // the request carries none). This lands as a warning annotation, which is
+  // the one piece of run output readable later via the API when raw logs
+  // have expired.
+  if (!alldlVideo.length && !alldlAudio.length) {
+    try {
+      const diag = await fetch(`${ALLDL_API_BASE}?url=${encodeURIComponent(`https://www.youtube.com/watch?v=${alldlProbeId}`)}`, {
+        headers: { Accept: 'application/json', 'User-Agent': 'Mozilla/5.0 (compatible; YTConvert-live-check/1.0)' },
+        signal: AbortSignal.timeout(15_000),
+      });
+      const ct = diag.headers.get('content-type') || '(no content-type)';
+      const body = (await diag.text().catch(() => '')).replace(/\s+/g, ' ').slice(0, 160);
+      const detail = `HTTP ${diag.status} ${ct} body="${body}"` +
+        (diag.url !== `${ALLDL_API_BASE}?url=` ? ` final-url-host=${new URL(diag.url).hostname}` : '');
+      console.log(`  AllDL diagnostic: ${detail}`);
+      const lines = [detail];
+
+      // Second layer: when the API succeeded, probe the media host itself —
+      // plain vs provider-style headers — so a CDN-side refusal of the
+      // byte-range probe is visible in the annotation too.
+      try {
+        const parsedBody = await (await fetch(`${ALLDL_API_BASE}?url=${encodeURIComponent(`https://www.youtube.com/watch?v=${alldlProbeId}`)}`, {
+          headers: { Accept: 'application/json', 'User-Agent': 'Mozilla/5.0 (compatible; YTConvert-live-check/1.0)' },
+          signal: AbortSignal.timeout(15_000),
+        })).json();
+        const mediaUrl = parsedBody?.mediaInfo?.videoUrl;
+        if (typeof mediaUrl === 'string' && mediaUrl.startsWith('https://')) {
+          for (const variant of ['plain', 'provider']) {
+            const headers = variant === 'provider'
+              ? { Accept: '*/*', Range: 'bytes=0-2047', Referer: 'https://ahm7xmakki.com/', 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36' }
+              : { 'User-Agent': 'Mozilla/5.0 (compatible; YTConvert-live-check/1.0)' };
+            try {
+              const media = await fetch(mediaUrl, { headers, redirect: 'follow', signal: AbortSignal.timeout(15_000) });
+              const reader = media.body?.getReader();
+              const head = reader ? await reader.read() : { value: null };
+              try { await reader?.cancel(); } catch { /* done */ }
+              const hex = [...(head.value || []).subarray(0, 16)].map(b => b.toString(16).padStart(2, '0')).join(' ');
+              lines.push(`media[${variant}] HTTP ${media.status} ${(media.headers.get('content-type') || '?')} bytes16=${hex || '(none)'} final-host=${new URL(media.url).hostname}`);
+            } catch (err) {
+              lines.push(`media[${variant}] network error — ${err.message}`);
+            }
+          }
+        } else {
+          lines.push('media probe skipped: no videoUrl in envelope');
+        }
+      } catch (err) {
+        lines.push(`media probe setup failed — ${err.message}`);
+      }
+
+      if (process.env.GITHUB_ACTIONS === 'true') {
+        console.log(`::warning title=AllDL live diagnostic::${lines.join(' | ').slice(0, 900)}`);
+      }
+    } catch (err) {
+      console.log(`  AllDL diagnostic: network error — ${err.message}`);
+      if (process.env.GITHUB_ACTIONS === 'true') {
+        console.log(`::warning title=AllDL live diagnostic::network error ${err.message}`);
+      }
+    }
+  }
+}
+
 /* -- Last resort: cobalt. Public discovery is enabled by default even when
    there is no private COBALT_API_URL, so never dereference a null config in
    the diagnostic path. -- */
@@ -301,7 +427,7 @@ if (!formats.length) {
 }
 
 if (!formats.length) {
-  console.log('\n✗ No formats from any source (Innertube, Invidious, Piped, 9Convert, or cobalt).');
+  console.log('\n✗ No formats from any source (Innertube, Invidious, Piped, 9Convert, AllDL, or cobalt).');
   console.log('  If every Innertube client says "Sign in to confirm you\'re not a bot", the runner IP is');
   console.log('  being BotGuard-challenged. An operator-owned PO-token path helps only when token minting,');
   console.log('  Innertube, and googlevideo share this same public egress IP (one VPS/site or YT_EGRESS_PROXY).');

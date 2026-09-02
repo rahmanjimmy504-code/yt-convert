@@ -29,6 +29,13 @@
  *   APIFY_PROXY_HOSTS      Exact media hosts to trust beyond api.apify.com
  *                          (see ./media-hosts.ts; only needed if the Actor
  *                          ever hands files back from another host).
+ *   APIFY_YOUTUBE_COOKIES  Optional Netscape-format cookies.txt of a
+ *                          THROWAWAY logged-in YouTube account, bridged into
+ *                          the Actor's `youtubeCookies` input so yt-dlp runs
+ *                          signed-in (age gates, CDN throttling, some bot
+ *                          walls). Never logged; only ever sent to
+ *                          api.apify.com inside the HTTPS, Bearer-authenticated
+ *                          run input.
  *
  * ── Spend guard (usage cap) ──────────────────────────────────────────────
  * Before EVERY run the provider asks Apify for the account's current
@@ -80,6 +87,9 @@ const LIMITS_TIMEOUT_MS = 6_000;
 /** Wall-clock grace for the sync run call beyond the run timeout itself. */
 const RUN_GRACE_MS = 15_000;
 
+/** Hard cap on APIFY_YOUTUBE_COOKIES — a real cookies.txt is a few KB at most. */
+export const MAX_COOKIES_FILE_CHARS = 65_536;
+
 /**
  * The actor id becomes a URL path segment, so it must be a single path-safe
  * token: `username~actor-name`, or Apify's internal alphanumeric id. Path
@@ -97,6 +107,13 @@ export interface ApifyConfig {
   monthlyCapUsd: number;
   /** Bounded run timeout in seconds, clamped to 30–300. */
   runTimeoutS: number;
+  /**
+   * Operator's Netscape-format cookies.txt for a throwaway YouTube account
+   * (APIFY_YOUTUBE_COOKIES). Bridged verbatim into the Actor's
+   * `youtubeCookies` input so yt-dlp runs signed-in. A secret — never logged,
+   * never sent anywhere but api.apify.com, never returned to the browser.
+   */
+  youtubeCookies?: string;
 }
 
 function asString(value: unknown): string {
@@ -126,6 +143,44 @@ export function parseRunTimeoutS(raw: string | undefined): number {
 }
 
 /**
+ * Validate an operator-supplied Netscape cookies.txt file
+ * (APIFY_YOUTUBE_COOKIES). Returns the normalized content, or null when the
+ * value is empty or does not look like a cookies.txt file at all — in which
+ * case the fallback runs WITHOUT cookies rather than feeding the Actor junk.
+ *
+ * Unlike the Innertube Cookie header (see sanitizeYouTubeCookies in
+ * ./extract.ts) this content travels inside the JSON run body, not an HTTP
+ * header, so newlines and tabs are legitimate Netscape-format separators and
+ * are preserved. Everything else is strict:
+ *
+ *   - CRLF is normalized to LF (Windows exports);
+ *   - any other control character (NUL, ESC, a lone CR, DEL) means the paste
+ *     is corrupted or hostile and rejects the whole file;
+ *   - a hard 64 KiB size cap (a real cookies.txt is a few KB);
+ *   - at least one data line with the tab-separated Netscape shape must be
+ *     present. A pasted `NAME=value; NAME2=value2` browser header is NOT
+ *     accepted: yt-dlp would drop every line and run anonymously while the
+ *     operator believes they are signed in — silent breakage we refuse to
+ *     paper over.
+ */
+export function sanitizeNetscapeCookieFile(raw: string | undefined | null): string | null {
+  if (!raw) return null;
+  const normalized = raw.replace(/\r\n/g, '\n');
+  if (!normalized.trim()) return null;
+  if (normalized.length > MAX_COOKIES_FILE_CHARS) return null;
+  // Allow only \t (field separator) and \n (line separator); reject NUL, ESC,
+  // a lone \r (any \r that survived CRLF normalization is corrupt), DEL and
+  // every other C0 control.
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u0008\u000B-\u001F\u007F]/.test(normalized)) return null;
+  const hasNetscapeDataLine = normalized.split('\n').some(line => {
+    const trimmedLine = line.trim();
+    return trimmedLine !== '' && !trimmedLine.startsWith('#') && line.includes('\t');
+  });
+  return hasNetscapeDataLine ? normalized : null;
+}
+
+/**
  * Read the Apify configuration from the environment. Returns null when no
  * token is set (or the actor id is unusable), which disables the fallback.
  */
@@ -139,11 +194,26 @@ export function apifyConfigFromEnv(): ApifyConfig | null {
     );
     return null;
   }
+  // Optional cookies bridge: an unusable value never disables the fallback,
+  // it only runs it unsigned-in (with one operator-facing warning). The key
+  // is omitted entirely when unset so the config shape is unchanged for
+  // deployments that do not use the bridge.
+  const rawCookies = process.env.APIFY_YOUTUBE_COOKIES || '';
+  let youtubeCookies: string | undefined;
+  if (rawCookies.trim()) {
+    youtubeCookies = sanitizeNetscapeCookieFile(rawCookies) ?? undefined;
+    if (!youtubeCookies) {
+      console.warn(
+        '[apify] APIFY_YOUTUBE_COOKIES is set but is not a Netscape cookies.txt file; running without cookies',
+      );
+    }
+  }
   return {
     token,
     actorId,
     monthlyCapUsd: parseMonthlyCapUsd(process.env.APIFY_MONTHLY_CAP_USD),
     runTimeoutS: parseRunTimeoutS(process.env.APIFY_RUN_TIMEOUT_S),
+    ...(youtubeCookies ? { youtubeCookies } : {}),
   };
 }
 
@@ -181,24 +251,35 @@ export interface ApifyActorInput {
   format: 'mp3' | 'default';
   /** Maximum video resolution; ignored by the Actor for MP3. */
   quality?: '360' | '480' | '720' | '1080';
+  /**
+   * Netscape-format cookies.txt content (APIFY_YOUTUBE_COOKIES), bridged
+   * verbatim into the Actor's optional `youtubeCookies` field so yt-dlp runs
+   * under a signed-in session. Omitted entirely when unconfigured, so the
+   * run input for cookie-less deployments is byte-identical to before.
+   */
+  youtubeCookies?: string;
 }
 
 /**
  * Build the Actor input for one page URL. `want` follows the same meaning as
  * the cobalt client ('audio' | 'video'). The quality field is only sent for
  * video requests — the Actor ignores it for MP3 and the MP3 bitrate is
- * whatever yt-dlp/ffmpeg produces.
+ * whatever yt-dlp/ffmpeg produces. `youtubeCookies` is the operator's
+ * pre-validated cookies.txt (see sanitizeNetscapeCookieFile) and is attached
+ * unchanged when present.
  */
 export function buildActorInput(
   pageUrl: string,
   want: 'audio' | 'video',
   quality?: string,
+  youtubeCookies?: string,
 ): ApifyActorInput {
   const input: ApifyActorInput = {
     urls: [{ url: pageUrl }],
     format: want === 'audio' ? 'mp3' : 'default',
   };
   if (want === 'video') input.quality = apifyVideoQuality(quality);
+  if (youtubeCookies) input.youtubeCookies = youtubeCookies;
   return input;
 }
 
@@ -395,7 +476,7 @@ async function runActorOnce(
         Authorization: `Bearer ${config.token}`,
         'User-Agent': 'Mozilla/5.0 (compatible; YTConvert/1.0)',
       },
-      body: JSON.stringify(buildActorInput(pageUrl, want, quality)),
+      body: JSON.stringify(buildActorInput(pageUrl, want, quality, config.youtubeCookies)),
       // Give Apify time to answer its own 408 before we cut the call.
       signal: AbortSignal.timeout(config.runTimeoutS * 1000 + RUN_GRACE_MS),
     });

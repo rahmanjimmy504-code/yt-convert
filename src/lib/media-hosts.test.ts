@@ -40,9 +40,25 @@ describe('isAllowedMediaUrl', () => {
     expect(isAllowedMediaUrl('https://evil9convert.org/file')).toBe(false);
   });
 
+  it('allows the AllDL API host exactly and its ymcdn.org CDN as a suffix', () => {
+    // The AllDL provider (./alldl.ts) hands back finished files on
+    // c.ymcdn.org, which live-traffic (2026-09-01) 30x-redirects to rotating
+    // dlNN.ymcdn.org hosts — so the CDN domain is a suffix, like the farm's.
+    expect(isAllowedMediaUrl('https://c.ymcdn.org/api/v2/download/x/Y1Z3Q3O7IRE?_=mac')).toBe(true);
+    expect(isAllowedMediaUrl('https://dl20.ymcdn.org/api/v2/download/x/Y1Z3Q3O7IRE?_=mac')).toBe(true);
+    expect(isAllowedMediaUrl('https://ymcdn.org/file.mp4')).toBe(true);
+    // The API host stays exact: no subdomain may be proxied by implication.
+    expect(isAllowedMediaUrl('https://ahm7xmakki.com/api/alldl?url=x')).toBe(true);
+    expect(isAllowedMediaUrl('https://api.ahm7xmakki.com/x')).toBe(false);
+    expect(isAllowedMediaUrl('https://ahm7xmakki.com.evil.example/x')).toBe(false);
+    expect(isAllowedMediaUrl('https://ymcdn.org.evil.example/file.mp4')).toBe(false);
+  });
+
   it('allows local Invidious latest_version streams only on configured mirror suffixes', () => {
     expect(isAllowedMediaUrl('https://invidious.tiekoetter.com/latest_version?id=x&itag=18&local=true')).toBe(true);
-    expect(isAllowedMediaUrl('https://inv.nadeko.net/videoplayback?id=x')).toBe(true);
+    // inv.nadeko.net was dropped on 2026-09-01 (API disabled, relay 500s) —
+    // the exact host must no longer be proxiable, subdomain or not.
+    expect(isAllowedMediaUrl('https://inv.nadeko.net/videoplayback?id=x')).toBe(false);
     expect(isAllowedMediaUrl('https://other.nadeko.net/videoplayback?id=x')).toBe(false);
     expect(isAllowedMediaUrl('https://random-invidious.example/latest_version?id=x')).toBe(false);
   });

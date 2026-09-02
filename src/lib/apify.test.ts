@@ -12,6 +12,7 @@ import {
   parseMonthlyCapUsd,
   parseRunTimeoutS,
   pickDownloadUrl,
+  sanitizeNetscapeCookieFile,
 } from './apify';
 
 const SAVED_ENV = { ...process.env };
@@ -91,6 +92,7 @@ beforeEach(() => {
   delete process.env.APIFY_MONTHLY_CAP_USD;
   delete process.env.APIFY_RUN_TIMEOUT_S;
   delete process.env.APIFY_PROXY_HOSTS;
+  delete process.env.APIFY_YOUTUBE_COOKIES;
   process.env.APIFY_TOKEN = TOKEN;
 });
 
@@ -137,6 +139,80 @@ describe('apifyConfigFromEnv', () => {
       process.env.APIFY_ACTOR_ID = bad;
       expect(apifyConfigFromEnv(), `actor id "${bad}"`).toBeNull();
     }
+  });
+
+  it('bridges a valid APIFY_YOUTUBE_COOKIES into the config', () => {
+    process.env.APIFY_YOUTUBE_COOKIES = '.youtube.com\tTRUE\t/\tTRUE\t0\tPREF\thello';
+    const config = apifyConfigFromEnv();
+    expect(config).not.toBeNull();
+    expect(config?.youtubeCookies).toBe('.youtube.com\tTRUE\t/\tTRUE\t0\tPREF\thello');
+  });
+
+  it('omits youtubeCookies when unset or blank, keeping the config shape unchanged', () => {
+    expect(apifyConfigFromEnv()).not.toHaveProperty('youtubeCookies');
+    process.env.APIFY_YOUTUBE_COOKIES = '   ';
+    expect(apifyConfigFromEnv()).not.toHaveProperty('youtubeCookies');
+  });
+
+  it('warns and runs WITHOUT cookies when the value is not a cookies.txt file', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    process.env.APIFY_YOUTUBE_COOKIES = 'PREF=hello; VISITOR_INFO1_LIVE=abc';
+    const config = apifyConfigFromEnv();
+    expect(config).not.toBeNull();
+    expect(config).not.toHaveProperty('youtubeCookies');
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('APIFY_YOUTUBE_COOKIES is set but is not a Netscape cookies.txt'),
+    );
+    warn.mockRestore();
+  });
+});
+
+describe('sanitizeNetscapeCookieFile (APIFY_YOUTUBE_COOKIES bridge)', () => {
+  const NETSCAPE_FILE = [
+    '# Netscape HTTP Cookie File',
+    '# This is a generated file! Do not edit.',
+    '',
+    '.youtube.com\tTRUE\t/\tTRUE\t2147483647\tVISITOR_INFO1_LIVE\tabc123',
+    '.youtube.com\tTRUE\t/\tTRUE\t0\tPREF\thello=world',
+    '#HttpOnly_.youtube.com\tTRUE\t/\tTRUE\t0\tLOGIN_INFO\tsession',
+  ].join('\n');
+
+  it('accepts a real Netscape cookies.txt and preserves it verbatim', () => {
+    expect(sanitizeNetscapeCookieFile(NETSCAPE_FILE)).toBe(NETSCAPE_FILE);
+  });
+
+  it('normalizes CRLF line endings from Windows exports', () => {
+    expect(sanitizeNetscapeCookieFile(NETSCAPE_FILE.replace(/\n/g, '\r\n'))).toBe(NETSCAPE_FILE);
+  });
+
+  it('returns null for empty or whitespace-only input', () => {
+    expect(sanitizeNetscapeCookieFile('')).toBeNull();
+    expect(sanitizeNetscapeCookieFile('   \n  ')).toBeNull();
+    expect(sanitizeNetscapeCookieFile(undefined)).toBeNull();
+    expect(sanitizeNetscapeCookieFile(null)).toBeNull();
+  });
+
+  it('rejects a bare Cookie header paste (no Netscape tab-separated line)', () => {
+    // yt-dlp would silently run anonymously on this — refuse it instead.
+    expect(sanitizeNetscapeCookieFile('VISITOR_INFO1_LIVE=abc123; PREF=hello=world')).toBeNull();
+  });
+
+  it('rejects control characters (corrupted or hostile paste)', () => {
+    expect(sanitizeNetscapeCookieFile('.youtube.com\tTRUE\t/\tTRUE\t0\ta\u0000b\tv')).toBeNull();
+    expect(sanitizeNetscapeCookieFile('.youtube.com\tTRUE\t/\tTRUE\t0\ta\u001Fb\tv')).toBeNull();
+    // A lone \r (not part of CRLF) is corrupt, not a line ending.
+    expect(sanitizeNetscapeCookieFile('.youtube.com\tTRUE\t/\tTRUE\t0\ta\rv')).toBeNull();
+  });
+
+  it('rejects oversized files beyond the 64 KiB cap', () => {
+    const line = `.youtube.com\tTRUE\t/\tTRUE\t0\tNAME\t${'v'.repeat(64)}`;
+    const big = Array.from({ length: 1200 }, () => line).join('\n');
+    expect(big.length).toBeGreaterThan(65_536);
+    expect(sanitizeNetscapeCookieFile(big)).toBeNull();
+  });
+
+  it('rejects files with comment lines only', () => {
+    expect(sanitizeNetscapeCookieFile('# Netscape HTTP Cookie File\n# no data\n')).toBeNull();
   });
 });
 
@@ -193,6 +269,19 @@ describe('buildActorInput', () => {
     expect(buildActorInput(PAGE_URL, 'video', 'best').quality).toBe('1080');
     // The Actor ignores quality for MP3, so it is not sent.
     expect(buildActorInput(PAGE_URL, 'audio', '320')).not.toHaveProperty('quality');
+  });
+
+  it('bridges youtubeCookies only when configured, keeping the shape stable otherwise', () => {
+    expect(buildActorInput(PAGE_URL, 'audio')).not.toHaveProperty('youtubeCookies');
+    const cookies = '.youtube.com\tTRUE\t/\tTRUE\t0\tPREF\thello';
+    expect(buildActorInput(PAGE_URL, 'video', '720', cookies)).toEqual({
+      urls: [{ url: PAGE_URL }],
+      format: 'default',
+      quality: '720',
+      youtubeCookies: cookies,
+    });
+    // An empty cookie value must not add an empty field.
+    expect(buildActorInput(PAGE_URL, 'audio', undefined, '')).not.toHaveProperty('youtubeCookies');
   });
 });
 
@@ -368,6 +457,25 @@ describe('apifyFormats (the paid path is opt-in, capped, and single-run)', () =>
       url: 'https://api.apify.com/v2/key-value-stores/x/records/a.mp3?token=' + TOKEN,
       mimeType: 'audio/mpeg',
     });
+  });
+
+  it('bridges APIFY_YOUTUBE_COOKIES into the run body when set', async () => {
+    const cookies = '.youtube.com\tTRUE\t/\tTRUE\t0\tPREF\thello';
+    process.env.APIFY_YOUTUBE_COOKIES = cookies;
+    const calls = stubApify({ usedUsd: 0 });
+    await apifyFormats(PAGE_URL, 'video', '720');
+    expect(JSON.parse(String(calls[1].init?.body))).toEqual({
+      urls: [{ url: PAGE_URL }],
+      format: 'default',
+      quality: '720',
+      youtubeCookies: cookies,
+    });
+  });
+
+  it('keeps the run body cookie-free when APIFY_YOUTUBE_COOKIES is unset', async () => {
+    const calls = stubApify({ usedUsd: 0 });
+    await apifyFormats(PAGE_URL, 'video', '720');
+    expect(JSON.parse(String(calls[1].init?.body))).not.toHaveProperty('youtubeCookies');
   });
 
   it('passes the configured run timeout and actor id to the run URL', async () => {
