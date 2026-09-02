@@ -8,16 +8,11 @@ name: Deploy to Cloudflare
 on:
   workflow_dispatch:
   push:
+    # Deploy on ANY change that lands on main — no path filter. Whatever is
+    # merged (src, public, docs, configs, the workflow itself, anything)
+    # triggers the build + deploy, so the live Worker never lags behind main.
+    # Runs can still be kicked off manually from the Actions tab above.
     branches: [main]
-    paths:
-      - 'src/**'
-      - 'public/**'
-      - 'next.config.ts'
-      - 'open-next.config.ts'
-      - 'wrangler.jsonc'
-      - 'package.json'
-      - 'package-lock.json'
-      - '.github/workflows/deploy-cloudflare.yml'
 
 permissions:
   contents: read
