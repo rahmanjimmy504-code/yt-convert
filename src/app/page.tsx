@@ -41,6 +41,7 @@ import { ALL_CONVERTERS, converterGoPath, hasAutomaticHandoff, type Converter, t
 import { getEmbed } from '@/lib/embed';
 import { OPEN_COOKIE_PREFERENCES_EVENT } from '@/lib/cookies';
 import { deriveDownloadPanelState, qualityDowngradeNote } from '@/lib/download-panel';
+import { clientFallbackTail } from '@/lib/convert-error';
 import { ANDROID_DOWNLOAD_APPS, buildAndroidDownloadIntent, type AndroidDownloadApp } from '@/lib/android-download-apps';
 import { AUDIO_KBPS_OPTIONS, VIDEO_QUALITY_OPTIONS, type VideoQualityPlan } from '@/lib/youtube-formats';
 import { LICENSE_SPDX, LICENSE_URL, SOURCE_URL } from '@/lib/site';
@@ -1088,7 +1089,17 @@ export default function Home() {
 
                   {convertError && (
                     <div role="alert" className="space-y-1.5">
-                      <p className="text-xs text-red-600 dark:text-red-400">{convertError} Try an on-device Android app above or a converter below.</p>
+                      <p className="text-xs text-red-600 dark:text-red-400">
+                        {convertError}
+                        {clientFallbackTail(
+                          convertError,
+                          Boolean(
+                            videoId &&
+                              (videoInfo.platform === 'youtube' ||
+                                videoInfo.platform === 'youtubemusic'),
+                          ),
+                        )}
+                      </p>
                       {/* When the error is age-restriction related and cookies are
                           available but not yet provided, nudge the user to try cookies. */}
                       {process.env.NEXT_PUBLIC_YT_COOKIES_ENABLED === '1' &&
