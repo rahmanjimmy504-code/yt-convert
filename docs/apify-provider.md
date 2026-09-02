@@ -241,6 +241,7 @@ or three; music videos are the most reliable candidates).
 | `APIFY_ACTOR_ID` | Text | `marielise.dev~youtube-video-downloader` | Actor to run, as `username~name` or the internal ID |
 | `APIFY_MONTHLY_CAP_USD` | Text | `8` | Soft monthly USD stop, checked live before every run. `0` = never run |
 | `APIFY_RUN_TIMEOUT_S` | Text | `90` | Per-run timeout in seconds, clamped to 30–300. Bounds the visitor's wait and the per-minute bill |
+| `APIFY_ACTOR_BUILD` | Text | `0.064` | Actor build tag/id every run is pinned to (currently also the Actor's latest). Pinning stops a future Actor rebuild from silently regressing the paid fallback. Override only after re-verifying the new build still serves a working MP4 |
 | `APIFY_PROXY_HOSTS` | Text | *(empty)* | Extra **exact** media hosts, only if the Actor serves files from somewhere other than `api.apify.com` |
 | `APIFY_YOUTUBE_COOKIES` | Secret | *(empty = anonymous runs)* | Optional Netscape-format `cookies.txt` of a **throwaway** YouTube account, bridged into the Actor's `youtubeCookies` input so yt-dlp runs signed-in |
 
