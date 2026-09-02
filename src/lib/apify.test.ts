@@ -6,9 +6,11 @@ import {
   apifyVideoQuality,
   attachApifyToken,
   buildActorInput,
+  DEFAULT_APIFY_ACTOR_BUILD,
   DEFAULT_APIFY_ACTOR_ID,
   isApifyConfigured,
   monthlyUsageUsdFromLimits,
+  parseActorBuild,
   parseMonthlyCapUsd,
   parseRunTimeoutS,
   pickDownloadUrl,
@@ -89,6 +91,7 @@ function stubApify(options: {
 beforeEach(() => {
   delete process.env.APIFY_TOKEN;
   delete process.env.APIFY_ACTOR_ID;
+  delete process.env.APIFY_ACTOR_BUILD;
   delete process.env.APIFY_MONTHLY_CAP_USD;
   delete process.env.APIFY_RUN_TIMEOUT_S;
   delete process.env.APIFY_PROXY_HOSTS;
@@ -108,23 +111,27 @@ describe('apifyConfigFromEnv', () => {
     expect(isApifyConfigured()).toBe(false);
   });
 
-  it('defaults to the reviewed Actor, an $8 cap and a 90 s run timeout', () => {
+  it('defaults to the reviewed Actor, build 0.064, an $8 cap and a 90 s run timeout', () => {
     expect(apifyConfigFromEnv()).toEqual({
       token: TOKEN,
       actorId: DEFAULT_APIFY_ACTOR_ID,
+      build: DEFAULT_APIFY_ACTOR_BUILD,
       monthlyCapUsd: 8,
       runTimeoutS: 90,
     });
     expect(DEFAULT_APIFY_ACTOR_ID).toBe('marielise.dev~youtube-video-downloader');
+    expect(DEFAULT_APIFY_ACTOR_BUILD).toBe('0.064');
   });
 
   it('honours operator overrides', () => {
     process.env.APIFY_ACTOR_ID = 'someone~another-downloader';
+    process.env.APIFY_ACTOR_BUILD = '0.070';
     process.env.APIFY_MONTHLY_CAP_USD = '2.50';
     process.env.APIFY_RUN_TIMEOUT_S = '120';
     expect(apifyConfigFromEnv()).toEqual({
       token: TOKEN,
       actorId: 'someone~another-downloader',
+      build: '0.070',
       monthlyCapUsd: 2.5,
       runTimeoutS: 120,
     });
@@ -237,6 +244,31 @@ describe('parseRunTimeoutS', () => {
     expect(parseRunTimeoutS('999')).toBe(300);
     expect(parseRunTimeoutS('150')).toBe(150);
     expect(parseRunTimeoutS('bogus')).toBe(90);
+  });
+});
+
+describe('parseActorBuild', () => {
+  it('keeps the default for blank input', () => {
+    expect(parseActorBuild('')).toBe('0.064');
+    expect(parseActorBuild(undefined)).toBe('0.064');
+    expect(parseActorBuild('   ')).toBe('0.064');
+  });
+
+  it('accepts plain build tags, including "latest"', () => {
+    expect(parseActorBuild('0.064')).toBe('0.064');
+    expect(parseActorBuild('0.070')).toBe('0.070');
+    expect(parseActorBuild('latest')).toBe('latest');
+    expect(parseActorBuild('beta-1.2')).toBe('beta-1.2');
+    expect(parseActorBuild('  0.070  ')).toBe('0.070');
+  });
+
+  it('falls back to the default on query metacharacters (injection guard)', () => {
+    expect(parseActorBuild('0.064&evil=1')).toBe('0.064');
+    expect(parseActorBuild('0.064?x=1')).toBe('0.064');
+    expect(parseActorBuild('0.064#frag')).toBe('0.064');
+    expect(parseActorBuild('0.064/x')).toBe('0.064');
+    expect(parseActorBuild('a b')).toBe('0.064');
+    expect(parseActorBuild('0.064=x')).toBe('0.064');
   });
 });
 
@@ -414,8 +446,9 @@ describe('apifyFormats (the paid path is opt-in, capped, and single-run)', () =>
     expect(calls).toHaveLength(2);
     expect(calls[0].url).toBe('https://api.apify.com/v2/users/me/limits');
     expect(calls[1].url).toBe(
-      `https://api.apify.com/v2/acts/${DEFAULT_APIFY_ACTOR_ID}/run-sync-get-dataset-items?timeout=90`,
+      `https://api.apify.com/v2/acts/${DEFAULT_APIFY_ACTOR_ID}/run-sync-get-dataset-items?timeout=90&build=0.064`,
     );
+    expect(calls[1].url.endsWith('?timeout=90&build=0.064')).toBe(true);
 
     // The token travels in the Authorization header, not the URL.
     const auth = (init?: RequestInit) => new Headers(init?.headers).get('authorization');
@@ -484,8 +517,28 @@ describe('apifyFormats (the paid path is opt-in, capped, and single-run)', () =>
     const calls = stubApify({ usedUsd: 0 });
     await apifyFormats(PAGE_URL, 'video', 'best');
     expect(calls[1].url).toBe(
-      'https://api.apify.com/v2/acts/someone~another-downloader/run-sync-get-dataset-items?timeout=45',
+      'https://api.apify.com/v2/acts/someone~another-downloader/run-sync-get-dataset-items?timeout=45&build=0.064',
     );
+  });
+
+  it('pins the run to build 0.070 (not 0.064) when APIFY_ACTOR_BUILD is set', async () => {
+    process.env.APIFY_ACTOR_BUILD = '0.070';
+    const calls = stubApify({ usedUsd: 0 });
+    await apifyFormats(PAGE_URL, 'video', 'best');
+    expect(calls[1].url).toBe(
+      `https://api.apify.com/v2/acts/${DEFAULT_APIFY_ACTOR_ID}/run-sync-get-dataset-items?timeout=90&build=0.070`,
+    );
+    expect(calls[1].url).not.toContain('build=0.064');
+  });
+
+  it('falls back to build 0.064 with no injected params when APIFY_ACTOR_BUILD is unsafe', async () => {
+    process.env.APIFY_ACTOR_BUILD = '0.064&evil=1';
+    const calls = stubApify({ usedUsd: 0 });
+    await apifyFormats(PAGE_URL, 'video', 'best');
+    expect(calls[1].url).toBe(
+      `https://api.apify.com/v2/acts/${DEFAULT_APIFY_ACTOR_ID}/run-sync-get-dataset-items?timeout=90&build=0.064`,
+    );
+    expect(calls[1].url).not.toContain('evil');
   });
 
   it('skips the run entirely when monthly usage has reached the cap', async () => {

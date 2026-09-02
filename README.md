@@ -186,6 +186,7 @@ The dev server runs at **http://localhost:3000** by default. Edit any file under
 | `APIFY_ACTOR_ID` | `marielise.dev~youtube-video-downloader` | Actor the Apify fallback runs (`username~name` or internal ID) |
 | `APIFY_MONTHLY_CAP_USD` | `8` | Soft monthly USD spend stop: before every run the account's monthly usage is fetched from Apify and the fallback is skipped once usage ≥ this. `0` disables the fallback |
 | `APIFY_RUN_TIMEOUT_S` | `90` | Per-run timeout in seconds (clamped to 30–300). One request performs exactly one run — no retries |
+| `APIFY_ACTOR_BUILD` | `0.064` | Actor build tag/id every run is pinned to, so a future Actor rebuild cannot silently change what the paid fallback serves. Override only after re-verifying the new build |
 | `APIFY_PROXY_HOSTS` | *(empty)* | Comma-separated **exact** hosts to allow as Apify media hosts, for an Actor that serves files from a host other than `api.apify.com` (which is trusted automatically while `APIFY_TOKEN` is set) |
 | `APIFY_YOUTUBE_COOKIES` | *(empty)* | Optional Netscape-format `cookies.txt` of a **throwaway** YouTube account, bridged into the Actor's `youtubeCookies` input so yt-dlp runs signed-in (age gates, CDN throttling). Sent only to `api.apify.com` inside the HTTPS run input; never logged or returned to the browser |
 | `YT_API_KEY` | *(built-in)* | Override the public, non-secret Innertube API key used by the `WEB_EMBEDDED_PLAYER` client if YouTube rotates it |

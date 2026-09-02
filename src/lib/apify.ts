@@ -26,6 +26,13 @@
  *   APIFY_RUN_TIMEOUT_S    Per-run timeout in seconds, clamped to 30–300
  *                          (default 90). Bounds both the visitor's wait and,
  *                          on a pay-per-minute Actor, the per-run bill.
+ *   APIFY_ACTOR_BUILD      Actor build tag/id to run, pinned in the sync-run
+ *                          URL's `build` query param (default 0.064 — the
+ *                          build verified to serve a working MP4, currently
+ *                          also the Actor's latest). Pinning means a future
+ *                          rebuild published under a different build cannot
+ *                          silently change what this paid fallback serves;
+ *                          override only after re-verifying the new build.
  *   APIFY_PROXY_HOSTS      Exact media hosts to trust beyond api.apify.com
  *                          (see ./media-hosts.ts; only needed if the Actor
  *                          ever hands files back from another host).
@@ -76,6 +83,13 @@ const APIFY_API_BASE = `${APIFY_API_ORIGIN}/v2`;
  */
 export const DEFAULT_APIFY_ACTOR_ID = 'marielise.dev~youtube-video-downloader';
 
+/**
+ * Default (and currently latest) Actor build. Every run is pinned to this
+ * build explicitly so a future Actor rebuild that regresses output cannot
+ * silently break the paid fallback — see APIFY_ACTOR_BUILD above.
+ */
+export const DEFAULT_APIFY_ACTOR_BUILD = '0.064';
+
 /** Default soft monthly spend stop (USD). */
 export const DEFAULT_APIFY_MONTHLY_CAP_USD = 8;
 
@@ -98,11 +112,22 @@ export const MAX_COOKIES_FILE_CHARS = 65_536;
  */
 const ACTOR_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._~-]*$/;
 
+/**
+ * The build tag/id is interpolated into a URL query string, so it must be a
+ * single query-safe token: Apify build tags ("0.064", "latest", "beta-1.2")
+ * and build ids all match this shape. Anything with spaces, `/`, `?`, `#`,
+ * `&`, etc. is rejected rather than passed through, so it can never inject
+ * extra query parameters into the run URL.
+ */
+const ACTOR_BUILD_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._~-]{0,63}$/;
+
 export interface ApifyConfig {
   /** Apify API token (a secret — never log it, never send it to the client). */
   token: string;
   /** Actor to run: `username~actor-name` or the internal actor ID. */
   actorId: string;
+  /** Actor build tag/id every run is pinned to (default 0.064). */
+  build: string;
   /** Soft monthly spend stop in USD; 0 is the operator's "off" switch. */
   monthlyCapUsd: number;
   /** Bounded run timeout in seconds, clamped to 30–300. */
@@ -140,6 +165,19 @@ export function parseRunTimeoutS(raw: string | undefined): number {
   const value = Number(trimmed);
   if (!Number.isFinite(value) || value <= 0) return DEFAULT_RUN_TIMEOUT_S;
   return Math.min(MAX_RUN_TIMEOUT_S, Math.max(MIN_RUN_TIMEOUT_S, Math.round(value)));
+}
+
+/**
+ * Parse APIFY_ACTOR_BUILD. Falls back to DEFAULT_APIFY_ACTOR_BUILD ('0.064')
+ * when blank or when the value does not look like a single query-safe token
+ * — this value is interpolated into the run URL's `build` query parameter,
+ * so anything containing a query metacharacter (space, `/`, `?`, `#`, `&`,
+ * `=`, …) is rejected rather than risking injection.
+ */
+export function parseActorBuild(raw: string | undefined): string {
+  const trimmed = (raw || '').trim();
+  if (!trimmed) return DEFAULT_APIFY_ACTOR_BUILD;
+  return ACTOR_BUILD_PATTERN.test(trimmed) ? trimmed : DEFAULT_APIFY_ACTOR_BUILD;
 }
 
 /**
@@ -211,6 +249,7 @@ export function apifyConfigFromEnv(): ApifyConfig | null {
   return {
     token,
     actorId,
+    build: parseActorBuild(process.env.APIFY_ACTOR_BUILD),
     monthlyCapUsd: parseMonthlyCapUsd(process.env.APIFY_MONTHLY_CAP_USD),
     runTimeoutS: parseRunTimeoutS(process.env.APIFY_RUN_TIMEOUT_S),
     ...(youtubeCookies ? { youtubeCookies } : {}),
@@ -464,9 +503,15 @@ async function runActorOnce(
   quality?: string,
 ): Promise<{ items?: unknown; error?: string }> {
   // The actor id is validated by apifyConfigFromEnv() to contain only
-  // path-safe characters, so it can be interpolated directly.
-  const url =
-    `${APIFY_API_BASE}/acts/${config.actorId}/run-sync-get-dataset-items?timeout=${config.runTimeoutS}`;
+  // path-safe characters, so it can be interpolated directly. The build is
+  // validated by parseActorBuild() to contain only query-safe characters, so
+  // URLSearchParams can only ever produce a single `build` parameter — never
+  // an injected extra one.
+  const query = new URLSearchParams({
+    timeout: String(config.runTimeoutS),
+    build: config.build,
+  });
+  const url = `${APIFY_API_BASE}/acts/${config.actorId}/run-sync-get-dataset-items?${query.toString()}`;
   try {
     const response = await fetch(url, {
       method: 'POST',
