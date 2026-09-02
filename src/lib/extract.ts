@@ -921,6 +921,12 @@ async function extractYouTube(
   }
 
   if (!formats.length) {
+    // Operator diagnostics first: a bot-challenge exit used to return before
+    // these ran, which is exactly when the fallbacks' failure reasons are
+    // most needed for debugging. Log unconditionally, then pick the
+    // visitor-facing message below.
+    if (cobaltError) console.warn('[cobalt] all candidates failed:', cobaltError);
+    if (apifyError) console.warn('[apify] last-resort fallback not used:', apifyError);
     // Prefer an honest, specific reason over the generic message when YouTube
     // told us why (age-gate, private, region-lock, removed...).
     const statusToExplain = innertube.status || (innertube.botChallenged ? 'LOGIN_REQUIRED' : undefined);
@@ -939,13 +945,11 @@ async function extractYouTube(
     if (cobaltError || apifyError) {
       // `cobaltError`/`apifyError` carry raw diagnostics ("kitty.tame.gg:
       // error.api.auth.turnstile.missing", "monthly usage $8.02 has reached
-      // the $8.00 cap"). Log them for the operator, but show the visitor a
+      // the $8.00 cap"). Those are already logged above; show the visitor a
       // plain sentence with one instruction — an internal host name and
       // error code mean nothing to them. A cap-reached Apify skip lands here
       // too, which is exactly the intended behaviour: the request falls
       // through to the normal "try a converter" message.
-      if (cobaltError) console.warn('[cobalt] all candidates failed:', cobaltError);
-      if (apifyError) console.warn('[apify] last-resort fallback not used:', apifyError);
       return fail(
         withFallbackHint('No independent conversion service could fetch this video right now.'),
       );

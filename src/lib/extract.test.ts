@@ -1072,4 +1072,63 @@ describe('bot-check wording end to end', () => {
       expect(msg).not.toMatch(/age.restricted/i);
     }
   });
+
+  it('still logs cobalt diagnostics when the visitor-facing exit is a bot check', async () => {
+    const saved = { ...process.env };
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      process.env.COBALT_API_URL = 'https://cobalt.example.com';
+      process.env.COBALT_PROXY_HOSTS = 'cobalt.example.com';
+      process.env.COBALT_PUBLIC_DISCOVERY = '0';
+      delete process.env.APIFY_TOKEN;
+      resetCobaltDirectoryCache();
+      resetAlldlNegativeCache();
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (url: string) => {
+          if (url.includes('youtubei/v1/player')) {
+            return new Response(
+              JSON.stringify({
+                playabilityStatus: {
+                  status: 'LOGIN_REQUIRED',
+                  reason: "Sign in to confirm you're not a bot",
+                },
+              }),
+              { headers: { 'Content-Type': 'application/json' } },
+            );
+          }
+          if (url.startsWith('https://cobalt.example.com')) {
+            return new Response(
+              JSON.stringify({ status: 'error', error: { code: 'error.api.youtube.login' } }),
+              { headers: { 'Content-Type': 'application/json' } },
+            );
+          }
+          return new Response('{}', { status: 404 });
+        }),
+      );
+
+      const result = await extractMedia(
+        'youtube',
+        'https://www.youtube.com/watch?v=Y1Z3Q3O7IRE',
+        'mp4',
+        'best',
+      );
+      expect(isExtractError(result)).toBe(true);
+      if (isExtractError(result)) {
+        // Visitor wording is unchanged: still the bot-check message, not the
+        // generic "no independent conversion service" fallback.
+        expect(result.error).toMatch(/bot check/i);
+      }
+      expect(warn).toHaveBeenCalledWith(
+        '[cobalt] all candidates failed:',
+        expect.stringContaining('error.api.youtube.login'),
+      );
+    } finally {
+      process.env = saved;
+      warn.mockRestore();
+      resetCobaltDirectoryCache();
+      resetAlldlNegativeCache();
+      vi.unstubAllGlobals();
+    }
+  });
 });
