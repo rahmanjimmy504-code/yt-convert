@@ -15,6 +15,7 @@ import {
 } from './extract';
 import { __resetPoTokenCacheForTests } from './po-token';
 import { resetCobaltDirectoryCache } from './cobalt-directory';
+import { resetAlldlNegativeCache } from './alldl';
 
 // Deterministic ffmpeg availability for the extractor's mux/transcode
 // decisions. Without this, the tests would depend on whether the runner
@@ -232,6 +233,8 @@ describe('innertubeFormats cookie forwarding', () => {
 describe('extractMedia YouTube fallbacks', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    resetCobaltDirectoryCache();
+    resetAlldlNegativeCache();
   });
 
   const GV_VIDEO = 'https://rr1---sn-test.googlevideo.com/videoplayback?id=v';
@@ -408,6 +411,7 @@ describe('extractMedia YouTube fallbacks', () => {
       process.env.COBALT_API_URL = 'https://cobalt.example.com';
       process.env.COBALT_PUBLIC_DISCOVERY = '0';
       resetCobaltDirectoryCache();
+      resetAlldlNegativeCache();
     const audioUrl =
       'https://c.ymcdn.org/api/v2/download/eef9ff80791e5318dcbf27358fc5f02c/Y1Z3Q3O7IRE?_=GXvuAnvhcXBbnBii';
     const contacted: string[] = [];
@@ -455,6 +459,7 @@ describe('extractMedia YouTube fallbacks', () => {
     } finally {
       process.env = saved;
       resetCobaltDirectoryCache();
+      resetAlldlNegativeCache();
     }
   });
 
@@ -465,6 +470,7 @@ describe('extractMedia YouTube fallbacks', () => {
       process.env.COBALT_PROXY_HOSTS = 'cobalt.example.com';
       process.env.COBALT_PUBLIC_DISCOVERY = '0';
       resetCobaltDirectoryCache();
+      resetAlldlNegativeCache();
     const contacted: string[] = [];
     vi.stubGlobal(
       'fetch',
@@ -503,6 +509,7 @@ describe('extractMedia YouTube fallbacks', () => {
     } finally {
       process.env = saved;
       resetCobaltDirectoryCache();
+      resetAlldlNegativeCache();
     }
   });
 
@@ -733,12 +740,14 @@ describe('cobalt last-resort fallback through extractMedia', () => {
     // can't reach the network or perturb the stubbed call list.
     process.env.COBALT_PUBLIC_DISCOVERY = '0';
     resetCobaltDirectoryCache();
+    resetAlldlNegativeCache();
   });
 
   afterEach(() => {
     process.env = { ...SAVED };
     vi.unstubAllGlobals();
     resetCobaltDirectoryCache();
+    resetAlldlNegativeCache();
   });
 
   /** Every upstream source (Innertube/Invidious/Piped) returns nothing. */
@@ -831,12 +840,14 @@ describe('apify last-resort fallback through extractMedia', () => {
     delete process.env.APIFY_ACTOR_ID;
     delete process.env.APIFY_MONTHLY_CAP_USD;
     resetCobaltDirectoryCache();
+    resetAlldlNegativeCache();
   });
 
   afterEach(() => {
     process.env = { ...SAVED };
     vi.unstubAllGlobals();
     resetCobaltDirectoryCache();
+    resetAlldlNegativeCache();
   });
 
   const APIFY_FILE = 'https://api.apify.com/v2/key-value-stores/store1/records/jNQXAC9IVRw.mp4';

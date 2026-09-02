@@ -133,16 +133,22 @@ describe('/api/convert HTML rejection', () => {
     expect((await res.json()).error).toMatch(/HTML/i);
   });
 
-  it('words a wrong-container sniff failure honestly (not as a CAPTCHA page)', async () => {
+  it('words a wrong-container sniff failure honestly (not as a CAPTCHA page) after the bounded retry is exhausted', async () => {
     // The AllDL CDN has been observed serving its MP3 rendition on the video
     // link (2026-09-01); the visitor must hear "wrong file type, retry", not
-    // "HTML/CAPTCHA page".
+    // "HTML/CAPTCHA page". A wrong-container verdict is the ONLY thing that
+    // consumes the bounded second attempt — so a CDN that keeps serving the
+    // wrong rendition on BOTH attempts must surface the honest 502 after
+    // exactly two extractions, not silently relabel or loop forever.
     mockExtract.mockResolvedValue({
       url: 'https://c.ymcdn.org/api/v2/download/x/dQw4w9WgXcQ?_=mac',
       mimeType: 'video/mp4',
       extension: 'mp4',
     });
-    mockFetchAllowed.mockResolvedValue(new Response(streamOf([buildMp3Bytes()]), {
+    // Each attempt MUST receive a fresh Response: tee() locks the body
+    // stream, so re-reading a consumed Response throws. The wrong bytes on
+    // both attempts exhaust the retry budget.
+    mockFetchAllowed.mockImplementation(async () => new Response(streamOf([buildMp3Bytes()]), {
       status: 200, headers: { 'Content-Type': 'audio/mpeg' },
     }));
     const res = await handler(makeReq('http://x/api/convert?url=https://www.youtube.com/watch?v=v&format=mp4&quality=best&ticket=t&title=v'));
@@ -151,6 +157,66 @@ describe('/api/convert HTML rejection', () => {
     expect(json.error).toMatch(/wrong file type/i);
     expect(json.error).toMatch(/upstream returned mp3, not MP4 video/);
     expect(json.error).not.toMatch(/HTML\/CAPTCHA/i);
+    // Exactly two bounded attempts: the wrong-container verdict retried once.
+    expect(mockExtract).toHaveBeenCalledTimes(2);
+    expect(mockFetchAllowed).toHaveBeenCalledTimes(2);
+  });
+
+  it('auto-retries once on a wrong-container verdict and streams the correct container on the fresh extraction', async () => {
+    // The transient AllDL rendition flip self-heals: attempt 1 gets MP3 bytes
+    // on the video link; a fresh extraction mints fresh AllDL MACs / a fresh
+    // dlNN.ymcdn.org node, and attempt 2 gets the real MP4. The visitor should
+    // get a 200 with the delivering provenance header after EXACTLY two
+    // extractions — not a 502, and not more than two attempts.
+    mockExtract.mockResolvedValue({
+      url: 'https://c.ymcdn.org/api/v2/download/x/dQw4w9WgXcQ?_=mac',
+      mimeType: 'video/mp4',
+      extension: 'mp4',
+      note: 'AllDL fallback download',
+    });
+    const mp4 = buildMp4Bytes();
+    mockFetchAllowed
+      // Attempt 1: the CDN served the MP3 rendition on the video link.
+      .mockImplementationOnce(async () => new Response(streamOf([buildMp3Bytes()]), {
+        status: 200, headers: { 'Content-Type': 'audio/mpeg' },
+      }))
+      // Attempt 2: fresh node/MACs serve the genuine MP4.
+      .mockImplementationOnce(async () => new Response(streamOf([mp4]), {
+        status: 200, headers: { 'Content-Type': 'video/mp4' },
+      }));
+
+    const res = await handler(makeReq('http://x/api/convert?url=https://www.youtube.com/watch?v=v&format=mp4&quality=best&ticket=t&title=v'));
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toBe('video/mp4');
+    expect(res.headers.get('x-conversion-note')).toBe('AllDL fallback download');
+    // Exactly two extractions / two upstream fetches: one retry, no more.
+    expect(mockExtract).toHaveBeenCalledTimes(2);
+    expect(mockFetchAllowed).toHaveBeenCalledTimes(2);
+    // The streamed bytes are the real MP4 from attempt 2, byte-for-byte.
+    const out = await readAll(res.body!);
+    expect(out.length).toBe(mp4.length);
+    for (let i = 0; i < out.length; i += 1) {
+      if (out[i] !== mp4[i]) expect.fail(`byte mismatch at ${i}`);
+    }
+  });
+
+  it('never retries an HTML/CAPTCHA verdict (single extraction)', async () => {
+    // A bot-walled/HTML verdict does not change on replay, so it must NOT
+    // spend the second attempt: exactly one extraction, honest 502.
+    mockExtract.mockResolvedValue({
+      url: 'https://media.embed.dlsrv.online/file.mp4',
+      mimeType: 'video/mp4',
+      extension: 'mp4',
+    });
+    mockFetchAllowed.mockImplementation(async () => new Response(
+      streamOf([new TextEncoder().encode('<!doctype html><html><body>CAPTCHA</body></html>')]),
+      { status: 200, headers: { 'Content-Type': 'text/html' } },
+    ));
+    const res = await handler(makeReq('http://x/api/convert?url=https://www.youtube.com/watch?v=v&format=mp4&quality=best&ticket=t&title=v'));
+    expect(res.status).toBe(502);
+    expect((await res.json()).error).toMatch(/HTML/i);
+    expect(mockExtract).toHaveBeenCalledTimes(1);
+    expect(mockFetchAllowed).toHaveBeenCalledTimes(1);
   });
 
   it('exposes the extraction provenance as X-Conversion-Note and sanitizes it', async () => {
