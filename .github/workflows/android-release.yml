@@ -1,3 +1,7 @@
+# >>> SOURCE-OF-TRUTH COPY — the Arena/GitHub integration cannot write to
+# >>> .github/workflows/. To activate, create .github/workflows/android-release.yml
+# >>> via the GitHub web UI (repo > Add file > new file) and paste this content.
+#
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Signed release APK + AAB, published as a GitHub Release (and a v<version>
 # git tag, which is F-Droid's release marker).
@@ -21,6 +25,7 @@ on:
 
 permissions:
   contents: write
+  models: read
 
 # A new run supersedes an in-flight one for the same ref.
 concurrency:
@@ -39,6 +44,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -151,7 +159,18 @@ jobs:
         working-directory: android-app/android
         run: |
           ls -lh app/build/outputs/apk/release/app-release.apk app/build/outputs/bundle/release/app-release.aab
-          
+
+      - name: Draft APK release notes with AI
+        working-directory: .
+        env:
+          RELEASE_VERSION: ${{ github.event.inputs.version }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python3 scripts/android-release-notes.py --version "$RELEASE_VERSION" --out "$GITHUB_WORKSPACE/android-release-notes.md"
+          cat "$GITHUB_WORKSPACE/android-release-notes.md" >> "$GITHUB_STEP_SUMMARY"
+
       # Also publish the binaries as run *Artifacts* so they are downloadable
       # straight from the Actions run page.
       - name: Upload APK + AAB as run artifacts
@@ -163,18 +182,14 @@ jobs:
             android-app/android/app/build/outputs/bundle/release/app-release.aab
           if-no-files-found: error
           retention-days: 90
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ github.event.inputs.version }}
           name: YT Convert ${{ github.event.inputs.version }}
-          body: |
-            Signed Android release ${{ github.event.inputs.version }}.
-
-            - `app-release.apk` — install on your phone.
-            - `app-release.aab` — for stores (Play / F-Droid build servers).
-
-            The `v${{ github.event.inputs.version }}` tag is the release marker F-Droid builds from.
+          body_path: android-release-notes.md
           files: |
             android-app/android/app/build/outputs/apk/release/app-release.apk
             android-app/android/app/build/outputs/bundle/release/app-release.aab
+            
