@@ -1,4 +1,4 @@
-# The Apify Actor fallback (paid, opt-in, last resort)
+# The Apify Actor fallback (paid, opt-in)
 
 This is the one part of yt-convert that can **spend money**, so this guide is
 written to be followed entirely from a phone: Apify in one browser tab,
@@ -8,13 +8,13 @@ Cloudflare and GitHub in another. No terminal, no `wrangler`, no credit card.
 
 ## What it is — and what it is not
 
-When every free source fails, the app has one paid trick left: it asks an
-**Apify Actor** to convert the video. Apify runs yt-dlp for you inside its own
-infrastructure, on **Apify's proxies**, which is exactly why it succeeds where
-this site's own requests are refused — YouTube is not seeing this server's IP
-at all.
+When free sources cannot produce a usable file, the app has one paid trick:
+it asks an **Apify Actor** to convert the video. Apify runs yt-dlp for you
+inside its own infrastructure, on **Apify's proxies**, which is exactly why it
+can succeed where this site's own requests are refused — YouTube is not seeing
+this server's IP at all.
 
-The fallback is **deliberately the last thing tried**:
+On a normal request, the fallback is **deliberately the last thing tried**:
 
 1. Innertube clients (direct)
 2. Piped / Invidious / embed mirrors
@@ -22,6 +22,14 @@ The fallback is **deliberately the last thing tried**:
 4. The AHM7xMakki AllDL endpoint (one free, key-less attempt)
 5. Cobalt (your instance, then reviewed public ones)
 6. **Apify — only if `APIFY_TOKEN` is set and 1–5 all produced nothing**
+
+There is one Cloudflare Worker exception: when Innertube reports the server IP
+is bot-walled (`LOGIN_REQUIRED` with "Sign in to confirm you're not a bot"),
+the app skips mirrors as before and tries Apify **before** 9Convert / AllDL /
+cobalt. Those free hops can burn most of Cloudflare Free's ~30 second request
+wall-clock, while Apify's single `run-sync-get-dataset-items` call may need up
+to 90 seconds. If Apify fails or is capped off, the request then falls through
+to 9Convert, AllDL, and cobalt exactly as before.
 
 It is **opt-in**: with no `APIFY_TOKEN` in the environment the code path is
 dead, `api.apify.com` is not even on the proxy allowlist, and nothing about
@@ -49,8 +57,12 @@ negligible per-result fee:
 | MP4 at 720p        | $0.02 / minute   | ~$0.08           |
 | MP4 at 1080p       | $0.03 / minute   | ~$0.12           |
 
-The Actor's optional *residential proxy fallback* is **never enabled** by this
-app — it would add $0.05 per MB. Only the rates above apply.
+The Actor's optional *residential proxy fallback* is **off by default** and the
+app omits `residentialProxyMode` from the run input unless you explicitly set
+`APIFY_RESIDENTIAL_PROXY_MODE=fallback`. Residential traffic adds **$0.05 per
+MB when used**; one roughly 80 MB 720p video can cost about **$4**, nearly the
+entire $5 monthly free credit. Do not enable it unless you are deliberately
+accepting that risk after seeing Apify's free proxy fail.
 
 **Two independent stops keep the bill where you put it:**
 
@@ -124,8 +136,9 @@ encrypted secret.
    | `APIFY_MONTHLY_CAP_USD` | Text   | `8`    |
 
    (That last one is the soft monthly cap in dollars from the table above.
-   Optional extras — `APIFY_RUN_TIMEOUT_S`, `APIFY_PROXY_HOSTS` — are listed
-   at the end of this guide; you do not need them for a normal setup.)
+   Optional extras — `APIFY_RUN_TIMEOUT_S`, `APIFY_PROXY_HOSTS`, and the
+   paid `APIFY_RESIDENTIAL_PROXY_MODE=fallback` switch — are listed at the
+   end of this guide; you do not need them for a normal setup.)
 7. **Deploy the new version.** Variables only take effect once deployed. If
    the screen shows a **Deploy** (or *Save and deploy*) button after saving,
    tap it. If it does not, use the GitHub path instead:
@@ -211,9 +224,10 @@ or three; music videos are the most reliable candidates).
   still count as one run.
 - **App logs:** Cloudflare dashboard → **Workers & Pages** → **yt-convert** →
   **Observability / Logs**. Lines starting with `[apify]` are this fallback:
-  `last-resort fallback not used: monthly usage $8.01 has reached the $8.00
-  cap — no run started`, or an Actor failure reason. Visitors never see these
-  strings; they always get the plain "try a converter" sentence.
+  skip reasons (not configured, cap reached, usage check failed), start lines
+  (`actor=… build=… format=… timeout=… residentialProxyMode=off|fallback`),
+  success lines, or Actor failure reasons. Visitors never see these strings;
+  they always get the plain "try a converter" sentence.
 
 ---
 
@@ -226,6 +240,7 @@ or three; music videos are the most reliable candidates).
 | `[apify] … returned a non-allowlisted media host` | The Actor handed back a file on a host other than `api.apify.com` | Look at the run's dataset in the Apify Console → Runs → the failing run → **Data**: the `downloadUrl` field shows the real host. Add **exactly that host** (e.g. `storage.apify.com`) to a new Text variable `APIFY_PROXY_HOSTS`, redeploy. Do not widen it to a suffix — `APIFY_PROXY_HOSTS` matches whole hostnames only |
 | `[apify] … usage check failed` | The limits call failed, so the app refused to spend | Usually transient; if it persists, check the token and Apify's status page |
 | Download says "The media host refused the stream" | The Actor succeeded but the file fetch failed — e.g. the run's store expired (stores live ~days) or the host needs allowing | Retry the request (a fresh run stores a fresh file). If it repeats, follow the `APIFY_PROXY_HOSTS` row above |
+| Apify starts but the Actor sometimes fails on its free proxy | Apify's free proxy pool is inconsistent for YouTube | Leave residential off for normal use. If you knowingly accept the cost, set Text variable `APIFY_RESIDENTIAL_PROXY_MODE=fallback`, redeploy, and watch Billing closely: residential fallback is $0.05/MB when used (about $4 for one 80 MB file) |
 | The Actor's input/output fields changed | A code fix is needed in `src/lib/apify.ts` (`buildActorInput()` / `pickDownloadUrl()`) | The app degrades safely to the normal converter message. Open an issue describing the new fields, or adjust those two functions and re-run the tests |
 | Want it off entirely | — | Set `APIFY_MONTHLY_CAP_USD` to `0` (keeps the token, never runs) or delete the `APIFY_TOKEN` secret (fully disables it and removes `api.apify.com` from the proxy allowlist). Redeploy either way |
 
@@ -244,6 +259,7 @@ or three; music videos are the most reliable candidates).
 | `APIFY_ACTOR_BUILD` | Text | `0.064` | Actor build tag/id every run is pinned to (currently also the Actor's latest). Pinning stops a future Actor rebuild from silently regressing the paid fallback. Override only after re-verifying the new build still serves a working MP4 |
 | `APIFY_PROXY_HOSTS` | Text | *(empty)* | Extra **exact** media hosts, only if the Actor serves files from somewhere other than `api.apify.com` |
 | `APIFY_YOUTUBE_COOKIES` | Secret | *(empty = anonymous runs)* | Optional Netscape-format `cookies.txt` of a **throwaway** YouTube account, bridged into the Actor's `youtubeCookies` input so yt-dlp runs signed-in |
+| `APIFY_RESIDENTIAL_PROXY_MODE` | Text | *(empty = omitted)* | Optional paid opt-in. Only `fallback` is accepted and sent as Actor input; anything else is omitted. Residential proxy traffic is $0.05/MB when used, so one large video can consume most of the $5 free credit |
 
 **Optional: signed-in runs (`APIFY_YOUTUBE_COOKIES`).** Some videos refuse
 anonymous downloaders outright — an age gate, CDN-side throttling, or a bot
@@ -273,18 +289,18 @@ network — no test ever talks to Apify):
   against `GET /v2/users/me/limits` (fails closed), the single
   `POST /v2/acts/{actorId}/run-sync-get-dataset-items?timeout=…` call, the
   input builder (`buildActorInput`: `format:"mp3"` for audio,
-  `format:"default"` + a `360|480|720|1080` ceiling for video, and the
+  `format:"default"` + a `360|480|720|1080` ceiling for video, the
   operator's `youtubeCookies` cookies.txt bridged in when
-  `APIFY_YOUTUBE_COOKIES` is set), and the output
-  parser (`pickDownloadUrl`). The operator's token is attached to the
-  `api.apify.com` download URL **server-side** so a non-public run store can
-  still be read; it is never sent to any other host and never reaches the
-  browser.
-- `src/lib/extract.ts` — calls the provider only after Innertube, the
-  mirrors, the 9Convert farm, the AHM7xMakki AllDL endpoint and cobalt have
-  all produced nothing, then
-  re-checks the returned URL against the media allowlist before anything else
-  can fetch it.
+  `APIFY_YOUTUBE_COOKIES` is set, and `residentialProxyMode:"fallback"` only
+  when `APIFY_RESIDENTIAL_PROXY_MODE=fallback`), and the output parser
+  (`pickDownloadUrl`). The operator's token is attached to the `api.apify.com`
+  download URL **server-side** so a non-public run store can still be read; it
+  is never sent to any other host and never reaches the browser.
+- `src/lib/extract.ts` — calls the provider early only when Innertube proves a
+  BotGuard IP wall and `APIFY_TOKEN` is configured; otherwise it keeps Apify
+  last after Innertube, the mirrors, the 9Convert farm, the AHM7xMakki AllDL
+  endpoint and cobalt have all produced nothing. It then re-checks the
+  returned URL against the media allowlist before anything else can fetch it.
 - `src/lib/media-hosts.ts` — allows the **exact** host `api.apify.com` while
   `APIFY_TOKEN` is set, plus whatever exact hosts the operator lists in
   `APIFY_PROXY_HOSTS`. No suffixes, no wildcards, no subdomains.

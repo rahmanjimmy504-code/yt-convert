@@ -12,6 +12,7 @@ import {
   monthlyUsageUsdFromLimits,
   parseActorBuild,
   parseMonthlyCapUsd,
+  parseResidentialProxyMode,
   parseRunTimeoutS,
   pickDownloadUrl,
   sanitizeNetscapeCookieFile,
@@ -96,6 +97,7 @@ beforeEach(() => {
   delete process.env.APIFY_RUN_TIMEOUT_S;
   delete process.env.APIFY_PROXY_HOSTS;
   delete process.env.APIFY_YOUTUBE_COOKIES;
+  delete process.env.APIFY_RESIDENTIAL_PROXY_MODE;
   process.env.APIFY_TOKEN = TOKEN;
 });
 
@@ -272,6 +274,25 @@ describe('parseActorBuild', () => {
   });
 });
 
+describe('parseResidentialProxyMode', () => {
+  it('omits residential proxy mode by default and for anything except exact fallback', () => {
+    expect(parseResidentialProxyMode(undefined)).toBeUndefined();
+    expect(parseResidentialProxyMode('')).toBeUndefined();
+    expect(parseResidentialProxyMode('off')).toBeUndefined();
+    expect(parseResidentialProxyMode('FALLBACK')).toBeUndefined();
+    expect(parseResidentialProxyMode(' fallback ')).toBeUndefined();
+    expect(parseResidentialProxyMode('fallback')).toBe('fallback');
+  });
+
+  it('adds the mode to config only when APIFY_RESIDENTIAL_PROXY_MODE=fallback', () => {
+    expect(apifyConfigFromEnv()).not.toHaveProperty('residentialProxyMode');
+    process.env.APIFY_RESIDENTIAL_PROXY_MODE = 'fallback';
+    expect(apifyConfigFromEnv()).toMatchObject({ residentialProxyMode: 'fallback' });
+    process.env.APIFY_RESIDENTIAL_PROXY_MODE = 'always';
+    expect(apifyConfigFromEnv()).not.toHaveProperty('residentialProxyMode');
+  });
+});
+
 describe('apifyVideoQuality', () => {
   it('maps the app options onto the Actor ceiling, best -> 1080', () => {
     expect(apifyVideoQuality('best')).toBe('1080');
@@ -314,6 +335,15 @@ describe('buildActorInput', () => {
     });
     // An empty cookie value must not add an empty field.
     expect(buildActorInput(PAGE_URL, 'audio', undefined, '')).not.toHaveProperty('youtubeCookies');
+  });
+
+  it('omits residentialProxyMode by default and sends it only on explicit opt-in', () => {
+    expect(buildActorInput(PAGE_URL, 'video', '720')).not.toHaveProperty('residentialProxyMode');
+    expect(buildActorInput(PAGE_URL, 'audio', undefined, undefined, 'fallback')).toEqual({
+      urls: [{ url: PAGE_URL }],
+      format: 'mp3',
+      residentialProxyMode: 'fallback',
+    });
   });
 });
 
@@ -505,10 +535,25 @@ describe('apifyFormats (the paid path is opt-in, capped, and single-run)', () =>
     });
   });
 
-  it('keeps the run body cookie-free when APIFY_YOUTUBE_COOKIES is unset', async () => {
+  it('keeps the default run body free of optional paid/cookie fields', async () => {
     const calls = stubApify({ usedUsd: 0 });
     await apifyFormats(PAGE_URL, 'video', '720');
-    expect(JSON.parse(String(calls[1].init?.body))).not.toHaveProperty('youtubeCookies');
+    const body = JSON.parse(String(calls[1].init?.body));
+    expect(body).not.toHaveProperty('youtubeCookies');
+    expect(body).not.toHaveProperty('residentialProxyMode');
+  });
+
+  it('passes residentialProxyMode only when explicitly set to fallback', async () => {
+    process.env.APIFY_RESIDENTIAL_PROXY_MODE = 'fallback';
+    let calls = stubApify({ usedUsd: 0 });
+    await apifyFormats(PAGE_URL, 'video', '720');
+    expect(JSON.parse(String(calls[1].init?.body))).toMatchObject({ residentialProxyMode: 'fallback' });
+
+    vi.unstubAllGlobals();
+    process.env.APIFY_RESIDENTIAL_PROXY_MODE = 'always';
+    calls = stubApify({ usedUsd: 0 });
+    await apifyFormats(PAGE_URL, 'video', '720');
+    expect(JSON.parse(String(calls[1].init?.body))).not.toHaveProperty('residentialProxyMode');
   });
 
   it('passes the configured run timeout and actor id to the run URL', async () => {

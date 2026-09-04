@@ -25,6 +25,7 @@ on:
 
 permissions:
   contents: write
+  models: read
 
 # A new run supersedes an in-flight one for the same ref.
 concurrency:
@@ -43,6 +44,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -100,22 +104,33 @@ jobs:
               echo "ANDROID_KEYSTORE_FILE=$PWD/android/release.keystore"
               echo "ANDROID_KEYSTORE_PASSWORD=$STORED_STORE_PASSWORD"
               echo "ANDROID_KEY_ALIAS=$STORED_KEY_ALIAS"
-              echo "ANDROID_KEY_PASSWORD=$STORED_KEY_PASSWORD"
+              # PKCS12 (keytool's default) encrypts the private key with the
+              # STORE password and ignores a distinct -keypass, so the correct
+              # key password is always the store password. Forcing it here also
+              # self-heals a keystore saved by the old buggy workflow, which
+              # recorded a different ANDROID_KEY_PASSWORD and therefore failed
+              # ':app:packageRelease' with "final block not properly padded".
+              echo "ANDROID_KEY_PASSWORD=$STORED_STORE_PASSWORD"
             } >> "$GITHUB_ENV"
           else
             echo "No stored keystore secret — generating a THROWAWAY keystore."
+            # ONE password for both the store and the private key. A distinct
+            # -keypass is exactly what broke the first run: for the default
+            # PKCS12 store, Gradle's getKey() then decrypts the key with a
+            # password that does not match how it was encrypted, failing with
+            # "Given final block not properly padded". Equal passwords are the
+            # standard, universally-readable recipe.
             PASS="$(openssl rand -base64 24 | tr -d '/+=' | cut -c1-20)"
-            KEYPASS="$(openssl rand -base64 24 | tr -d '/+=' | cut -c1-20)"
             keytool -genkeypair -v -keystore android/release.keystore \
               -alias release -keyalg RSA -keysize 2048 -validity 10000 \
-              -storepass "$PASS" -keypass "$KEYPASS" \
+              -storepass "$PASS" -keypass "$PASS" \
               -dname "CN=YT Convert, O=yt-convert" > /dev/null
             KB64="$(base64 -w0 android/release.keystore)"
             {
               echo "ANDROID_KEYSTORE_FILE=$PWD/android/release.keystore"
               echo "ANDROID_KEYSTORE_PASSWORD=$PASS"
               echo "ANDROID_KEY_ALIAS=release"
-              echo "ANDROID_KEY_PASSWORD=$KEYPASS"
+              echo "ANDROID_KEY_PASSWORD=$PASS"
             } >> "$GITHUB_ENV"
             {
               echo "### :rotating_light: SAVE THESE SIGNING SECRETS"
@@ -127,7 +142,7 @@ jobs:
               echo "- \`ANDROID_KEYSTORE_BASE64\` = \`${KB64}\`"
               echo "- \`ANDROID_KEYSTORE_PASSWORD\` = \`${PASS}\`"
               echo "- \`ANDROID_KEY_ALIAS\` = \`release\`"
-              echo "- \`ANDROID_KEY_PASSWORD\` = \`${KEYPASS}\`"
+              echo "- \`ANDROID_KEY_PASSWORD\` = \`${PASS}\` (same as the store password)"
             } >> "$GITHUB_STEP_SUMMARY"
             echo "Throwaway keystore base64 (save as ANDROID_KEYSTORE_BASE64): $KB64"
           fi
@@ -145,18 +160,35 @@ jobs:
         run: |
           ls -lh app/build/outputs/apk/release/app-release.apk app/build/outputs/bundle/release/app-release.aab
 
+      - name: Draft APK release notes with AI
+        working-directory: .
+        env:
+          RELEASE_VERSION: ${{ github.event.inputs.version }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python3 scripts/android-release-notes.py --version "$RELEASE_VERSION" --out "$GITHUB_WORKSPACE/android-release-notes.md"
+          cat "$GITHUB_WORKSPACE/android-release-notes.md" >> "$GITHUB_STEP_SUMMARY"
+
+      # Also publish the binaries as run *Artifacts* so they are downloadable
+      # straight from the Actions run page.
+      - name: Upload APK + AAB as run artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: yt-convert-release
+          path: |
+            android-app/android/app/build/outputs/apk/release/app-release.apk
+            android-app/android/app/build/outputs/bundle/release/app-release.aab
+          if-no-files-found: error
+          retention-days: 90
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ github.event.inputs.version }}
           name: YT Convert ${{ github.event.inputs.version }}
-          body: |
-            Signed Android release ${{ github.event.inputs.version }}.
-
-            - `app-release.apk` — install on your phone.
-            - `app-release.aab` — for stores (Play / F-Droid build servers).
-
-            The `v${{ github.event.inputs.version }}` tag is the release marker F-Droid builds from.
+          body_path: android-release-notes.md
           files: |
             android-app/android/app/build/outputs/apk/release/app-release.apk
             android-app/android/app/build/outputs/bundle/release/app-release.aab

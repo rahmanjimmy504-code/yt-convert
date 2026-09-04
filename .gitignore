@@ -9,6 +9,10 @@
 
 # testing
 /coverage
+__pycache__/
+
+# generated release notes
+/android-release-notes.md
 
 # next.js
 /.next/

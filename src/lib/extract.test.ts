@@ -231,6 +231,13 @@ describe('innertubeFormats cookie forwarding', () => {
 });
 
 describe('extractMedia YouTube fallbacks', () => {
+  beforeEach(() => {
+    delete process.env.APIFY_TOKEN;
+    delete process.env.APIFY_ACTOR_ID;
+    delete process.env.APIFY_MONTHLY_CAP_USD;
+    delete process.env.APIFY_RESIDENTIAL_PROXY_MODE;
+  });
+
   afterEach(() => {
     vi.unstubAllGlobals();
     resetCobaltDirectoryCache();
@@ -263,7 +270,8 @@ describe('extractMedia YouTube fallbacks', () => {
     };
   }
 
-  it('uses Innertube directly when it returns streams (no Piped hop)', async () => {
+  it('uses Innertube directly when it returns streams (no Piped or Apify hop)', async () => {
+    process.env.APIFY_TOKEN = 'apify-token';
     const urls: string[] = [];
     vi.stubGlobal(
       'fetch',
@@ -279,8 +287,9 @@ describe('extractMedia YouTube fallbacks', () => {
     if (!isExtractError(result)) {
       expect(result.url).toBe(GV_VIDEO);
     }
-    // No pipedapi.* host should have been contacted.
+    // No pipedapi.* host or paid Apify endpoint should have been contacted.
     expect(urls.some(u => u.includes('pipedapi'))).toBe(false);
+    expect(urls.some(u => u.includes('api.apify.com'))).toBe(false);
   });
 
   it('offers a server-side MP3 transcode when ffmpeg is available and only M4A exists', async () => {
@@ -903,6 +912,69 @@ describe('apify last-resort fallback through extractMedia', () => {
       ...overrides,
     };
   }
+
+  it('tries Apify before 9Convert on a bot-walled Worker, then falls through if the Actor fails', async () => {
+    process.env.APIFY_TOKEN = 'apify-token';
+    const contacted: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: RequestInit) => {
+        contacted.push(url);
+        const method = (init?.method || 'GET').toUpperCase();
+        if (url.includes('youtubei/v1/player')) {
+          return new Response(
+            JSON.stringify({
+              playabilityStatus: {
+                status: 'LOGIN_REQUIRED',
+                reason: "Sign in to confirm you're not a bot",
+              },
+            }),
+            { headers: { 'Content-Type': 'application/json' } },
+          );
+        }
+        if (url.startsWith('https://api.apify.com/v2/users/me/limits')) {
+          return new Response(
+            JSON.stringify({ data: { current: { monthlyUsageUsd: 0.25 } } }),
+            { headers: { 'Content-Type': 'application/json' } },
+          );
+        }
+        if (url.includes('/run-sync-get-dataset-items')) {
+          return new Response(
+            JSON.stringify([{ status: 'failed', error: 'free proxy was exhausted', downloadUrl: '' }]),
+            { headers: { 'Content-Type': 'application/json' } },
+          );
+        }
+        if (url === 'https://embed.dlsrv.online/api/info' && method === 'POST') {
+          return new Response(JSON.stringify({
+            status: 'info',
+            info: { formats: [{ type: 'video', format: 'mp4', quality: '720p' }] },
+          }), { headers: { 'Content-Type': 'application/json' } });
+        }
+        if (url === 'https://embed.dlsrv.online/api/download/mp4' && method === 'POST') {
+          return new Response(JSON.stringify({ url: 'https://media.embed.dlsrv.online/video.mp4' }), {
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        if (url === 'https://media.embed.dlsrv.online/video.mp4' && method === 'GET') {
+          return streamingMp4Response();
+        }
+        return new Response('{}', { status: 404 });
+      }),
+    );
+
+    const result = await extractMedia('youtube', 'https://www.youtube.com/watch?v=Y1Z3Q3O7IRE', 'mp4', '720');
+    expect(isExtractError(result)).toBe(false);
+    if (!isExtractError(result)) {
+      expect(result.url).toBe('https://media.embed.dlsrv.online/video.mp4');
+      expect(result.note).toMatch(/9Convert/i);
+    }
+
+    const apifyRunAt = contacted.findIndex(url => url.includes('/run-sync-get-dataset-items'));
+    const farmAt = contacted.findIndex(url => url === 'https://embed.dlsrv.online/api/info');
+    expect(apifyRunAt).toBeGreaterThan(-1);
+    expect(farmAt).toBeGreaterThan(apifyRunAt);
+    expect(contacted.some(url => url.includes('pipedapi'))).toBe(false);
+  });
 
   it('serves an mp3 the Actor produced when every free source is empty', async () => {
     process.env.APIFY_TOKEN = 'apify-token';

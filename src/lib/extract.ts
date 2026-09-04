@@ -721,6 +721,17 @@ export interface ExtractOptions {
   youTubeCookies?: string;
 }
 
+type YouTubeSource =
+  | 'innertube'
+  | 'piped'
+  | 'invidious-latest'
+  | 'invidious-api'
+  | 'youtube-embed'
+  | '9convert'
+  | 'alldl'
+  | 'cobalt'
+  | 'apify';
+
 async function extractYouTube(
   pageUrl: string,
   format: FormatKey,
@@ -799,15 +810,46 @@ async function extractYouTube(
 
   // When YouTube issues a bot challenge on this server's egress IP, any
   // googlevideo media URL fetched from this host will serve an HTML challenge
-  // page rather than actual media bytes. Discard direct Innertube streams,
-  // skip the Piped/Invidious mirror race (same egress IP / same wall), and go
-  // straight to 9Convert then cobalt.
+  // page rather than actual media bytes. Discard direct Innertube streams and
+  // skip the Piped/Invidious mirror race (same egress IP / same wall). If the
+  // paid Apify Actor is configured, try that single run before the slow free
+  // farm/AllDL/cobalt hops so a Cloudflare Worker isolate does not spend its
+  // whole request budget timing out before it even POSTs to Apify.
   const ipBotBlocked = Boolean(innertube.botChallenged || isBotChallenge(innertube.status, innertube.reason));
   let formats = ipBotBlocked ? [] : innertube.formats;
-  let source: 'innertube' | 'piped' | 'invidious-latest' | 'invidious-api' | 'youtube-embed' | '9convert' | 'alldl' | 'cobalt' | 'apify' = 'innertube';
+  let source: YouTubeSource = 'innertube';
   let pipedError: string | undefined;
+  let apifyError: string | undefined;
+  let triedApify = false;
 
   const want = format === 'mp4' ? 'video' : 'audio';
+
+  const runApifyFallback = async (stage: 'bot-wall' | 'last-resort'): Promise<boolean> => {
+    triedApify = true;
+    if (stage === 'bot-wall') {
+      console.log('[apify] bot-wall fast path: trying Actor before 9Convert/AllDL/cobalt');
+    }
+    const apify = await apifyFormats(pageUrl, want, quality);
+    const apifyUrls = apify.formats.filter(f => f.url && isAllowedMediaUrl(f.url));
+    if (apifyUrls.length) {
+      formats = apifyUrls;
+      source = 'apify';
+      console.log('[apify] success: using allowlisted Actor download');
+      return true;
+    }
+    apifyError =
+      apify.error ?? (apify.formats.length ? 'returned a non-allowlisted media host' : undefined);
+    if (apifyError && !apify.error) console.warn('[apify] fail:', apifyError);
+    return false;
+  };
+
+  if (!formats.length && ipBotBlocked) {
+    if (isApifyConfigured()) {
+      await runApifyFallback('bot-wall');
+    } else {
+      console.log('[apify] skipped: bot-wall fast path unavailable because APIFY_TOKEN is not configured');
+    }
+  }
 
   if (!formats.length && !ipBotBlocked) {
     // Mirror paths are independent and public instances disappear often. Race
@@ -867,7 +909,8 @@ async function extractYouTube(
   // survives a bot wall on this server's IP) and hands back a finished file
   // on its CDN host c.ymcdn.org. Like the farm it is best-effort: one
   // timeout-bounded attempt, byte-sniffed for container honesty, and any
-  // failure returns nothing so cobalt (and only then Apify) still runs.
+  // failure returns nothing so cobalt still runs (and, on non-bot-walled
+  // requests, Apify remains after cobalt as the paid final fallback).
   if (!formats.length) {
     const alldl = await alldlFormats(id, format === 'mp4' ? 'mp4' : 'mp3');
     if (alldl.length) {
@@ -898,25 +941,19 @@ async function extractYouTube(
     }
   }
 
-  // ABSOLUTE last resort: a paid Apify Actor run (opt-in via APIFY_TOKEN).
-  // Apify executes yt-dlp on its own egress, so this is the one source that
-  // can still succeed when every free source above — including cobalt — is
-  // bot-blocked on this server's IP. It runs only when nothing else produced
-  // a usable format, only while the account's monthly usage is under
-  // APIFY_MONTHLY_CAP_USD, and exactly once per request. Every URL it hands
-  // back is re-checked against the media-host allowlist here (api.apify.com
-  // is only proxiable while APIFY_TOKEN is set), so a hostile or changed
-  // Actor cannot make /api/convert fetch an arbitrary host.
-  let apifyError: string | undefined;
-  if (!formats.length && isApifyConfigured()) {
-    const apify = await apifyFormats(pageUrl, want, quality);
-    const apifyUrls = apify.formats.filter(f => f.url && isAllowedMediaUrl(f.url));
-    if (apifyUrls.length) {
-      formats = apifyUrls;
-      source = 'apify';
+  // Paid Apify Actor run (opt-in via APIFY_TOKEN). On normal, non-bot-walled
+  // requests this stays the absolute last resort after every free source. On
+  // bot-walled requests it has already had its one chance above, before the
+  // slow farms, so do not retry it here. It runs only while the account's
+  // monthly usage is under APIFY_MONTHLY_CAP_USD, and every URL it hands back
+  // is re-checked against the media-host allowlist here (api.apify.com is
+  // only proxiable while APIFY_TOKEN is set), so a hostile or changed Actor
+  // cannot make /api/convert fetch an arbitrary host.
+  if (!formats.length && !triedApify) {
+    if (isApifyConfigured()) {
+      await runApifyFallback('last-resort');
     } else {
-      apifyError =
-        apify.error ?? (apify.formats.length ? 'returned a non-allowlisted media host' : undefined);
+      console.log('[apify] skipped: paid fallback is not configured');
     }
   }
 
@@ -926,7 +963,7 @@ async function extractYouTube(
     // most needed for debugging. Log unconditionally, then pick the
     // visitor-facing message below.
     if (cobaltError) console.warn('[cobalt] all candidates failed:', cobaltError);
-    if (apifyError) console.warn('[apify] last-resort fallback not used:', apifyError);
+    if (apifyError) console.warn('[apify] fallback did not produce a usable file:', apifyError);
     // Prefer an honest, specific reason over the generic message when YouTube
     // told us why (age-gate, private, region-lock, removed...).
     const statusToExplain = innertube.status || (innertube.botChallenged ? 'LOGIN_REQUIRED' : undefined);
@@ -983,7 +1020,7 @@ async function extractYouTube(
         const mediaUrl = gvsMatchesPickedClient
           ? attachMediaUrlToken(mp3.url, gvsToken?.poToken)
           : mp3.url;
-        const notes: Partial<Record<typeof source, string>> = {
+        const notes: Partial<Record<YouTubeSource, string>> = {
           piped: 'Piped fallback stream',
           'invidious-latest': 'Invidious relayed stream',
           'invidious-api': 'Invidious fallback stream',
@@ -1084,7 +1121,7 @@ async function extractYouTube(
   const mediaUrl = gvsMatchesPickedClient
     ? attachMediaUrlToken(picked.url, gvsToken?.poToken)
     : picked.url;
-  const notes: Partial<Record<typeof source, string>> = {
+  const notes: Partial<Record<YouTubeSource, string>> = {
     piped: 'Piped fallback stream',
     'invidious-latest': 'Invidious relayed stream',
     'invidious-api': 'Invidious fallback stream',

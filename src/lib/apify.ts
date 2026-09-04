@@ -1,18 +1,22 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 /**
- * Apify Actor fallback — the PAID, opt-in, absolute-last-resort YouTube
- * converter, tried only after the Innertube clients, the public mirrors,
- * the 9Convert farm, and cobalt have ALL come up empty.
+ * Apify Actor fallback — the PAID, opt-in YouTube converter. In the normal
+ * chain it stays the absolute last resort, tried only after the Innertube
+ * clients, the public mirrors, the 9Convert farm, AllDL, and cobalt have ALL
+ * come up empty. When Innertube proves this Worker egress IP is BotGuard-
+ * walled, extract.ts deliberately tries Apify immediately after Innertube
+ * (and before the slow free farms) so Cloudflare's request wall-clock is left
+ * for the single sync Actor run.
  *
  * ── Why this fallback exists ─────────────────────────────────────────────
- * When YouTube bot-blocks this server's egress IP, every free source above
- * fails the same way, because they all extract from an IP YouTube has
- * decided not to trust. An Apify Actor runs yt-dlp inside Apify's
- * infrastructure on Apify's own proxies — i.e. on somebody else's egress —
- * which is the one thing this server cannot fake. That independence is
- * also exactly why it must stay the LAST resort: every run costs the
- * operator real, pre-paid credit.
+ * When YouTube bot-blocks this server's egress IP, direct googlevideo URLs
+ * and same-egress mirrors fail the same way, and the public free farms can
+ * spend most of a Worker request before returning nothing. An Apify Actor
+ * runs yt-dlp inside Apify's infrastructure on Apify's own proxies — i.e. on
+ * somebody else's egress — which is the one thing this server cannot fake.
+ * That independence is also why normal, non-bot-walled requests keep it last:
+ * every run costs the operator real, pre-paid credit.
  *
  * ── Configuration (optional; an unset APIFY_TOKEN disables everything) ──
  *   APIFY_TOKEN            Apify API token (Console → Settings → API & INTEGRATIONS)
@@ -43,6 +47,13 @@
  *                          walls). Never logged; only ever sent to
  *                          api.apify.com inside the HTTPS, Bearer-authenticated
  *                          run input.
+ *   APIFY_RESIDENTIAL_PROXY_MODE
+ *                          Optional. The only accepted value is `fallback`,
+ *                          which asks the Actor to use residential proxy
+ *                          fallback when Apify's free proxy fails. Omitted by
+ *                          default because residential traffic is billed by
+ *                          Apify at $0.05/MB and can wipe the $5 monthly free
+ *                          credit with one large video.
  *
  * ── Spend guard (usage cap) ──────────────────────────────────────────────
  * Before EVERY run the provider asks Apify for the account's current
@@ -139,6 +150,8 @@ export interface ApifyConfig {
    * never sent anywhere but api.apify.com, never returned to the browser.
    */
   youtubeCookies?: string;
+  /** Optional paid residential proxy mode. Only `fallback` is accepted. */
+  residentialProxyMode?: 'fallback';
 }
 
 function asString(value: unknown): string {
@@ -178,6 +191,16 @@ export function parseActorBuild(raw: string | undefined): string {
   const trimmed = (raw || '').trim();
   if (!trimmed) return DEFAULT_APIFY_ACTOR_BUILD;
   return ACTOR_BUILD_PATTERN.test(trimmed) ? trimmed : DEFAULT_APIFY_ACTOR_BUILD;
+}
+
+/**
+ * Parse the optional paid residential proxy setting. The Actor author
+ * recommends `fallback` for inconsistent free-proxy runs, but residential
+ * bytes cost $0.05/MB, so the field is omitted unless the operator opts in
+ * with exactly this value.
+ */
+export function parseResidentialProxyMode(raw: string | undefined): 'fallback' | undefined {
+  return raw === 'fallback' ? 'fallback' : undefined;
 }
 
 /**
@@ -246,6 +269,7 @@ export function apifyConfigFromEnv(): ApifyConfig | null {
       );
     }
   }
+  const residentialProxyMode = parseResidentialProxyMode(process.env.APIFY_RESIDENTIAL_PROXY_MODE);
   return {
     token,
     actorId,
@@ -253,6 +277,7 @@ export function apifyConfigFromEnv(): ApifyConfig | null {
     monthlyCapUsd: parseMonthlyCapUsd(process.env.APIFY_MONTHLY_CAP_USD),
     runTimeoutS: parseRunTimeoutS(process.env.APIFY_RUN_TIMEOUT_S),
     ...(youtubeCookies ? { youtubeCookies } : {}),
+    ...(residentialProxyMode ? { residentialProxyMode } : {}),
   };
 }
 
@@ -297,6 +322,11 @@ export interface ApifyActorInput {
    * run input for cookie-less deployments is byte-identical to before.
    */
   youtubeCookies?: string;
+  /**
+   * Optional paid residential proxy fallback. Omitted by default; only sent
+   * when APIFY_RESIDENTIAL_PROXY_MODE is exactly `fallback`.
+   */
+  residentialProxyMode?: 'fallback';
 }
 
 /**
@@ -305,13 +335,15 @@ export interface ApifyActorInput {
  * video requests — the Actor ignores it for MP3 and the MP3 bitrate is
  * whatever yt-dlp/ffmpeg produces. `youtubeCookies` is the operator's
  * pre-validated cookies.txt (see sanitizeNetscapeCookieFile) and is attached
- * unchanged when present.
+ * unchanged when present. `residentialProxyMode` is the explicit paid opt-in;
+ * when absent the key is omitted entirely.
  */
 export function buildActorInput(
   pageUrl: string,
   want: 'audio' | 'video',
   quality?: string,
   youtubeCookies?: string,
+  residentialProxyMode?: 'fallback',
 ): ApifyActorInput {
   const input: ApifyActorInput = {
     urls: [{ url: pageUrl }],
@@ -319,6 +351,7 @@ export function buildActorInput(
   };
   if (want === 'video') input.quality = apifyVideoQuality(quality);
   if (youtubeCookies) input.youtubeCookies = youtubeCookies;
+  if (residentialProxyMode === 'fallback') input.residentialProxyMode = 'fallback';
   return input;
 }
 
@@ -454,6 +487,10 @@ function toFormat(url: string, kind: 'audio' | 'video', qualityLabel?: string): 
       };
 }
 
+function logApify(message: string, ...args: unknown[]): void {
+  console.log(`[apify] ${message}`, ...args);
+}
+
 type UsageCheck = { ok: true; usedUsd: number } | { ok: false; reason: string };
 
 /** Ask Apify for this month's usage so far. Never throws. */
@@ -521,7 +558,9 @@ async function runActorOnce(
         Authorization: `Bearer ${config.token}`,
         'User-Agent': 'Mozilla/5.0 (compatible; YTConvert/1.0)',
       },
-      body: JSON.stringify(buildActorInput(pageUrl, want, quality, config.youtubeCookies)),
+      body: JSON.stringify(
+        buildActorInput(pageUrl, want, quality, config.youtubeCookies, config.residentialProxyMode),
+      ),
       // Give Apify time to answer its own 408 before we cut the call.
       signal: AbortSignal.timeout(config.runTimeoutS * 1000 + RUN_GRACE_MS),
     });
@@ -572,33 +611,50 @@ export async function apifyFormats(
   quality?: string,
 ): Promise<ApifyResult> {
   const config = apifyConfigFromEnv();
-  if (!config) return { formats: [] };
+  if (!config) {
+    logApify('skipped: APIFY_TOKEN is not configured or APIFY_ACTOR_ID is invalid');
+    return { formats: [] };
+  }
 
   // 0 is the operator's off switch: never spend, and do not even ask.
   if (config.monthlyCapUsd <= 0) {
-    return { formats: [], error: 'APIFY_MONTHLY_CAP_USD is 0 — the Apify fallback is disabled' };
+    const error = 'APIFY_MONTHLY_CAP_USD is 0 — the Apify fallback is disabled';
+    logApify('skipped:', error);
+    return { formats: [], error };
   }
 
   // Spend guard: one limits call before every run, failing closed.
   const usage = await fetchMonthlyUsageUsd(config.token);
   if (!usage.ok) {
-    return { formats: [], error: `usage check failed (${usage.reason}) — no run started` };
+    const error = `usage check failed (${usage.reason}) — no run started`;
+    logApify('skipped:', error);
+    return { formats: [], error };
   }
   if (usage.usedUsd >= config.monthlyCapUsd) {
-    return {
-      formats: [],
-      error:
-        `monthly usage $${usage.usedUsd.toFixed(2)} has reached the ` +
-        `$${config.monthlyCapUsd.toFixed(2)} cap — no run started`,
-    };
+    const error =
+      `monthly usage $${usage.usedUsd.toFixed(2)} has reached the ` +
+      `$${config.monthlyCapUsd.toFixed(2)} cap — no run started`;
+    logApify('skipped:', error);
+    return { formats: [], error };
   }
 
+  logApify(
+    `start: actor=${config.actorId} build=${config.build} format=${want} ` +
+      `timeout=${config.runTimeoutS}s residentialProxyMode=${config.residentialProxyMode ?? 'off'}`,
+  );
   const run = await runActorOnce(config, pageUrl, want, quality);
-  if (run.error) return { formats: [], error: run.error };
+  if (run.error) {
+    logApify('fail:', run.error);
+    return { formats: [], error: run.error };
+  }
 
   const picked = pickDownloadUrl(run.items);
-  if ('error' in picked) return { formats: [], error: picked.error };
+  if ('error' in picked) {
+    logApify('fail:', picked.error);
+    return { formats: [], error: picked.error };
+  }
 
+  logApify('success: Actor returned a downloadable file');
   return {
     formats: [toFormat(attachApifyToken(picked.url, config.token), want, picked.qualityLabel)],
   };
