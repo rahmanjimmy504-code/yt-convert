@@ -38,6 +38,17 @@ After that, Step 1's **Run workflow** button exists.
    `app-release.apk` and `app-release.aab`. A `v1.0` git tag is also created —
    that tag is the release marker F-Droid builds from.
 
+Before publishing the Release, the workflow drafts `android-release-notes.md`
+from the APK-related diff (`android-app/`, `fastlane/`, `.fdroid.yml`) since
+last `v*` tag; on the first tag it uses the README excerpt instead. The Release
+body and the job summary include both the `v…` tag / version and a **New
+features** section. AI providers are tried in this order when their credentials
+are available: `OPENAI_API_KEY`, then `GROQ_API_KEY`, then GitHub Models via
+`GITHUB_TOKEN` at `https://models.github.ai/inference/chat/completions`
+(`openai/gpt-4o-mini`). If none answer, the script falls back to the git log.
+The prompt and output filter are deliberately constrained to avoid invented
+features and to omit secrets, tokens, keystores, passwords, and signing details.
+
 ### Save the signing secrets (do this on the first run)
 
 On the **first** run the workflow has no stored keystore, so it mints a
