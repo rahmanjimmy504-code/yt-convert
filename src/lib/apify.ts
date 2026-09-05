@@ -30,13 +30,30 @@
  *   APIFY_RUN_TIMEOUT_S    Per-run timeout in seconds, clamped to 30–300
  *                          (default 90). Bounds both the visitor's wait and,
  *                          on a pay-per-minute Actor, the per-run bill.
- *   APIFY_ACTOR_BUILD      Actor build tag/id to run, pinned in the sync-run
- *                          URL's `build` query param (default 0.064 — the
- *                          build verified to serve a working MP4, currently
- *                          also the Actor's latest). Pinning means a future
- *                          rebuild published under a different build cannot
- *                          silently change what this paid fallback serves;
- *                          override only after re-verifying the new build.
+ *   APIFY_MAX_TOTAL_CHARGE_USD
+ *                          Per-run charge ceiling in USD, sent to Apify as the
+ *                          sync-run URL's `maxTotalChargeUsd` query parameter
+ *                          (default 0.50; never part of the Actor's JSON
+ *                          input). Apify aborts a run whose charge would
+ *                          exceed this, so one stuck or mis-billing run
+ *                          cannot eat the month's credit in a single visit.
+ *                          0 omits the parameter entirely (no per-run
+ *                          ceiling — the timeout and monthly cap still
+ *                          apply). Values are rendered to cents.
+ *   APIFY_ACTOR_BUILD      Optional Actor build tag/id to pin runs to.
+ *                          UNSET by default: no `build` query parameter is
+ *                          sent at all and every run follows the Actor's
+ *                          default build, so Actor-side fixes arrive without
+ *                          a redeploy here. A note on the numbering before
+ *                          anyone pins: the build once verified to serve a
+ *                          working MP4 is Apify build number 64, and this
+ *                          Actor's build tags are three-part semver — the
+ *                          tag is `0.0.64`, NOT `0.064`. Neither is
+ *                          default-pinned for now. Pin an explicit tag/id
+ *                          only after re-verifying it still serves a working
+ *                          MP4; a value that is not a single query-safe
+ *                          token is dropped with a warning rather than
+ *                          allowed to inject extra query parameters.
  *   APIFY_PROXY_HOSTS      Exact media hosts to trust beyond api.apify.com
  *                          (see ./media-hosts.ts; only needed if the Actor
  *                          ever hands files back from another host).
@@ -71,7 +88,8 @@
  * failed run surfaces as "no result", the visitor sees the normal
  * "try a converter" message, and the operator can read the reason in the
  * server log. The run's `timeout` is passed to Apify so a single run (and
- * its per-minute bill) cannot grow without bound.
+ * its per-minute bill) cannot grow without bound, and `maxTotalChargeUsd`
+ * puts a dollar ceiling on that one run's total charge on top.
  *
  * ── SSRF boundary ───────────────────────────────────────────────────────
  * The Actor returns a `downloadUrl` on api.apify.com. That host — and
@@ -95,11 +113,14 @@ const APIFY_API_BASE = `${APIFY_API_ORIGIN}/v2`;
 export const DEFAULT_APIFY_ACTOR_ID = 'marielise.dev~youtube-video-downloader';
 
 /**
- * Default (and currently latest) Actor build. Every run is pinned to this
- * build explicitly so a future Actor rebuild that regresses output cannot
- * silently break the paid fallback — see APIFY_ACTOR_BUILD above.
+ * Default per-run charge ceiling (USD), sent as the sync-run URL's
+ * `maxTotalChargeUsd` query parameter — not inside the Actor's JSON input.
+ * Apify aborts a run whose charge would pass this number. 0.50 comfortably
+ * covers this Actor's published prices (a 1080p MP4 of a ~4-minute video is
+ * ~$0.12) while bounding what any single run can ever bill. The
+ * APIFY_MAX_TOTAL_CHARGE_USD value 0 omits the parameter entirely.
  */
-export const DEFAULT_APIFY_ACTOR_BUILD = '0.064';
+export const DEFAULT_APIFY_MAX_TOTAL_CHARGE_USD = 0.5;
 
 /** Default soft monthly spend stop (USD). */
 export const DEFAULT_APIFY_MONTHLY_CAP_USD = 8;
@@ -125,7 +146,7 @@ const ACTOR_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._~-]*$/;
 
 /**
  * The build tag/id is interpolated into a URL query string, so it must be a
- * single query-safe token: Apify build tags ("0.064", "latest", "beta-1.2")
+ * single query-safe token: Apify build tags ("0.0.64", "latest", "beta-1.2")
  * and build ids all match this shape. Anything with spaces, `/`, `?`, `#`,
  * `&`, etc. is rejected rather than passed through, so it can never inject
  * extra query parameters into the run URL.
@@ -137,8 +158,18 @@ export interface ApifyConfig {
   token: string;
   /** Actor to run: `username~actor-name` or the internal actor ID. */
   actorId: string;
-  /** Actor build tag/id every run is pinned to (default 0.064). */
-  build: string;
+  /**
+   * Actor build tag/id to pin runs to (APIFY_ACTOR_BUILD). Undefined by
+   * default — no `build` query parameter is sent and the run follows the
+   * Actor's default build. Only ever set to a single query-safe token.
+   */
+  build?: string;
+  /**
+   * Per-run charge ceiling in USD (APIFY_MAX_TOTAL_CHARGE_USD), sent as the
+   * `maxTotalChargeUsd` URL query parameter. 0 is the operator's "omit the
+   * parameter" switch.
+   */
+  maxTotalChargeUsd: number;
   /** Soft monthly spend stop in USD; 0 is the operator's "off" switch. */
   monthlyCapUsd: number;
   /** Bounded run timeout in seconds, clamped to 30–300. */
@@ -181,16 +212,37 @@ export function parseRunTimeoutS(raw: string | undefined): number {
 }
 
 /**
- * Parse APIFY_ACTOR_BUILD. Falls back to DEFAULT_APIFY_ACTOR_BUILD ('0.064')
- * when blank or when the value does not look like a single query-safe token
- * — this value is interpolated into the run URL's `build` query parameter,
- * so anything containing a query metacharacter (space, `/`, `?`, `#`, `&`,
- * `=`, …) is rejected rather than risking injection.
+ * Parse APIFY_MAX_TOTAL_CHARGE_USD. An empty value keeps the default 0.50;
+ * a negative or non-numeric value also falls back to the default (rather
+ * than silently unbounding what one run can charge); 0 is honoured as
+ * "omit the query parameter, no per-run ceiling".
  */
-export function parseActorBuild(raw: string | undefined): string {
+export function parseMaxTotalChargeUsd(raw: string | undefined): number {
   const trimmed = (raw || '').trim();
-  if (!trimmed) return DEFAULT_APIFY_ACTOR_BUILD;
-  return ACTOR_BUILD_PATTERN.test(trimmed) ? trimmed : DEFAULT_APIFY_ACTOR_BUILD;
+  if (!trimmed) return DEFAULT_APIFY_MAX_TOTAL_CHARGE_USD;
+  const value = Number(trimmed);
+  if (!Number.isFinite(value) || value < 0) return DEFAULT_APIFY_MAX_TOTAL_CHARGE_USD;
+  return value;
+}
+
+/**
+ * Parse APIFY_ACTOR_BUILD. Returns undefined unless the operator explicitly
+ * provided a single query-safe build tag/id — nothing is default-pinned
+ * (see the header note: the verified build is tagged 0.0.64, Apify build
+ * number 64, not 0.064, and we pin to neither for now), so runs follow the
+ * Actor's default build. A value containing a query metacharacter (space,
+ * `/`, `?`, `#`, `&`, `=`, …) is dropped with a warning rather than risking
+ * injection into the run URL's query string.
+ */
+export function parseActorBuild(raw: string | undefined): string | undefined {
+  const trimmed = (raw || '').trim();
+  if (!trimmed) return undefined;
+  if (ACTOR_BUILD_PATTERN.test(trimmed)) return trimmed;
+  console.warn(
+    '[apify] APIFY_ACTOR_BUILD is not a single query-safe build tag/id; ' +
+      'ignoring it and running the Actor default build',
+  );
+  return undefined;
 }
 
 /**
@@ -270,10 +322,15 @@ export function apifyConfigFromEnv(): ApifyConfig | null {
     }
   }
   const residentialProxyMode = parseResidentialProxyMode(process.env.APIFY_RESIDENTIAL_PROXY_MODE);
+  // Optional build pin: omitted from the config entirely when unset, exactly
+  // like the cookies and residential-proxy keys, so an unpinned deployment's
+  // run URL carries no `build` parameter.
+  const build = parseActorBuild(process.env.APIFY_ACTOR_BUILD);
   return {
     token,
     actorId,
-    build: parseActorBuild(process.env.APIFY_ACTOR_BUILD),
+    ...(build ? { build } : {}),
+    maxTotalChargeUsd: parseMaxTotalChargeUsd(process.env.APIFY_MAX_TOTAL_CHARGE_USD),
     monthlyCapUsd: parseMonthlyCapUsd(process.env.APIFY_MONTHLY_CAP_USD),
     runTimeoutS: parseRunTimeoutS(process.env.APIFY_RUN_TIMEOUT_S),
     ...(youtubeCookies ? { youtubeCookies } : {}),
@@ -540,14 +597,19 @@ async function runActorOnce(
   quality?: string,
 ): Promise<{ items?: unknown; error?: string }> {
   // The actor id is validated by apifyConfigFromEnv() to contain only
-  // path-safe characters, so it can be interpolated directly. The build is
-  // validated by parseActorBuild() to contain only query-safe characters, so
-  // URLSearchParams can only ever produce a single `build` parameter — never
-  // an injected extra one.
-  const query = new URLSearchParams({
-    timeout: String(config.runTimeoutS),
-    build: config.build,
-  });
+  // path-safe characters, so it can be interpolated directly. Every run
+  // carries the bounded timeout plus the per-run charge ceiling —
+  // maxTotalChargeUsd is a URL query parameter here, never a field of the
+  // Actor's JSON input. `build` is appended only when the operator
+  // explicitly pinned a query-safe tag/id (parseActorBuild), and
+  // `maxTotalChargeUsd` only when it is non-zero, so URLSearchParams can
+  // only ever produce the intended single parameters — never injected extra
+  // ones.
+  const query = new URLSearchParams({ timeout: String(config.runTimeoutS) });
+  if (config.maxTotalChargeUsd > 0) {
+    query.set('maxTotalChargeUsd', config.maxTotalChargeUsd.toFixed(2));
+  }
+  if (config.build) query.set('build', config.build);
   const url = `${APIFY_API_BASE}/acts/${config.actorId}/run-sync-get-dataset-items?${query.toString()}`;
   try {
     const response = await fetch(url, {
@@ -639,8 +701,10 @@ export async function apifyFormats(
   }
 
   logApify(
-    `start: actor=${config.actorId} build=${config.build} format=${want} ` +
-      `timeout=${config.runTimeoutS}s residentialProxyMode=${config.residentialProxyMode ?? 'off'}`,
+    `start: actor=${config.actorId} build=${config.build ?? 'default'} format=${want} ` +
+      `timeout=${config.runTimeoutS}s ` +
+      `maxCharge=${config.maxTotalChargeUsd > 0 ? `$${config.maxTotalChargeUsd.toFixed(2)}` : 'off'} ` +
+      `residentialProxyMode=${config.residentialProxyMode ?? 'off'}`,
   );
   const run = await runActorOnce(config, pageUrl, want, quality);
   if (run.error) {
