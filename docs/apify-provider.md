@@ -64,7 +64,7 @@ MB when used**; one roughly 80 MB 720p video can cost about **$4**, nearly the
 entire $5 monthly free credit. Do not enable it unless you are deliberately
 accepting that risk after seeing Apify's free proxy fail.
 
-**Two independent stops keep the bill where you put it:**
+**Three stops keep the bill where you put it:**
 
 1. **The free credit (hard stop).** On Apify's Free plan you get $5 of usage
    credit per month, **no payment card required**. When it runs out, Apify
@@ -77,6 +77,14 @@ accepting that risk after seeing Apify's free proxy fail.
    reached this number. If that check cannot be completed at all — Apify
    unreachable, bad token, odd response — the run is skipped too: the app
    fails closed rather than risk an overrun.
+3. **`APIFY_MAX_TOTAL_CHARGE_USD` (per-run stop, default `0.50`).** Every run
+   is started with Apify's own `maxTotalChargeUsd` URL parameter — a hard
+   charge ceiling for that one run, enforced by Apify itself. Compare the
+   price table above: a normal run costs well under $0.15, so a run that
+   would pass fifty cents is stuck or mis-billing, and Apify kills it before
+   it can eat the month's credit in a single visit. Set to `0` to send no
+   per-run ceiling (not recommended — the unlimited case still has the
+   timeout and the monthly cap), or tune it to your own prices.
 
 The default cap (8) sits above the free credit (5), so on a card-less Free
 account the credit is what you will hit first. Lower the cap — say to `3` — if
@@ -84,7 +92,9 @@ you would rather pace the $5 across the whole month.
 
 One request = exactly **one** Actor run. There are no retries, no fan-out to
 other Actors, and a run is bounded by `APIFY_RUN_TIMEOUT_S` (default 90
-seconds) so a stuck run cannot bill forever. Every failed run degrades to the
+seconds) so a stuck run cannot bill forever and by
+`APIFY_MAX_TOTAL_CHARGE_USD` (default $0.50) so its total charge is capped in
+dollars too. Every failed run degrades to the
 site's normal "try a converter" message.
 
 ---
@@ -136,7 +146,8 @@ encrypted secret.
    | `APIFY_MONTHLY_CAP_USD` | Text   | `8`    |
 
    (That last one is the soft monthly cap in dollars from the table above.
-   Optional extras — `APIFY_RUN_TIMEOUT_S`, `APIFY_PROXY_HOSTS`, and the
+   Optional extras — `APIFY_RUN_TIMEOUT_S`, `APIFY_MAX_TOTAL_CHARGE_USD`,
+   `APIFY_PROXY_HOSTS`, and the
    paid `APIFY_RESIDENTIAL_PROXY_MODE=fallback` switch — are listed at the
    end of this guide; you do not need them for a normal setup.)
 7. **Deploy the new version.** Variables only take effect once deployed. If
@@ -225,7 +236,8 @@ or three; music videos are the most reliable candidates).
 - **App logs:** Cloudflare dashboard → **Workers & Pages** → **yt-convert** →
   **Observability / Logs**. Lines starting with `[apify]` are this fallback:
   skip reasons (not configured, cap reached, usage check failed), start lines
-  (`actor=… build=… format=… timeout=… residentialProxyMode=off|fallback`),
+  (`actor=… build=default|<tag> format=… timeout=… maxCharge=$0.50|off
+  residentialProxyMode=off|fallback`),
   success lines, or Actor failure reasons. Visitors never see these strings;
   they always get the plain "try a converter" sentence.
 
@@ -256,7 +268,8 @@ or three; music videos are the most reliable candidates).
 | `APIFY_ACTOR_ID` | Text | `marielise.dev~youtube-video-downloader` | Actor to run, as `username~name` or the internal ID |
 | `APIFY_MONTHLY_CAP_USD` | Text | `8` | Soft monthly USD stop, checked live before every run. `0` = never run |
 | `APIFY_RUN_TIMEOUT_S` | Text | `90` | Per-run timeout in seconds, clamped to 30–300. Bounds the visitor's wait and the per-minute bill |
-| `APIFY_ACTOR_BUILD` | Text | `0.064` | Actor build tag/id every run is pinned to (currently also the Actor's latest). Pinning stops a future Actor rebuild from silently regressing the paid fallback. Override only after re-verifying the new build still serves a working MP4 |
+| `APIFY_MAX_TOTAL_CHARGE_USD` | Text | `0.50` | Per-run charge ceiling in USD, sent as the run URL's `maxTotalChargeUsd` query parameter (never inside the Actor JSON input). Apify aborts a run whose charge would exceed this. `0` = send no per-run ceiling |
+| `APIFY_ACTOR_BUILD` | Text | *(empty)* | Optional Actor build tag/id to pin runs to. Unset = no `build` parameter is sent and runs follow the Actor's default build, so Actor fixes arrive without a redeploy. Numbering note: the build once verified to serve a working MP4 is Apify build **64**, tagged `0.0.64` (three-part semver — **not** `0.064`); neither is default-pinned. Pin explicitly only after re-verifying a build still serves a working MP4; a value that is not one query-safe token is ignored with a log warning |
 | `APIFY_PROXY_HOSTS` | Text | *(empty)* | Extra **exact** media hosts, only if the Actor serves files from somewhere other than `api.apify.com` |
 | `APIFY_YOUTUBE_COOKIES` | Secret | *(empty = anonymous runs)* | Optional Netscape-format `cookies.txt` of a **throwaway** YouTube account, bridged into the Actor's `youtubeCookies` input so yt-dlp runs signed-in |
 | `APIFY_RESIDENTIAL_PROXY_MODE` | Text | *(empty = omitted)* | Optional paid opt-in. Only `fallback` is accepted and sent as Actor input; anything else is omitted. Residential proxy traffic is $0.05/MB when used, so one large video can consume most of the $5 free credit |
@@ -287,7 +300,9 @@ network — no test ever talks to Apify):
 
 - `src/lib/apify.ts` — the provider: config parsing, the live usage check
   against `GET /v2/users/me/limits` (fails closed), the single
-  `POST /v2/acts/{actorId}/run-sync-get-dataset-items?timeout=…` call, the
+  `POST /v2/acts/{actorId}/run-sync-get-dataset-items?timeout=…&maxTotalChargeUsd=…`
+  call (with `&build=…` appended only when `APIFY_ACTOR_BUILD` explicitly
+  pins one), the
   input builder (`buildActorInput`: `format:"mp3"` for audio,
   `format:"default"` + a `360|480|720|1080` ceiling for video, the
   operator's `youtubeCookies` cookies.txt bridged in when

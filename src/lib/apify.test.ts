@@ -6,11 +6,12 @@ import {
   apifyVideoQuality,
   attachApifyToken,
   buildActorInput,
-  DEFAULT_APIFY_ACTOR_BUILD,
   DEFAULT_APIFY_ACTOR_ID,
+  DEFAULT_APIFY_MAX_TOTAL_CHARGE_USD,
   isApifyConfigured,
   monthlyUsageUsdFromLimits,
   parseActorBuild,
+  parseMaxTotalChargeUsd,
   parseMonthlyCapUsd,
   parseResidentialProxyMode,
   parseRunTimeoutS,
@@ -93,6 +94,7 @@ beforeEach(() => {
   delete process.env.APIFY_TOKEN;
   delete process.env.APIFY_ACTOR_ID;
   delete process.env.APIFY_ACTOR_BUILD;
+  delete process.env.APIFY_MAX_TOTAL_CHARGE_USD;
   delete process.env.APIFY_MONTHLY_CAP_USD;
   delete process.env.APIFY_RUN_TIMEOUT_S;
   delete process.env.APIFY_PROXY_HOSTS;
@@ -113,27 +115,32 @@ describe('apifyConfigFromEnv', () => {
     expect(isApifyConfigured()).toBe(false);
   });
 
-  it('defaults to the reviewed Actor, build 0.064, an $8 cap and a 90 s run timeout', () => {
-    expect(apifyConfigFromEnv()).toEqual({
+  it('defaults to the reviewed Actor, no build pin, a $0.50 per-run charge ceiling, an $8 cap and a 90 s run timeout', () => {
+    const config = apifyConfigFromEnv();
+    expect(config).toEqual({
       token: TOKEN,
       actorId: DEFAULT_APIFY_ACTOR_ID,
-      build: DEFAULT_APIFY_ACTOR_BUILD,
+      maxTotalChargeUsd: DEFAULT_APIFY_MAX_TOTAL_CHARGE_USD,
       monthlyCapUsd: 8,
       runTimeoutS: 90,
     });
+    // No build key at all: unpinned runs must not send a `build` parameter.
+    expect(config).not.toHaveProperty('build');
     expect(DEFAULT_APIFY_ACTOR_ID).toBe('marielise.dev~youtube-video-downloader');
-    expect(DEFAULT_APIFY_ACTOR_BUILD).toBe('0.064');
+    expect(DEFAULT_APIFY_MAX_TOTAL_CHARGE_USD).toBe(0.5);
   });
 
   it('honours operator overrides', () => {
     process.env.APIFY_ACTOR_ID = 'someone~another-downloader';
-    process.env.APIFY_ACTOR_BUILD = '0.070';
+    process.env.APIFY_ACTOR_BUILD = '0.0.70';
+    process.env.APIFY_MAX_TOTAL_CHARGE_USD = '0.25';
     process.env.APIFY_MONTHLY_CAP_USD = '2.50';
     process.env.APIFY_RUN_TIMEOUT_S = '120';
     expect(apifyConfigFromEnv()).toEqual({
       token: TOKEN,
       actorId: 'someone~another-downloader',
-      build: '0.070',
+      build: '0.0.70',
+      maxTotalChargeUsd: 0.25,
       monthlyCapUsd: 2.5,
       runTimeoutS: 120,
     });
@@ -249,28 +256,46 @@ describe('parseRunTimeoutS', () => {
   });
 });
 
-describe('parseActorBuild', () => {
-  it('keeps the default for blank input', () => {
-    expect(parseActorBuild('')).toBe('0.064');
-    expect(parseActorBuild(undefined)).toBe('0.064');
-    expect(parseActorBuild('   ')).toBe('0.064');
+describe('parseMaxTotalChargeUsd', () => {
+  it('keeps the $0.50 default for empty, negative, or non-numeric input', () => {
+    expect(parseMaxTotalChargeUsd('')).toBe(0.5);
+    expect(parseMaxTotalChargeUsd(undefined)).toBe(0.5);
+    expect(parseMaxTotalChargeUsd('-1')).toBe(0.5);
+    expect(parseMaxTotalChargeUsd('free')).toBe(0.5);
   });
 
-  it('accepts plain build tags, including "latest"', () => {
-    expect(parseActorBuild('0.064')).toBe('0.064');
-    expect(parseActorBuild('0.070')).toBe('0.070');
+  it('honours 0 as "omit the parameter" and passes positive values through', () => {
+    expect(parseMaxTotalChargeUsd('0')).toBe(0);
+    expect(parseMaxTotalChargeUsd('0.25')).toBe(0.25);
+    expect(parseMaxTotalChargeUsd('1.5')).toBe(1.5);
+    expect(parseMaxTotalChargeUsd(' 2 ')).toBe(2);
+  });
+});
+
+describe('parseActorBuild', () => {
+  it('pins nothing for blank input — runs follow the Actor default build', () => {
+    // Nothing is default-pinned: the verified build is tagged 0.0.64 (Apify
+    // build number 64, three-part semver), not 0.064, and we pin to neither.
+    expect(parseActorBuild('')).toBeUndefined();
+    expect(parseActorBuild(undefined)).toBeUndefined();
+    expect(parseActorBuild('   ')).toBeUndefined();
+  });
+
+  it('accepts plain build tags, including three-part semver and "latest"', () => {
+    expect(parseActorBuild('0.0.64')).toBe('0.0.64');
+    expect(parseActorBuild('0.0.70')).toBe('0.0.70');
     expect(parseActorBuild('latest')).toBe('latest');
     expect(parseActorBuild('beta-1.2')).toBe('beta-1.2');
-    expect(parseActorBuild('  0.070  ')).toBe('0.070');
+    expect(parseActorBuild('  0.0.70  ')).toBe('0.0.70');
   });
 
-  it('falls back to the default on query metacharacters (injection guard)', () => {
-    expect(parseActorBuild('0.064&evil=1')).toBe('0.064');
-    expect(parseActorBuild('0.064?x=1')).toBe('0.064');
-    expect(parseActorBuild('0.064#frag')).toBe('0.064');
-    expect(parseActorBuild('0.064/x')).toBe('0.064');
-    expect(parseActorBuild('a b')).toBe('0.064');
-    expect(parseActorBuild('0.064=x')).toBe('0.064');
+  it('drops query metacharacters with a warning instead of injecting them', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    for (const bad of ['0.0.64&evil=1', '0.0.64?x=1', '0.0.64#frag', '0.0.64/x', 'a b', '0.0.64=x']) {
+      expect(parseActorBuild(bad), `"${bad}"`).toBeUndefined();
+    }
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('APIFY_ACTOR_BUILD'));
+    warn.mockRestore();
   });
 });
 
@@ -475,10 +500,14 @@ describe('apifyFormats (the paid path is opt-in, capped, and single-run)', () =>
     // Exactly two requests: the limits check, then one Actor run.
     expect(calls).toHaveLength(2);
     expect(calls[0].url).toBe('https://api.apify.com/v2/users/me/limits');
+    // The default run URL bounds the run's time AND its total charge via
+    // query parameters — the charge ceiling is never part of the JSON input.
     expect(calls[1].url).toBe(
-      `https://api.apify.com/v2/acts/${DEFAULT_APIFY_ACTOR_ID}/run-sync-get-dataset-items?timeout=90&build=0.064`,
+      `https://api.apify.com/v2/acts/${DEFAULT_APIFY_ACTOR_ID}/run-sync-get-dataset-items?timeout=90&maxTotalChargeUsd=0.50`,
     );
-    expect(calls[1].url.endsWith('?timeout=90&build=0.064')).toBe(true);
+    expect(calls[1].url.endsWith('?timeout=90&maxTotalChargeUsd=0.50')).toBe(true);
+    // No build is pinned by default.
+    expect(calls[1].url).not.toContain('build=');
 
     // The token travels in the Authorization header, not the URL.
     const auth = (init?: RequestInit) => new Headers(init?.headers).get('authorization');
@@ -562,28 +591,51 @@ describe('apifyFormats (the paid path is opt-in, capped, and single-run)', () =>
     const calls = stubApify({ usedUsd: 0 });
     await apifyFormats(PAGE_URL, 'video', 'best');
     expect(calls[1].url).toBe(
-      'https://api.apify.com/v2/acts/someone~another-downloader/run-sync-get-dataset-items?timeout=45&build=0.064',
+      'https://api.apify.com/v2/acts/someone~another-downloader/run-sync-get-dataset-items?timeout=45&maxTotalChargeUsd=0.50',
     );
   });
 
-  it('pins the run to build 0.070 (not 0.064) when APIFY_ACTOR_BUILD is set', async () => {
-    process.env.APIFY_ACTOR_BUILD = '0.070';
+  it('pins the run to an explicit build only when APIFY_ACTOR_BUILD is set', async () => {
+    process.env.APIFY_ACTOR_BUILD = '0.0.70';
     const calls = stubApify({ usedUsd: 0 });
     await apifyFormats(PAGE_URL, 'video', 'best');
     expect(calls[1].url).toBe(
-      `https://api.apify.com/v2/acts/${DEFAULT_APIFY_ACTOR_ID}/run-sync-get-dataset-items?timeout=90&build=0.070`,
+      `https://api.apify.com/v2/acts/${DEFAULT_APIFY_ACTOR_ID}/run-sync-get-dataset-items?timeout=90&maxTotalChargeUsd=0.50&build=0.0.70`,
     );
-    expect(calls[1].url).not.toContain('build=0.064');
   });
 
-  it('falls back to build 0.064 with no injected params when APIFY_ACTOR_BUILD is unsafe', async () => {
-    process.env.APIFY_ACTOR_BUILD = '0.064&evil=1';
+  it('sends no build parameter at all when APIFY_ACTOR_BUILD is unsafe', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    process.env.APIFY_ACTOR_BUILD = '0.0.64&evil=1';
     const calls = stubApify({ usedUsd: 0 });
     await apifyFormats(PAGE_URL, 'video', 'best');
     expect(calls[1].url).toBe(
-      `https://api.apify.com/v2/acts/${DEFAULT_APIFY_ACTOR_ID}/run-sync-get-dataset-items?timeout=90&build=0.064`,
+      `https://api.apify.com/v2/acts/${DEFAULT_APIFY_ACTOR_ID}/run-sync-get-dataset-items?timeout=90&maxTotalChargeUsd=0.50`,
     );
+    expect(calls[1].url).not.toContain('build=');
     expect(calls[1].url).not.toContain('evil');
+    warn.mockRestore();
+  });
+
+  it('honours an operator-set per-run charge ceiling as a query parameter', async () => {
+    process.env.APIFY_MAX_TOTAL_CHARGE_USD = '0.25';
+    const calls = stubApify({ usedUsd: 0 });
+    await apifyFormats(PAGE_URL, 'video', 'best');
+    expect(calls[1].url).toBe(
+      `https://api.apify.com/v2/acts/${DEFAULT_APIFY_ACTOR_ID}/run-sync-get-dataset-items?timeout=90&maxTotalChargeUsd=0.25`,
+    );
+    // ...and never as a field of the Actor's JSON input.
+    expect(JSON.parse(String(calls[1].init?.body))).not.toHaveProperty('maxTotalChargeUsd');
+  });
+
+  it('omits maxTotalChargeUsd entirely when APIFY_MAX_TOTAL_CHARGE_USD is 0', async () => {
+    process.env.APIFY_MAX_TOTAL_CHARGE_USD = '0';
+    const calls = stubApify({ usedUsd: 0 });
+    await apifyFormats(PAGE_URL, 'video', 'best');
+    expect(calls[1].url).toBe(
+      `https://api.apify.com/v2/acts/${DEFAULT_APIFY_ACTOR_ID}/run-sync-get-dataset-items?timeout=90`,
+    );
+    expect(calls[1].url).not.toContain('maxTotalChargeUsd');
   });
 
   it('skips the run entirely when monthly usage has reached the cap', async () => {
