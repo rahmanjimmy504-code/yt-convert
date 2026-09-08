@@ -162,6 +162,27 @@ describe('/api/convert HTML rejection', () => {
     expect(mockFetchAllowed).toHaveBeenCalledTimes(2);
   });
 
+  it('vetoes the wrong-container retry for an api.apify.com stream', async () => {
+    // The first extraction has already started a paid Actor run. Re-extracting
+    // here would start a second billed run, so the generic free-source retry
+    // is disabled for the exact Apify API host.
+    mockExtract.mockResolvedValue({
+      url: 'https://api.apify.com/v2/key-value-stores/x/records/file.mp4?token=server-only',
+      mimeType: 'video/mp4',
+      extension: 'mp4',
+      note: 'Apify Actor fallback download',
+    });
+    mockFetchAllowed.mockResolvedValue(new Response(streamOf([buildMp3Bytes()]), {
+      status: 200, headers: { 'Content-Type': 'audio/mpeg' },
+    }));
+
+    const res = await handler(makeReq('http://x/api/convert?url=https://www.youtube.com/watch?v=v&format=mp4&quality=best&ticket=t&title=v'));
+    expect(res.status).toBe(502);
+    expect((await res.json()).error).toMatch(/wrong file type/i);
+    expect(mockExtract).toHaveBeenCalledTimes(1);
+    expect(mockFetchAllowed).toHaveBeenCalledTimes(1);
+  });
+
   it('auto-retries once on a wrong-container verdict and streams the correct container on the fresh extraction', async () => {
     // The transient AllDL rendition flip self-heals: attempt 1 gets MP3 bytes
     // on the video link; a fresh extraction mints fresh AllDL MACs / a fresh

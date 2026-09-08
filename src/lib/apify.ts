@@ -28,8 +28,9 @@
  *                          returns a `downloadUrl` on api.apify.com).
  *   APIFY_MONTHLY_CAP_USD  Soft monthly spend stop in USD (default 8, 0 = off).
  *   APIFY_RUN_TIMEOUT_S    Per-run timeout in seconds, clamped to 30–300
- *                          (default 90). Bounds both the visitor's wait and,
- *                          on a pay-per-minute Actor, the per-run bill.
+ *                          (default 300, sized to this Actor's ~170-second
+ *                          retry ladder). Bounds run DURATION and the
+ *                          visitor's wait; it is not the charge ceiling.
  *   APIFY_MAX_TOTAL_CHARGE_USD
  *                          Per-run charge ceiling in USD, sent to Apify as the
  *                          sync-run URL's `maxTotalChargeUsd` query parameter
@@ -125,7 +126,7 @@ export const DEFAULT_APIFY_MAX_TOTAL_CHARGE_USD = 0.5;
 /** Default soft monthly spend stop (USD). */
 export const DEFAULT_APIFY_MONTHLY_CAP_USD = 8;
 
-const DEFAULT_RUN_TIMEOUT_S = 90;
+const DEFAULT_RUN_TIMEOUT_S = 300;
 const MIN_RUN_TIMEOUT_S = 30;
 const MAX_RUN_TIMEOUT_S = 300;
 
@@ -202,7 +203,11 @@ export function parseMonthlyCapUsd(raw: string | undefined): number {
   return value;
 }
 
-/** Parse APIFY_RUN_TIMEOUT_S, clamped to the sync endpoint's 30–300 s range. */
+/**
+ * Parse APIFY_RUN_TIMEOUT_S, clamped to the sync endpoint's 30–300 s range.
+ * The default leaves room for this Actor's roughly 170-second retry ladder;
+ * timeout bounds DURATION, while maxTotalChargeUsd bounds CHARGE.
+ */
 export function parseRunTimeoutS(raw: string | undefined): number {
   const trimmed = (raw || '').trim();
   if (!trimmed) return DEFAULT_RUN_TIMEOUT_S;
@@ -427,12 +432,69 @@ export interface ApifyDownload {
  *     quality: "1080p", title, fileSizeBytes, contentType, … }
  *
  * and each failure one shaped like `{ status: "failed", error: "…" }`.
- * The first item with a usable HTTPS `downloadUrl` wins; otherwise the most
- * useful failure reason is returned. `download_url` (snake_case) is also
- * accepted so a schema tweak on the Actor's side cannot silently produce
- * "no downloadable file" for a run that actually succeeded.
+ * The first item with a usable HTTPS `downloadUrl` and a matching declared
+ * medium wins; items that positively declare the opposite medium are rejected
+ * rather than renamed. Otherwise the most useful failure reason is returned.
+ * `download_url` (snake_case) is also accepted so a schema tweak on the
+ * Actor's side cannot silently produce "no downloadable file" for a run that
+ * actually succeeded.
  */
-export function pickDownloadUrl(items: unknown): ApifyDownload | { error: string } {
+/**
+ * Return whether an Actor item positively labels itself as audio and/or
+ * video. Do not infer a medium from an absent field: an Actor schema may add
+ * a generic record without a MIME or format label, and the convert proxy's
+ * byte sniffer remains the final guard for that case.
+ */
+function declaredMediaKinds(entry: Record<string, unknown>): { audio: boolean; video: boolean } {
+  const values: string[] = [];
+  for (const key of [
+    'contentType',
+    'content_type',
+    'mimeType',
+    'mime_type',
+    'mime',
+    'mediaType',
+    'media_type',
+    'type',
+    'format',
+    'container',
+    'extension',
+    'fileExtension',
+    'file_extension',
+    'kvStoreKey',
+  ]) {
+    const value = asString(entry[key]);
+    if (value) values.push(value.toLowerCase());
+  }
+
+  // A store key / download path is useful when the Actor omits contentType,
+  // but only a conventional extension is positive evidence. Query strings
+  // and opaque Apify record ids do not accidentally declare a medium here.
+  for (const key of ['downloadUrl', 'download_url']) {
+    const rawUrl = asString(entry[key]);
+    if (!rawUrl) continue;
+    try {
+      const path = new URL(rawUrl).pathname;
+      const extension = path.match(/\.([a-z0-9]{2,5})$/i)?.[1];
+      if (extension) values.push(extension.toLowerCase());
+    } catch {
+      // URL validation below will report the unusable candidate; no medium
+      // declaration can safely be inferred from a malformed value.
+    }
+  }
+
+  const audio = values.some(value =>
+    /^audio\//.test(value)
+      || /(^|[\s._-])(audio|mp3|m4a|aac|ogg|opus|wav|flac)(?:$|[\s._-])/.test(value),
+  );
+  const video = values.some(value =>
+    /^video\//.test(value)
+      || /(^|[\s._-])(video|mp4|webm|mkv|avi|mov|m4v)(?:$|[\s._-])/.test(value),
+  );
+  return { audio, video };
+}
+
+export function pickDownloadUrl(items: unknown, want: 'audio' | 'video'): ApifyDownload | { error: string } {
   if (!Array.isArray(items)) {
     // A 2xx body that is not a list: usually an error object in disguise.
     const detail = items && typeof items === 'object' ? apifyErrorText(items) : '';
@@ -450,6 +512,19 @@ export function pickDownloadUrl(items: unknown): ApifyDownload | { error: string
       failures.push(asString(entry.error) || 'the Actor marked this URL as failed');
       continue;
     }
+
+    const kinds = declaredMediaKinds(entry);
+    const wrongMedium = want === 'audio' ? kinds.video : kinds.audio;
+    if (wrongMedium) {
+      const declared = want === 'audio' ? 'video' : 'audio';
+      const article = declared === 'audio' ? 'an' : 'a';
+      const requestArticle = want === 'audio' ? 'an' : 'a';
+      failures.push(`the Actor returned ${article} ${declared} file for ${requestArticle} ${want} request`);
+      // Never pick a positively mismatched item, even if it has a valid URL.
+      // A later item may still be the requested rendition.
+      continue;
+    }
+
     const url = asString(entry.downloadUrl) || asString(entry.download_url);
     if (url && /^https:\/\//i.test(url)) {
       const rawQuality = asString(entry.quality);
@@ -712,7 +787,7 @@ export async function apifyFormats(
     return { formats: [], error: run.error };
   }
 
-  const picked = pickDownloadUrl(run.items);
+  const picked = pickDownloadUrl(run.items, want);
   if ('error' in picked) {
     logApify('fail:', picked.error);
     return { formats: [], error: picked.error };

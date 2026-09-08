@@ -115,14 +115,14 @@ describe('apifyConfigFromEnv', () => {
     expect(isApifyConfigured()).toBe(false);
   });
 
-  it('defaults to the reviewed Actor, no build pin, a $0.50 per-run charge ceiling, an $8 cap and a 90 s run timeout', () => {
+  it('defaults to the reviewed Actor, no build pin, a $0.50 per-run charge ceiling, an $8 cap and a 300 s run timeout', () => {
     const config = apifyConfigFromEnv();
     expect(config).toEqual({
       token: TOKEN,
       actorId: DEFAULT_APIFY_ACTOR_ID,
       maxTotalChargeUsd: DEFAULT_APIFY_MAX_TOTAL_CHARGE_USD,
       monthlyCapUsd: 8,
-      runTimeoutS: 90,
+      runTimeoutS: 300,
     });
     // No build key at all: unpinned runs must not send a `build` parameter.
     expect(config).not.toHaveProperty('build');
@@ -248,11 +248,11 @@ describe('parseMonthlyCapUsd', () => {
 
 describe('parseRunTimeoutS', () => {
   it('clamps into the sync endpoint 30–300 s range', () => {
-    expect(parseRunTimeoutS('')).toBe(90);
+    expect(parseRunTimeoutS('')).toBe(300);
     expect(parseRunTimeoutS('5')).toBe(30);
     expect(parseRunTimeoutS('999')).toBe(300);
     expect(parseRunTimeoutS('150')).toBe(150);
-    expect(parseRunTimeoutS('bogus')).toBe(90);
+    expect(parseRunTimeoutS('bogus')).toBe(300);
   });
 });
 
@@ -373,8 +373,30 @@ describe('buildActorInput', () => {
 });
 
 describe('pickDownloadUrl', () => {
+  it('rejects a positively declared wrong-medium item instead of handing it to the proxy', () => {
+    const wrongAudio = successItem({
+      format: 'MP3',
+      contentType: 'audio/mpeg',
+      downloadUrl: 'https://api.apify.com/v2/key-value-stores/x/records/a.mp3',
+    });
+    expect(pickDownloadUrl([wrongAudio], 'video')).toEqual({
+      error: 'the Actor returned an audio file for a video request',
+    });
+
+    // A later correctly declared rendition is still eligible; the mismatched
+    // item must never win merely because it appears first.
+    expect(pickDownloadUrl([wrongAudio, successItem()], 'video')).toEqual({
+      url: DOWNLOAD_URL,
+      qualityLabel: '1080p',
+    });
+    expect(pickDownloadUrl([successItem({ format: 'MP3', contentType: 'audio/mpeg' })], 'video'))
+      .toEqual({ error: 'the Actor returned an audio file for a video request' });
+    expect(pickDownloadUrl([successItem()], 'audio'))
+      .toEqual({ error: 'the Actor returned a video file for an audio request' });
+  });
+
   it('returns the downloadUrl of a successful item', () => {
-    expect(pickDownloadUrl([successItem()])).toEqual({
+    expect(pickDownloadUrl([successItem()], 'video')).toEqual({
       url: DOWNLOAD_URL,
       qualityLabel: '1080p',
     });
@@ -386,44 +408,44 @@ describe('pickDownloadUrl', () => {
       downloadUrl: '',
       error: 'This is a private video and cannot be downloaded.',
     })];
-    expect(pickDownloadUrl(items)).toEqual({ error: 'This is a private video and cannot be downloaded.' });
+    expect(pickDownloadUrl(items, 'video')).toEqual({ error: 'This is a private video and cannot be downloaded.' });
   });
 
   it('treats status "error" as a failure too', () => {
-    expect(pickDownloadUrl([{ status: 'error', error: 'quota' }])).toEqual({ error: 'quota' });
+    expect(pickDownloadUrl([{ status: 'error', error: 'quota' }], 'video')).toEqual({ error: 'quota' });
   });
 
   it('skips failed items and still uses a later successful one', () => {
     const items = [
       { status: 'failed', downloadUrl: '', error: 'blocked' },
-      successItem({ downloadUrl: 'https://api.apify.com/v2/key-value-stores/x/records/y.mp3' }),
+      successItem({ downloadUrl: 'https://api.apify.com/v2/key-value-stores/x/records/y.mp4' }),
     ];
-    const picked = pickDownloadUrl(items);
+    const picked = pickDownloadUrl(items, 'video');
     expect('error' in picked ? undefined : picked.url)
-      .toBe('https://api.apify.com/v2/key-value-stores/x/records/y.mp3');
+      .toBe('https://api.apify.com/v2/key-value-stores/x/records/y.mp4');
   });
 
   it('accepts the snake_case spelling of the URL field', () => {
     const items = [{ status: 'success', download_url: 'https://api.apify.com/v2/key-value-stores/x/records/a.mp4' }];
-    const picked = pickDownloadUrl(items);
+    const picked = pickDownloadUrl(items, 'video');
     expect('error' in picked ? undefined : picked.url)
       .toBe('https://api.apify.com/v2/key-value-stores/x/records/a.mp4');
   });
 
   it('reports success items that carry no usable URL', () => {
-    expect(pickDownloadUrl([{ status: 'success', downloadUrl: '' }])).toEqual({
+    expect(pickDownloadUrl([{ status: 'success', downloadUrl: '' }], 'video')).toEqual({
       error: 'status "success" without a downloadUrl',
     });
     // A non-HTTPS URL is not usable by the proxy, so it is not returned.
-    expect('error' in pickDownloadUrl([{ status: 'success', downloadUrl: 'http://api.apify.com/x' }])).toBe(true);
+    expect('error' in pickDownloadUrl([{ status: 'success', downloadUrl: 'http://api.apify.com/x' }], 'video')).toBe(true);
   });
 
   it('rejects empty, non-array, and object responses', () => {
-    const empty = pickDownloadUrl([]);
+    const empty = pickDownloadUrl([], 'video');
     expect('error' in empty ? empty.error : '').toMatch(/no dataset items/);
-    expect('error' in pickDownloadUrl(null)).toBe(true);
-    expect('error' in pickDownloadUrl({})).toBe(true);
-    const validation = pickDownloadUrl({ error: { type: 'x', message: 'Input validation failed' } });
+    expect('error' in pickDownloadUrl(null, 'video')).toBe(true);
+    expect('error' in pickDownloadUrl({}, 'video')).toBe(true);
+    const validation = pickDownloadUrl({ error: { type: 'x', message: 'Input validation failed' } }, 'video');
     expect('error' in validation ? validation.error : '').toBe('Input validation failed');
   });
 });
@@ -503,9 +525,9 @@ describe('apifyFormats (the paid path is opt-in, capped, and single-run)', () =>
     // The default run URL bounds the run's time AND its total charge via
     // query parameters — the charge ceiling is never part of the JSON input.
     expect(calls[1].url).toBe(
-      `https://api.apify.com/v2/acts/${DEFAULT_APIFY_ACTOR_ID}/run-sync-get-dataset-items?timeout=90&maxTotalChargeUsd=0.50`,
+      `https://api.apify.com/v2/acts/${DEFAULT_APIFY_ACTOR_ID}/run-sync-get-dataset-items?timeout=300&maxTotalChargeUsd=0.50`,
     );
-    expect(calls[1].url.endsWith('?timeout=90&maxTotalChargeUsd=0.50')).toBe(true);
+    expect(calls[1].url.endsWith('?timeout=300&maxTotalChargeUsd=0.50')).toBe(true);
     // No build is pinned by default.
     expect(calls[1].url).not.toContain('build=');
 
@@ -600,7 +622,7 @@ describe('apifyFormats (the paid path is opt-in, capped, and single-run)', () =>
     const calls = stubApify({ usedUsd: 0 });
     await apifyFormats(PAGE_URL, 'video', 'best');
     expect(calls[1].url).toBe(
-      `https://api.apify.com/v2/acts/${DEFAULT_APIFY_ACTOR_ID}/run-sync-get-dataset-items?timeout=90&maxTotalChargeUsd=0.50&build=0.0.70`,
+      `https://api.apify.com/v2/acts/${DEFAULT_APIFY_ACTOR_ID}/run-sync-get-dataset-items?timeout=300&maxTotalChargeUsd=0.50&build=0.0.70`,
     );
   });
 
@@ -610,7 +632,7 @@ describe('apifyFormats (the paid path is opt-in, capped, and single-run)', () =>
     const calls = stubApify({ usedUsd: 0 });
     await apifyFormats(PAGE_URL, 'video', 'best');
     expect(calls[1].url).toBe(
-      `https://api.apify.com/v2/acts/${DEFAULT_APIFY_ACTOR_ID}/run-sync-get-dataset-items?timeout=90&maxTotalChargeUsd=0.50`,
+      `https://api.apify.com/v2/acts/${DEFAULT_APIFY_ACTOR_ID}/run-sync-get-dataset-items?timeout=300&maxTotalChargeUsd=0.50`,
     );
     expect(calls[1].url).not.toContain('build=');
     expect(calls[1].url).not.toContain('evil');
@@ -622,7 +644,7 @@ describe('apifyFormats (the paid path is opt-in, capped, and single-run)', () =>
     const calls = stubApify({ usedUsd: 0 });
     await apifyFormats(PAGE_URL, 'video', 'best');
     expect(calls[1].url).toBe(
-      `https://api.apify.com/v2/acts/${DEFAULT_APIFY_ACTOR_ID}/run-sync-get-dataset-items?timeout=90&maxTotalChargeUsd=0.25`,
+      `https://api.apify.com/v2/acts/${DEFAULT_APIFY_ACTOR_ID}/run-sync-get-dataset-items?timeout=300&maxTotalChargeUsd=0.25`,
     );
     // ...and never as a field of the Actor's JSON input.
     expect(JSON.parse(String(calls[1].init?.body))).not.toHaveProperty('maxTotalChargeUsd');
@@ -633,7 +655,7 @@ describe('apifyFormats (the paid path is opt-in, capped, and single-run)', () =>
     const calls = stubApify({ usedUsd: 0 });
     await apifyFormats(PAGE_URL, 'video', 'best');
     expect(calls[1].url).toBe(
-      `https://api.apify.com/v2/acts/${DEFAULT_APIFY_ACTOR_ID}/run-sync-get-dataset-items?timeout=90`,
+      `https://api.apify.com/v2/acts/${DEFAULT_APIFY_ACTOR_ID}/run-sync-get-dataset-items?timeout=300`,
     );
     expect(calls[1].url).not.toContain('maxTotalChargeUsd');
   });
@@ -712,7 +734,7 @@ describe('apifyFormats (the paid path is opt-in, capped, and single-run)', () =>
   it('reports a timed-out run as an error', async () => {
     stubApify({ runStatus: 408 });
     const result = await apifyFormats(PAGE_URL, 'video', 'best');
-    expect(result.error).toMatch(/did not finish within 90s/);
+    expect(result.error).toMatch(/did not finish within 300s/);
   });
 
   it('never throws when api.apify.com is unreachable mid-run', async () => {

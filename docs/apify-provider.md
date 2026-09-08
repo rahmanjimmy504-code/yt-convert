@@ -91,11 +91,14 @@ account the credit is what you will hit first. Lower the cap — say to `3` — 
 you would rather pace the $5 across the whole month.
 
 One request = exactly **one** Actor run. There are no retries, no fan-out to
-other Actors, and a run is bounded by `APIFY_RUN_TIMEOUT_S` (default 90
-seconds) so a stuck run cannot bill forever and by
+other Actors, and a run is bounded by `APIFY_RUN_TIMEOUT_S` (default 300 seconds, sized
+to the Actor's roughly 170-second retry ladder) so its DURATION cannot grow
+without bound, and by
 `APIFY_MAX_TOTAL_CHARGE_USD` (default $0.50) so its total charge is capped in
-dollars too. Every failed run degrades to the
-site's normal "try a converter" message.
+dollars too. The convert route's separate wrong-container retry is disabled
+when the returned stream is on the exact `api.apify.com` host; otherwise a
+transient bad rendition could accidentally start a second paid run. Every
+failed run degrades to the site's normal "try a converter" message.
 
 ---
 
@@ -248,6 +251,8 @@ or three; music videos are the most reliable candidates).
 | Symptom | What it means | Fix |
 |---|---|---|
 | `[apify] … check APIFY_TOKEN` in the logs | Apify rejected the token (HTTP 401/403) | Re-copy the token in Apify Console → Settings → API & Integrations, update the `APIFY_TOKEN` secret, redeploy |
+| Apify run returns HTTP **403** after the limits check succeeds | The token/account cannot run that Actor; this is Apify API authorization, not a YouTube proxy failure | Confirm the token can run the selected Actor and that the Actor is accessible to the account. Do not enable residential mode to fix this — it only changes the Actor's outbound YouTube proxy and cannot grant Apify API permission |
+| The Actor reports a residential-proxy **403** | The account or Actor is not entitled to the paid residential fallback, or the proxy request was refused | Remove `APIFY_RESIDENTIAL_PROXY_MODE` or set it to anything except the exact `fallback` value. Re-enable only after confirming residential access and watching usage; it adds $0.05/MB when used |
 | `[apify] … actor not found, check APIFY_ACTOR_ID` | The Actor was renamed or removed | Set `APIFY_ACTOR_ID` to the new `username~name` (visible in the Actor's page URL), redeploy |
 | `[apify] … returned a non-allowlisted media host` | The Actor handed back a file on a host other than `api.apify.com` | Look at the run's dataset in the Apify Console → Runs → the failing run → **Data**: the `downloadUrl` field shows the real host. Add **exactly that host** (e.g. `storage.apify.com`) to a new Text variable `APIFY_PROXY_HOSTS`, redeploy. Do not widen it to a suffix — `APIFY_PROXY_HOSTS` matches whole hostnames only |
 | `[apify] … usage check failed` | The limits call failed, so the app refused to spend | Usually transient; if it persists, check the token and Apify's status page |
@@ -267,7 +272,7 @@ or three; music videos are the most reliable candidates).
 | `APIFY_TOKEN` | Secret | *(empty = disabled)* | Apify API token. Enables the fallback and puts the exact host `api.apify.com` on the media proxy allowlist |
 | `APIFY_ACTOR_ID` | Text | `marielise.dev~youtube-video-downloader` | Actor to run, as `username~name` or the internal ID |
 | `APIFY_MONTHLY_CAP_USD` | Text | `8` | Soft monthly USD stop, checked live before every run. `0` = never run |
-| `APIFY_RUN_TIMEOUT_S` | Text | `90` | Per-run timeout in seconds, clamped to 30–300. Bounds the visitor's wait and the per-minute bill |
+| `APIFY_RUN_TIMEOUT_S` | Text | `300` | Per-run timeout in seconds, clamped to 30–300 and sized to the Actor's roughly 170-second retry ladder. Bounds run DURATION; `maxTotalChargeUsd` separately bounds CHARGE |
 | `APIFY_MAX_TOTAL_CHARGE_USD` | Text | `0.50` | Per-run charge ceiling in USD, sent as the run URL's `maxTotalChargeUsd` query parameter (never inside the Actor JSON input). Apify aborts a run whose charge would exceed this. `0` = send no per-run ceiling |
 | `APIFY_ACTOR_BUILD` | Text | *(empty)* | Optional Actor build tag/id to pin runs to. Unset = no `build` parameter is sent and runs follow the Actor's default build, so Actor fixes arrive without a redeploy. Numbering note: the build once verified to serve a working MP4 is Apify build **64**, tagged `0.0.64` (three-part semver — **not** `0.064`); neither is default-pinned. Pin explicitly only after re-verifying a build still serves a working MP4; a value that is not one query-safe token is ignored with a log warning |
 | `APIFY_PROXY_HOSTS` | Text | *(empty)* | Extra **exact** media hosts, only if the Actor serves files from somewhere other than `api.apify.com` |
