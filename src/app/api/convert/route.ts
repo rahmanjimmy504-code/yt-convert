@@ -102,6 +102,21 @@ function conversionNoteHeaders(note: string | undefined): Record<string, string>
   return value ? { 'X-Conversion-Note': value } : {};
 }
 
+/**
+ * Apify's sync call already started a paid Actor run. A wrong-container
+ * response from its exact API host must therefore not enter the generic
+ * free-source retry path below: calling extractMedia again would start a
+ * second billed Actor run for the same request.
+ */
+function isApifyMediaUrl(rawUrl: string): boolean {
+  try {
+    const parsed = new URL(rawUrl);
+    return parsed.protocol === 'https:' && parsed.hostname.toLowerCase() === 'api.apify.com';
+  } catch {
+    return false;
+  }
+}
+
 export async function GET(request: Request) {
   const ip = clientIp(request);
   const retryAfter = await rateLimit(`convert:${ip}`, RATE_LIMIT);
@@ -395,16 +410,19 @@ export async function GET(request: Request) {
           // visitor; a plain retry usually fixes it, so say that.
           const wrongType = /upstream returned (mp3|m4a|aac|ogg|webm)|magic bytes/i.test(waitForSniff.reason);
           // A wrong-container verdict is the ONLY thing worth the bounded
-          // second attempt: the upstream DID return real media bytes, just of
-          // the other container, which for AllDL means a rotating dlNN node
-          // served the wrong rendition. Re-running the conversion re-extracts
-          // (fresh AllDL MACs, fresh dlNN node) and re-fetches, so the
-          // transient flip self-heals. validatedMediaBody already cancels both
-          // tee branches on this negative verdict; make sure that teardown has
-          // landed so the upstream connection is free before we loop. An
-          // HTML/CAPTCHA verdict never reaches here — those do not change on
-          // replay, so they fall through to the honest error below.
-          if (wrongType && attempt < MAX_CONVERT_ATTEMPTS) {
+          // second attempt for a free source: the upstream DID return real
+          // media bytes, just of the other container, which for AllDL means a
+          // rotating dlNN node served the wrong rendition. Re-running the
+          // conversion re-extracts (fresh AllDL MACs, fresh dlNN node) and
+          // re-fetches, so the transient flip self-heals. An api.apify.com
+          // stream is explicitly vetoed above because re-extracting it would
+          // start a second paid Actor run. validatedMediaBody already cancels
+          // both tee branches on this negative verdict; make sure that
+          // teardown has landed so the upstream connection is free before we
+          // loop. An HTML/CAPTCHA verdict never reaches here — those do not
+          // change on replay, so they fall through to the honest error below.
+          const apifyStream = isApifyMediaUrl(extracted.url);
+          if (wrongType && !apifyStream && attempt < MAX_CONVERT_ATTEMPTS) {
             console.warn(
               `[convert] wrong container on attempt ${attempt}/${MAX_CONVERT_ATTEMPTS} (${waitForSniff.reason}); re-extracting and retrying`,
             );
