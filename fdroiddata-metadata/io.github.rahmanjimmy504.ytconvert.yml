@@ -1,0 +1,37 @@
+AntiFeatures:
+  NonFreeNet:
+    en-US: Uses YouTube, a proprietary service, for media metadata and streams.
+Categories:
+  - Internet
+  - Multimedia
+License: GPL-3.0-or-later
+AuthorName: rahmanjimmy504
+AuthorWebSite: https://github.com/rahmanjimmy504-code
+SourceCode: https://github.com/rahmanjimmy504-code/yt-convert
+IssueTracker: https://github.com/rahmanjimmy504-code/yt-convert/issues
+
+AutoName: YT Convert
+
+RepoType: git
+Repo: https://github.com/rahmanjimmy504-code/yt-convert
+
+Builds:
+  - versionName: '1.0'
+    versionCode: 1
+    commit: v1.1
+    subdir: android-app/android
+    sudo:
+      - apt-get update
+      - apt-get install -y openjdk-21-jdk-headless nodejs npm
+    prebuild:
+      - cd .. && npm ci && npm run build && npx cap sync android
+    scanignore:
+      - android-app/android/app/src/main/cpp/lame
+    ndk: 27.3.13750724
+    gradle:
+      - yes
+
+AutoUpdateMode: None
+UpdateCheckMode: None
+CurrentVersion: '1.0'
+CurrentVersionCode: 1
