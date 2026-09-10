@@ -84,10 +84,6 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           set -euo pipefail
-          # `wrangler secret put` tries to create/deploy a secret edit and can
-          # fail when the latest Worker version is not currently deployed.
-          # `versions secret bulk` is designed for this situation: it creates
-          # an undeployed version containing the runtime secrets.
           jq -n \
             --arg captcha "$CAPTCHA_SECRET" \
             --arg ticket "$CONVERT_TICKET_SECRET" \
@@ -119,10 +115,12 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           set -euo pipefail
-          # `versions secret bulk` creates the newest Worker version. Get its
-          # ID and deploy that exact version at 100%, so the uploaded secrets
-          # are actually active in production.
-          VERSION_ID="$(npx wrangler versions list --name yt-convert | awk '/Version ID:/ {print $3; exit}')"
+          # Do not pipe Wrangler directly into awk. Wrangler writes progress
+          # output to stdout, and awk exits after the first match; that closes
+          # Wrangler's stdout early and can make Node throw EPIPE.
+          npx wrangler versions list --name yt-convert > wrangler-versions.txt
+          VERSION_ID="$(awk '/Version ID:/ {print $3; exit}' wrangler-versions.txt)"
+          rm -f wrangler-versions.txt
           if [ -z "$VERSION_ID" ]; then
             echo "Could not determine the newly-created Worker version ID."
             exit 1
