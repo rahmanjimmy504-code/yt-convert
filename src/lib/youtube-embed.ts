@@ -7,11 +7,15 @@
  * useful independent player surface. Both youtube.com and youtube-nocookie
  * variants are raced; cipher-only entries are intentionally ignored.
  *
+ * If both embed surfaces fail, the Cloudflare-compatible youtubei.js fallback
+ * gets one last chance before extract.ts moves on to the farm/mirror fallbacks.
+ *
  * Server-only: youtubeAwareFetch may use the operator's YT_EGRESS_PROXY.
  */
 
 import { isAllowedMediaUrl } from './media-hosts';
 import { youtubeAwareFetch } from './youtube-egress';
+import { youtubeiFallbackFormats } from './youtubei-fallback';
 import type { PlayerFormat } from './youtube-formats';
 
 const EMBED_TIMEOUT_MS = 8_000;
@@ -146,5 +150,10 @@ export async function youtubeEmbedFormats(videoId: string): Promise<PlayerFormat
   const results = await Promise.all(
     YOUTUBE_EMBED_BASES.map(base => formatsFromEmbedBase(base, videoId)),
   );
-  return results.find(formats => formats.length > 0) || [];
+  const embedFormats = results.find(formats => formats.length > 0);
+  if (embedFormats?.length) return embedFormats;
+
+  // Emergency-only path. This remains behind the two embed requests and is
+  // therefore invisible on normal successful conversions.
+  return youtubeiFallbackFormats(videoId);
 }
