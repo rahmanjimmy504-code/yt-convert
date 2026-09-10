@@ -20,7 +20,6 @@ jobs:
         shell: python
         run: |
           from pathlib import Path
-          import re
 
           pure = r'''// SPDX-License-Identifier: GPL-3.0-or-later
 package io.github.rahmanjimmy504.ytconvert.plugins.ytextractor
@@ -28,11 +27,7 @@ package io.github.rahmanjimmy504.ytconvert.plugins.ytextractor
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
-/**
- * Small dependency-free FLAC writer. It deliberately uses FLAC VERBATIM
- * subframes: compression is minimal, but the output is a standards-compliant
- * lossless FLAC file and works on every Android API supported by the app.
- */
+/** Dependency-free FLAC writer using lossless VERBATIM subframes. */
 class PureFlacEncoder(
     private val handle: MediaStoreSaver.RawHandle,
     private val sampleRate: Int,
@@ -49,12 +44,11 @@ class PureFlacEncoder(
         val streamInfo = ByteArray(34)
         putU16(streamInfo, 0, blockSize)
         putU16(streamInfo, 2, blockSize)
-        // min/max frame size are unknown until encoded; zero is permitted.
         val rateChannelsBps = (sampleRate.toLong() shl 44) or
             ((channels - 1L) shl 41) or (15L shl 36)
         putU64Partial(streamInfo, 10, rateChannelsBps)
         handle.write(byteArrayOf(0x66, 0x4c, 0x61, 0x43), 0, 4)
-        handle.write(byteArrayOf(0x80, 0x00, 0x00, 0x22), 0, 4)
+        handle.write(byteArrayOf(0x80.toByte(), 0, 0, 0x22), 0, 4)
         handle.write(streamInfo, 0, streamInfo.size)
         bytes += 42
     }
@@ -73,14 +67,12 @@ class PureFlacEncoder(
     }
 
     fun finish() {
-        // STREAMINFO total-samples occupies 36 bits starting at byte 13.
-        val patch = ByteArray(5)
         val value = totalSamples and ((1L shl 36) - 1)
-        patch[0] = ((value ushr 32) and 0x0f).toByte()
-        patch[1] = (value ushr 24).toByte()
-        patch[2] = (value ushr 16).toByte()
-        patch[3] = (value ushr 8).toByte()
-        patch[4] = value.toByte()
+        val patch = byteArrayOf(
+            ((value ushr 32) and 0x0f).toByte(),
+            (value ushr 24).toByte(), (value ushr 16).toByte(),
+            (value ushr 8).toByte(), value.toByte(),
+        )
         handle.patch(13, patch)
     }
 
@@ -88,26 +80,27 @@ class PureFlacEncoder(
     fun bytesWritten(): Long = bytes
 
     private fun writeFrame(samples: ShortArray, offsetFrames: Int, frames: Int) {
-        val out = BitWriter()
-        out.writeBits(0x3ffe, 14) // FLAC sync code
-        out.writeBits(0, 1)       // reserved
-        out.writeBits(0, 1)       // fixed-blocking strategy
-        out.writeBits(6, 4)       // block size follows as 8-bit (frames - 1)
-        out.writeBits(12, 4)      // sample rate follows as 8-bit kHz
-        out.writeBits(channels - 1, 4) // independent channels
-        out.writeBits(4, 3)       // 16-bit samples
-        out.writeBits(0, 1)
-        writeUtf8(out, frameNumber++)
-        out.writeBits(frames - 1, 8)
-        out.writeBits(sampleRate / 1000, 8)
-        out.alignZero()
-        val header = out.toByteArray()
+        val headerBits = BitWriter()
+        headerBits.writeBits(0x3ffe, 14)
+        headerBits.writeBits(0, 1)
+        headerBits.writeBits(0, 1)
+        headerBits.writeBits(6, 4)
+        headerBits.writeBits(13, 4) // 16-bit sample rate in Hz (exact, e.g. 44100)
+        headerBits.writeBits(channels - 1, 4)
+        headerBits.writeBits(4, 3)
+        headerBits.writeBits(0, 1)
+        writeUtf8(headerBits, frameNumber++)
+        headerBits.writeBits(frames - 1, 8)
+        headerBits.writeBits(sampleRate, 16)
+        headerBits.alignZero()
+        val header = headerBits.toByteArray()
         val crc8 = crc8(header)
+
         val body = BitWriter()
         for (ch in 0 until channels) {
-            body.writeBits(0, 1) // zero padding
-            body.writeBits(1, 6) // VERBATIM subframe
-            body.writeBits(0, 1) // no wasted bits
+            body.writeBits(0, 1)
+            body.writeBits(1, 6)
+            body.writeBits(0, 1)
             for (i in 0 until frames) {
                 val sample = samples[(offsetFrames + i) * channels + ch].toInt()
                 body.writeBits(sample and 0xffff, 16)
@@ -134,11 +127,7 @@ class PureFlacEncoder(
             for (i in count - 1 downTo 0) {
                 current = (current shl 1) or ((value ushr i) and 1)
                 used++
-                if (used == 8) {
-                    data.add(current.toByte())
-                    current = 0
-                    used = 0
-                }
+                if (used == 8) { data.add(current.toByte()); current = 0; used = 0 }
             }
         }
         fun alignZero() { if (used != 0) { current = current shl (8 - used); data.add(current.toByte()); current = 0; used = 0 } }
@@ -146,7 +135,6 @@ class PureFlacEncoder(
     }
 
     private fun writeUtf8(out: BitWriter, value: Long) {
-        // FLAC frame/sample numbers use UTF-8 coding.
         when {
             value < 0x80 -> out.writeBits(value.toInt(), 8)
             value < 0x800 -> { out.writeBits(0xC0 or (value.toInt() ushr 6), 8); out.writeBits(0x80 or (value.toInt() and 0x3f), 8) }
@@ -154,19 +142,8 @@ class PureFlacEncoder(
             else -> { out.writeBits(0xF0 or (value.toInt() ushr 18), 8); out.writeBits(0x80 or ((value.toInt() ushr 12) and 0x3f), 8); out.writeBits(0x80 or ((value.toInt() ushr 6) and 0x3f), 8); out.writeBits(0x80 or (value.toInt() and 0x3f), 8) }
         }
     }
-
-    private fun crc8(data: ByteArray): Int {
-        var crc = 0
-        for (b in data) { crc = crc xor (b.toInt() and 0xff); repeat(8) { crc = if ((crc and 0x80) != 0) ((crc shl 1) xor 0x07) and 0xff else (crc shl 1) and 0xff } }
-        return crc
-    }
-
-    private fun crc16(data: ByteArray, length: Int): Int {
-        var crc = 0
-        for (i in 0 until length) { crc = crc xor ((data[i].toInt() and 0xff) shl 8); repeat(8) { crc = if ((crc and 0x8000) != 0) ((crc shl 1) xor 0x8005) and 0xffff else (crc shl 1) and 0xffff } }
-        return crc
-    }
-
+    private fun crc8(data: ByteArray): Int { var crc = 0; for (b in data) { crc = crc xor (b.toInt() and 0xff); repeat(8) { crc = if ((crc and 0x80) != 0) ((crc shl 1) xor 0x07) and 0xff else (crc shl 1) and 0xff } }; return crc }
+    private fun crc16(data: ByteArray, length: Int): Int { var crc = 0; for (i in 0 until length) { crc = crc xor ((data[i].toInt() and 0xff) shl 8); repeat(8) { crc = if ((crc and 0x8000) != 0) ((crc shl 1) xor 0x8005) and 0xffff else (crc shl 1) and 0xffff } }; return crc }
     private fun putU16(a: ByteArray, p: Int, v: Int) { a[p] = (v ushr 8).toByte(); a[p + 1] = v.toByte() }
     private fun putU64Partial(a: ByteArray, p: Int, v: Long) { for (i in 0 until 8) a[p + i] = (v ushr (56 - i * 8)).toByte() }
 }
@@ -195,8 +172,7 @@ class PureFlacEncoder(
           p.write_text(s)
 
           fp = Path('android-app/android/app/src/main/java/io/github/rahmanjimmy504/ytconvert/plugins/ytextractor/FormatPicker.kt')
-          s = fp.read_text().replace('const val FLAC_MIN_API = 31', 'const val FLAC_MIN_API = BASE_API_LEVEL')
-          s = s.replace('/** FLAC needs the framework encoder first relied on from Android 12. */', '/** FLAC uses the bundled dependency-free encoder and works from minSdk. */')
+          s = fp.read_text().replace('const val FLAC_MIN_API = 31', 'const val FLAC_MIN_API = BASE_API_LEVEL').replace('/** FLAC needs the framework encoder first relied on from Android 12. */', '/** FLAC uses the bundled dependency-free encoder and works from minSdk. */')
           fp.write_text(s)
 
           ft = Path('android-app/src/lib/formats.ts')
@@ -205,21 +181,17 @@ class PureFlacEncoder(
           ft.write_text(s)
 
           test = Path('android-app/src/lib/formats.test.ts')
-          s = test.read_text()
-          s = s.replace("it('gates FLAC to API 31+ and Opus to API 29+ (mirrors FormatPicker.kt)'", "it('keeps FLAC available from minSdk and gates Opus to API 29+ (mirrors FormatPicker.kt)'")
+          s = test.read_text().replace("it('gates FLAC to API 31+ and Opus to API 29+ (mirrors FormatPicker.kt)'", "it('keeps FLAC available from minSdk and gates Opus to API 29+ (mirrors FormatPicker.kt)'")
           s = s.replace("expect(TARGETS.flac.minApiLevel).toBe(31);", "expect(TARGETS.flac.minApiLevel).toBe(MIN_API_LEVEL);")
           s = s.replace("expect(targetAvailable('flac', 28)).toBe(false);", "expect(targetAvailable('flac', 28)).toBe(true);")
           s = s.replace("expect(targetAvailable('flac', 29)).toBe(false);", "expect(targetAvailable('flac', 29)).toBe(true);")
-          s = s.replace("expect(targetAvailable('flac', 31)).toBe(true);", "expect(targetAvailable('flac', 31)).toBe(true);")
           s = s.replace("expect(targetAvailable('flac', null)).toBe(false);", "expect(targetAvailable('flac', null)).toBe(true);")
           s = s.replace("expect(targetUnavailableReason('flac', null)).toContain('device version unknown');", "expect(targetUnavailableReason('flac', null)).toBeNull();")
           s = s.replace("expect(targetUnavailableReason('flac', 28)).toBe('Needs Android 12+.');", "expect(targetUnavailableReason('flac', 28)).toBeNull();")
           test.write_text(s)
-
-          # This workflow is one-shot.
           Path('.github/workflows/enable-native-flac.yml').unlink()
 
-      - name: Run Android/web format tests
+      - name: Run tests
         run: |
           npm ci
           npm run lint
