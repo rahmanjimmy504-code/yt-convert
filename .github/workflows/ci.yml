@@ -28,71 +28,69 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Apply one-time youtubei fallback wiring
+      - name: Apply requested audio format implementation
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-        shell: bash
+        shell: python
         run: |
-          python - <<'PY'
           from pathlib import Path
-          extract = Path('src/lib/extract.ts')
-          s = extract.read_text()
+          import re, subprocess
+
           changed = False
+          p = Path('src/lib/platforms.ts')
+          s = p.read_text()
+          s2 = s.replace("export type FormatKey = 'flac' | 'mp3' | 'm4a' | 'opus' | 'mp4';", "export type FormatKey = 'flac' | 'mp3' | 'm4a' | 'aac' | 'opus' | 'mp4';")
+          if s2 != s: p.write_text(s2); changed = True
 
-          old = "import { youtubeEmbedFormats } from './youtube-embed';\n"
-          new = old + "import { youtubeiFallbackFormats } from './youtubei-fallback';\n"
-          if "from './youtubei-fallback'" not in s:
-              if old not in s: raise SystemExit('extract import anchor not found')
-              s = s.replace(old, new, 1); changed = True
+          p = Path('src/lib/youtube-formats.ts'); s = p.read_text()
+          if 'export const AUDIO_FORMAT_OPTIONS' not in s:
+              anchor = "export const AUDIO_KBPS_OPTIONS = ['best', '320', '256', '192', '128', '64'] as const;"
+              if anchor in s:
+                  s = s.replace(anchor, anchor + "\nexport const AUDIO_FORMAT_OPTIONS = ['flac', 'mp3', 'm4a', 'aac', 'opus'] as const;\nexport type AudioFormat = (typeof AUDIO_FORMAT_OPTIONS)[number];", 1); changed = True
+          s2 = re.sub(r"export function isValidQuality\(format: 'mp3' \| 'mp4', quality: string\): boolean \{.*?\n\}", """export function isValidQuality(format: 'flac' | 'mp3' | 'm4a' | 'aac' | 'opus' | 'mp4', quality: string): boolean {\n  return format === 'mp4' ? (VIDEO_QUALITY_OPTIONS as readonly string[]).includes(quality) : (AUDIO_KBPS_OPTIONS as readonly string[]).includes(quality);\n}""", s, count=1, flags=re.S)
+          if s2 != s: s = s2; changed = True
+          p.write_text(s)
 
-          old = "  | 'youtube-embed'\n  | '9convert';"
-          new = "  | 'youtube-embed'\n  | 'youtubei'\n  | '9convert';"
-          if "  | 'youtubei'" not in s:
-              if old not in s: raise SystemExit('extract union anchor not found')
-              s = s.replace(old, new, 1); changed = True
+          p = Path('src/lib/media-content.ts'); s = p.read_text()
+          s2 = s.replace("export type MediaContainer = 'mp3' | 'mp4' | 'webm' | 'ogg' | 'm4a' | 'aac' | 'html' | 'unknown';", "export type MediaContainer = 'flac' | 'mp3' | 'mp4' | 'webm' | 'ogg' | 'm4a' | 'aac' | 'html' | 'unknown';")
+          s2 = s2.replace("const ID3 = asciiToBytes('ID3');", "const ID3 = asciiToBytes('ID3');\nconst FLAC = asciiToBytes('fLaC');")
+          s2 = s2.replace("  // MP3: ID3v2 header", "  if (startsWithBytes(head, FLAC)) return 'flac';\n\n  // MP3: ID3v2 header", 1)
+          s2 = s2.replace("requested: 'mp3' | 'mp4',", "requested: 'flac' | 'mp3' | 'mp4' | 'm4a' | 'aac' | 'opus',")
+          if s2 != s: p.write_text(s2); changed = True
 
-          anchor = """    } else if (embed.length) {\n      formats = embed;\n      source = 'youtube-embed';\n    }\n  }\n\n  // MP3 requests:"""
-          replacement = """    } else if (embed.length) {\n      formats = embed;\n      source = 'youtube-embed';\n    }\n  }\n\n  // Last-resort free youtubei.js fallback. Only accept a real progressive\n  // MP4 with audio; never relabel an adaptive video-only or audio stream.\n  if (!formats.length && format === 'mp4' && !excludedSources.has('youtubei')) {\n    try {\n      const fallbackFormats = await youtubeiFallbackFormats(id);\n      const usable = fallbackFormats.filter(f =>\n        typeof f.url === 'string' &&\n        isAllowedMediaUrl(f.url) &&\n        /video\\/(mp4|x-m4v)|application\\/mp4/i.test(f.mimeType || '') &&\n        Boolean(f.audioQuality)\n      );\n      if (usable.length) {\n        formats = usable;\n        source = 'youtubei';\n      }\n    } catch {\n      // Continue to the existing conversion farms if youtubei.js fails.\n    }\n  }\n\n  // MP3 requests:"""
-          if "source = 'youtubei';" not in s:
-              if anchor not in s: raise SystemExit('extract fallback anchor not found')
-              s = s.replace(anchor, replacement, 1); changed = True
+          p = Path('src/app/api/convert/route.ts'); s = p.read_text()
+          s2 = s.replace("requested: 'mp3' | 'mp4',", "requested: 'flac' | 'mp3' | 'mp4' | 'm4a' | 'aac' | 'opus',", 1)
+          s2 = s2.replace("if (format !== 'mp3' && format !== 'mp4') return json('Format must be mp3 or mp4', 400);", "if (!['flac', 'mp3', 'm4a', 'aac', 'opus', 'mp4'].includes(format)) return json('Format must be FLAC, MP3, M4A, AAC, Opus or MP4', 400);", 1)
+          s2 = s2.replace("const requestedExt = format === 'mp3' ? 'mp3' : 'mp4';", "const requestedExt = format;", 1)
+          if s2 != s: p.write_text(s2); changed = True
 
-          old = "          'youtube-embed': 'YouTube embed fallback stream',\n          '9convert': '9Convert farm fallback',"
-          new = "          'youtube-embed': 'YouTube embed fallback stream',\n          youtubei: 'youtubei.js fallback stream',\n          '9convert': '9Convert farm fallback',"
-          if "youtubei: 'youtubei.js fallback stream'" not in s:
-              if old not in s: raise SystemExit('extract MP3 notes anchor not found')
-              s = s.replace(old, new, 1); changed = True
+          p = Path('src/lib/extract.ts'); s = p.read_text()
+          marker = "  if (kind === 'audio') {\n    const mp3 = pickYouTubeFormat(formats, 'audio', quality);"
+          if marker in s and 'const requestedAudio' not in s:
+              replacement = """  if (kind === 'audio') {\n    const requestedAudio = format as Exclude<FormatKey, 'mp4'>;\n    if (requestedAudio !== 'mp3') {\n      const usableAudio = formats.filter(f => f.url && isAllowedMediaUrl(f.url) && /audio\\//i.test(f.mimeType || ''));\n      const matches = usableAudio.filter(f => { const mime = f.mimeType || ''; if (requestedAudio === 'flac') return /audio\\/flac/i.test(mime); if (requestedAudio === 'm4a') return /audio\\/(mp4|x-m4a)/i.test(mime) || /mp4a/i.test(mime); if (requestedAudio === 'aac') return /audio\\/aac/i.test(mime); if (requestedAudio === 'opus') return /audio\\/(opus|ogg|webm)/i.test(mime); return false; });\n      const native = [...matches].sort((a,b) => (b.bitrate || 0) - (a.bitrate || 0))[0];\n      if (native?.url) { const extension = requestedAudio === 'opus' && /audio\\/webm/i.test(native.mimeType || '') ? 'webm' : requestedAudio; return ok({ url: native.url, mimeType: native.mimeType || 'application/octet-stream', extension, qualityLabel: native.qualityLabel, note: 'Native audio stream' }); }\n      return fail(`No native ${requestedAudio.toUpperCase()} stream is available from this source. Choose another format or use a converter below.`);\n    }\n    const mp3 = pickYouTubeFormat(formats, 'audio', quality);"""
+              s = s.replace(marker, replacement, 1); p.write_text(s); changed = True
 
-          old = "    'youtube-embed': 'YouTube embed fallback stream',\n    '9convert': '9Convert farm fallback',"
-          new = "    'youtube-embed': 'YouTube embed fallback stream',\n    youtubei: 'youtubei.js fallback stream',\n    '9convert': '9Convert farm fallback',"
-          if "    youtubei: 'youtubei.js fallback stream'" not in s:
-              if old not in s: raise SystemExit('extract MP4 notes anchor not found')
-              s = s.replace(old, new, 1); changed = True
-          extract.write_text(s)
+          p = Path('src/app/page.tsx'); s = p.read_text()
+          s2 = s.replace("import { AUDIO_KBPS_OPTIONS, VIDEO_QUALITY_OPTIONS, type VideoQualityPlan }", "import { AUDIO_FORMAT_OPTIONS, AUDIO_KBPS_OPTIONS, VIDEO_QUALITY_OPTIONS, type VideoQualityPlan }", 1)
+          if "const [audioFormat" not in s2:
+              s2 = s2.replace("const [format, setFormat] = useState<FormatKey>('mp4');", "const [format, setFormat] = useState<FormatKey>('mp4');\n  const [audioFormat, setAudioFormat] = useState<Exclude<FormatKey, 'mp4'>>('mp3');", 1)
+          s2 = s2.replace("const quality = format === 'mp3' ? audioQuality : videoQuality;", "const quality = format === 'mp4' ? videoQuality : audioQuality;", 1)
+          old = '''                  {/* Audio / Video toggle stays on the result card. */}\n                  <div className="grid grid-cols-2 h-10 rounded-lg bg-gray-100 dark:bg-gray-800 p-1">\n                    <button onClick={() => handleFormatChange('mp3')} className={'rounded-md text-xs font-medium transition-all flex items-center justify-center gap-1.5 ' + (format === 'mp3' ? 'bg-white dark:bg-gray-700 shadow-sm' : 'text-gray-500')}>\n                      <Music className="w-3.5 h-3.5" /> Audio\n                    </button>\n                    <button onClick={() => handleFormatChange('mp4')} className={'rounded-md text-xs font-medium transition-all flex items-center justify-center gap-1.5 ' + (format === 'mp4' ? 'bg-white dark:bg-gray-700 shadow-sm' : 'text-gray-500')}>\n                      <Film className="w-3.5 h-3.5" /> Video\n                    </button>\n                  </div>'''
+          new = '''                  <div>\n                    <label className="block text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-1.5">File type</label>\n                    <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5">\n                      {AUDIO_FORMAT_OPTIONS.map(f => (<button key={f} type="button" onClick={() => { setAudioFormat(f); setFormat(f); sSet('yt-convert-format', f); }} aria-pressed={audioFormat === f && format !== 'mp4'} className={'h-9 rounded-lg text-[11px] font-semibold border transition-colors ' + (audioFormat === f && format !== 'mp4' ? 'bg-red-600 text-white border-red-600' : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-700')}>{f.toUpperCase()}</button>))}\n                      <button type="button" onClick={() => handleFormatChange('mp4')} aria-pressed={format === 'mp4'} className={'h-9 rounded-lg text-[11px] font-semibold border transition-colors ' + (format === 'mp4' ? 'bg-red-600 text-white border-red-600' : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-700')}>MP4</button>\n                    </div>\n                  </div>'''
+          if old in s2: s2 = s2.replace(old, new, 1)
+          if s2 != s: p.write_text(s2); changed = True
 
-          route = Path('src/app/api/convert/route.ts')
-          r = route.read_text()
-          old = "  | 'youtube-embed'\n  | '9convert';"
-          new = "  | 'youtube-embed'\n  | 'youtubei'\n  | '9convert';"
-          if "  | 'youtubei'" not in r:
-              if old not in r: raise SystemExit('route union anchor not found')
-              r = r.replace(old, new, 1); changed = True
-          old = "  'YouTube embed fallback stream': 'youtube-embed',\n  '9Convert farm fallback': '9convert',"
-          new = "  'YouTube embed fallback stream': 'youtube-embed',\n  'youtubei.js fallback stream': 'youtubei',\n  '9Convert farm fallback': '9convert',"
-          if "'youtubei.js fallback stream': 'youtubei'" not in r:
-              if old not in r: raise SystemExit('route mapping anchor not found')
-              r = r.replace(old, new, 1); changed = True
-          route.write_text(r)
+          # Remove obsolete one-shot workflow after this migration.
+          temp = Path('.github/workflows/add-audio-format-picker.yml')
+          if temp.exists(): temp.unlink(); changed = True
 
           if changed:
-              import subprocess
               subprocess.run(['git','config','user.name','github-actions[bot]'], check=True)
               subprocess.run(['git','config','user.email','41898282+github-actions[bot]@users.noreply.github.com'], check=True)
-              subprocess.run(['git','add','src/lib/extract.ts','src/app/api/convert/route.ts'], check=True)
-              subprocess.run(['git','commit','-m','fix: wire youtubei fallback into YouTube extraction'], check=True)
+              subprocess.run(['git','add','src','.github/workflows/add-audio-format-picker.yml'], check=True)
+              subprocess.run(['git','commit','-m','feat: add FLAC MP3 M4A AAC and Opus audio picker'], check=True)
               subprocess.run(['git','push'], check=True)
-          PY
 
-      - name: Remove temporary patch workflow
+      - name: Remove temporary youtubei patch workflow
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         run: |
           if [ -f .github/workflows/wire-youtubei-fallback.yml ]; then
