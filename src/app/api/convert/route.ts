@@ -186,7 +186,7 @@ export async function GET(request: Request) {
   // failure, a refused/non-2xx upstream, an ffmpeg failure — returns on the
   // first attempt: those verdicts do not change on replay and retrying them
   // would only double the work of a bot-walled or dead upstream.
-  const MAX_CONVERT_ATTEMPTS = 2;
+  const MAX_CONVERT_ATTEMPTS = 3;
 
   try {
     for (let attempt = 1; attempt <= MAX_CONVERT_ATTEMPTS; attempt += 1) {
