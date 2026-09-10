@@ -1017,6 +1017,14 @@ async function extractYouTube(
   // current formats, return an error so the caller surfaces an honest
   // "try a converter" message rather than saving an M4A renamed .mp3.
   if (kind === 'audio') {
+    const requestedAudio = format as Exclude<FormatKey, 'mp4'>;
+    if (requestedAudio !== 'mp3') {
+      const usableAudio = formats.filter(f => f.url && isAllowedMediaUrl(f.url) && /audio\//i.test(f.mimeType || ''));
+      const matches = usableAudio.filter(f => { const mime = f.mimeType || ''; if (requestedAudio === 'flac') return /audio\/flac/i.test(mime); if (requestedAudio === 'm4a') return /audio\/(mp4|x-m4a)/i.test(mime) || /mp4a/i.test(mime); if (requestedAudio === 'aac') return /audio\/aac/i.test(mime); if (requestedAudio === 'opus') return /audio\/(opus|ogg|webm)/i.test(mime); return false; });
+      const native = [...matches].sort((a,b) => (b.bitrate || 0) - (a.bitrate || 0))[0];
+      if (native?.url) { const extension = requestedAudio === 'opus' && /audio\/webm/i.test(native.mimeType || '') ? 'webm' : requestedAudio; return ok({ url: native.url, mimeType: native.mimeType || 'application/octet-stream', extension, qualityLabel: native.qualityLabel, note: 'Native audio stream' }); }
+      return fail(`No native ${requestedAudio.toUpperCase()} stream is available from this source. Choose another format or use a converter below.`);
+    }
     const mp3 = pickYouTubeFormat(formats, 'audio', quality);
     if (mp3?.url) {
       const mimeType = mp3.mimeType || 'audio/mpeg';

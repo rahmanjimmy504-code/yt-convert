@@ -84,6 +84,8 @@ function isRealMp3(format: PlayerFormat): boolean {
 
 /** Audio bitrate options (kbps) shown in the UI and accepted by the API. */
 export const AUDIO_KBPS_OPTIONS = ['best', '320', '256', '192', '128', '64'] as const;
+export const AUDIO_FORMAT_OPTIONS = ['flac', 'mp3', 'm4a', 'aac', 'opus'] as const;
+export type AudioFormat = (typeof AUDIO_FORMAT_OPTIONS)[number];
 /** Video resolution options (height, without the p) shown in the UI/API. */
 export const VIDEO_QUALITY_OPTIONS = ['best', '1080', '720', '480', '360'] as const;
 export type AudioQuality = (typeof AUDIO_KBPS_OPTIONS)[number];
@@ -102,10 +104,8 @@ export function mp3BitrateKbps(quality: string): number {
 }
 
 /** Validates the `quality` query param against the chosen format. */
-export function isValidQuality(format: 'mp3' | 'mp4', quality: string): boolean {
-  return format === 'mp3'
-    ? (AUDIO_KBPS_OPTIONS as readonly string[]).includes(quality)
-    : (VIDEO_QUALITY_OPTIONS as readonly string[]).includes(quality);
+export function isValidQuality(format: 'flac' | 'mp3' | 'm4a' | 'aac' | 'opus' | 'mp4', quality: string): boolean {
+  return format === 'mp4' ? (VIDEO_QUALITY_OPTIONS as readonly string[]).includes(quality) : (AUDIO_KBPS_OPTIONS as readonly string[]).includes(quality);
 }
 
 function pickClosestHeight(list: PlayerFormat[], target: number): PlayerFormat | null {

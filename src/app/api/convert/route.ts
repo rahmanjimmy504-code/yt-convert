@@ -43,7 +43,7 @@ function json(error: string, status: number, extra?: Record<string, unknown>) {
  */
 function validatedMediaBody(
   upstream: Response,
-  requested: 'mp3' | 'mp4',
+  requested: 'flac' | 'mp3' | 'mp4' | 'm4a' | 'aac' | 'opus',
   contentType: string,
 ): { body: ReadableStream<Uint8Array>; valid: Promise<{ ok: true } | { ok: false; reason: string }> } {
   const upstreamBody = upstream.body;
@@ -136,7 +136,7 @@ export async function GET(request: Request) {
 
   if (!rawUrl) return json('Missing url parameter', 400);
   if (rawUrl.length > 2048) return json('URL is too long', 400);
-  if (format !== 'mp3' && format !== 'mp4') return json('Format must be mp3 or mp4', 400);
+  if (!['flac', 'mp3', 'm4a', 'aac', 'opus', 'mp4'].includes(format)) return json('Format must be FLAC, MP3, M4A, AAC, Opus or MP4', 400);
   if (!isValidQuality(format, quality)) return json('Unsupported quality for this format', 400);
 
   const platform = detectPlatform(rawUrl);
@@ -210,7 +210,7 @@ export async function GET(request: Request) {
       // source was available and we should not hand the user a renamed file.
       // The one exception: an extractor-marked transcodeToMp3 result is a real
       // audio source that this server will re-encode to MP3 (ffmpeg libmp3lame).
-      const requestedExt = format === 'mp3' ? 'mp3' : 'mp4';
+      const requestedExt = format;
       const transcodeAvailable =
         format === 'mp3' && extracted.transcodeToMp3 === true && isTranscodeEnabled();
       if (extracted.extension !== requestedExt && !transcodeAvailable) {

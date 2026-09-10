@@ -7,7 +7,7 @@
  * ReadableStream primitives so inspection does not leak into the client graph.
  */
 
-export type MediaContainer = 'mp3' | 'mp4' | 'webm' | 'ogg' | 'm4a' | 'aac' | 'html' | 'unknown';
+export type MediaContainer = 'flac' | 'mp3' | 'mp4' | 'webm' | 'ogg' | 'm4a' | 'aac' | 'html' | 'unknown';
 
 /** Maximum bytes consumed by the sniffer from the head of the response. */
 export const SNIFF_BYTES = 2048;
@@ -54,6 +54,7 @@ function indexOfBytes(haystack: Uint8Array, needle: Uint8Array): number {
 
 /** MP3 ID3v2 header starts with "ID3" then version bytes. */
 const ID3 = asciiToBytes('ID3');
+const FLAC = asciiToBytes('fLaC');
 /** MPEG 1/2/2.5 audio frame sync: 11 set bits (0xFFE0), layer III commonly. */
 function isMpegFrameSync(bytes: Uint8Array, offset = 0): boolean {
   if (bytes.length - offset < 2) return false;
@@ -144,6 +145,8 @@ export function sniffContainer(bytes: Uint8Array): MediaContainer {
     break;
   }
 
+  if (startsWithBytes(head, FLAC)) return 'flac';
+
   // MP3: ID3v2 header OR an MPEG audio frame sync within the first 2 KB
   // (some live streams drop ID3 metadata and jump straight to a sync word).
   if (startsWithBytes(head, ID3)) return 'mp3';
@@ -192,7 +195,7 @@ export interface MediaAcceptance {
  * `requested` is the user's actual selection ('mp3' or 'mp4').
  */
 export function acceptMediaResponse(
-  requested: 'mp3' | 'mp4',
+  requested: 'flac' | 'mp3' | 'mp4' | 'm4a' | 'aac' | 'opus',
   contentType: string | null | undefined,
   bytes: Uint8Array,
 ): MediaAcceptance {

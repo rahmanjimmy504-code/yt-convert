@@ -43,7 +43,7 @@ import { OPEN_COOKIE_PREFERENCES_EVENT } from '@/lib/cookies';
 import { deriveDownloadPanelState, qualityDowngradeNote } from '@/lib/download-panel';
 import { clientFallbackTail } from '@/lib/convert-error';
 import { ANDROID_DOWNLOAD_APPS, buildAndroidDownloadIntent, type AndroidDownloadApp } from '@/lib/android-download-apps';
-import { AUDIO_KBPS_OPTIONS, VIDEO_QUALITY_OPTIONS, type VideoQualityPlan } from '@/lib/youtube-formats';
+import { AUDIO_FORMAT_OPTIONS, AUDIO_KBPS_OPTIONS, VIDEO_QUALITY_OPTIONS, type VideoQualityPlan } from '@/lib/youtube-formats';
 import { LICENSE_SPDX, LICENSE_URL, SOURCE_URL } from '@/lib/site';
 import Captcha from '@/components/captcha';
 
@@ -135,6 +135,7 @@ export default function Home() {
   const [mounted, setMounted] = useState(false);
   const [url, setUrl] = useState('');
   const [format, setFormat] = useState<FormatKey>('mp4');
+  const [audioFormat, setAudioFormat] = useState<Exclude<FormatKey, 'mp4'>>('mp3');
   const [audioQuality, setAudioQuality] = useState<string>('best');
   const [videoQuality, setVideoQuality] = useState<string>('best');
   const [phase, setPhase] = useState<Phase>('input');
@@ -552,7 +553,7 @@ export default function Home() {
   const downloadHere = async () => {
     if (!videoInfo?.convertTicket || converting) return;
     const u = url.trim();
-    const quality = format === 'mp3' ? audioQuality : videoQuality;
+    const quality = format === 'mp4' ? videoQuality : audioQuality;
     const href = `/api/convert?url=${encodeURIComponent(u)}&format=${format}&quality=${encodeURIComponent(quality)}&ticket=${encodeURIComponent(videoInfo.convertTicket)}&title=${encodeURIComponent(videoInfo.title || '')}`;
     setConverting(true);
     setConvertError('');
@@ -906,14 +907,12 @@ export default function Home() {
                       : ' Video is progressive MP4 when the platform provides one.'}
                   </p>
 
-                  {/* Audio / Video toggle stays on the result card. */}
-                  <div className="grid grid-cols-2 h-10 rounded-lg bg-gray-100 dark:bg-gray-800 p-1">
-                    <button onClick={() => handleFormatChange('mp3')} className={'rounded-md text-xs font-medium transition-all flex items-center justify-center gap-1.5 ' + (format === 'mp3' ? 'bg-white dark:bg-gray-700 shadow-sm' : 'text-gray-500')}>
-                      <Music className="w-3.5 h-3.5" /> Audio
-                    </button>
-                    <button onClick={() => handleFormatChange('mp4')} className={'rounded-md text-xs font-medium transition-all flex items-center justify-center gap-1.5 ' + (format === 'mp4' ? 'bg-white dark:bg-gray-700 shadow-sm' : 'text-gray-500')}>
-                      <Film className="w-3.5 h-3.5" /> Video
-                    </button>
+                  <div>
+                    <label className="block text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-1.5">File type</label>
+                    <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5">
+                      {AUDIO_FORMAT_OPTIONS.map(f => (<button key={f} type="button" onClick={() => { setAudioFormat(f); setFormat(f); sSet('yt-convert-format', f); }} aria-pressed={audioFormat === f && format !== 'mp4'} className={'h-9 rounded-lg text-[11px] font-semibold border transition-colors ' + (audioFormat === f && format !== 'mp4' ? 'bg-red-600 text-white border-red-600' : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-700')}>{f.toUpperCase()}</button>))}
+                      <button type="button" onClick={() => handleFormatChange('mp4')} aria-pressed={format === 'mp4'} className={'h-9 rounded-lg text-[11px] font-semibold border transition-colors ' + (format === 'mp4' ? 'bg-red-600 text-white border-red-600' : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-700')}>MP4</button>
+                    </div>
                   </div>
 
                   {/* Bitrate (MP3) or resolution (MP4) picker. Only YouTube has
