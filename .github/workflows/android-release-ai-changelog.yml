@@ -1,0 +1,62 @@
+name: Android release AI changelog
+
+on:
+  workflow_run:
+    workflows: ["Android release APK/AAB"]
+    types: [completed]
+
+permissions:
+  contents: write
+  models: read
+
+concurrency:
+  group: android-release-ai-changelog
+  cancel-in-progress: true
+
+jobs:
+  changelog:
+    name: Analyze Android release changes with AI
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout the exact released commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Find the release tag created by the APK/AAB workflow
+        id: tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="$(git tag --points-at HEAD | grep '^v' | sort -V | tail -n1 || true)"
+          if [ -z "$TAG" ]; then
+            echo "No v* release tag points at $GITHUB_SHA. The Android release may have been run against an unexpected ref." >&2
+            exit 1
+          fi
+          VERSION="${TAG#v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Analyzing Android release $TAG at $GITHUB_SHA"
+
+      - name: Generate AI changelog
+        env:
+          RELEASE_VERSION: ${{ steps.tag.outputs.version }}
+          RELEASE_NOTES_OUT: ${{ runner.temp }}/android-release-notes.md
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python3 scripts/android-release-changelog.py
+          cat "$RELEASE_NOTES_OUT" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Replace GitHub Release notes with AI changelog
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          NOTES: ${{ runner.temp }}/android-release-notes.md
+        run: |
+          set -euo pipefail
+          gh release edit "$TAG" --notes-file "$NOTES"
+          echo "Updated GitHub Release $TAG with AI-generated feature, bug-fix, and improvement notes."
