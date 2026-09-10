@@ -1,0 +1,130 @@
+name: Fix wrong-container source retries
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Patch source-aware retries
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          p = Path('src/lib/extract.ts')
+          s = p.read_text()
+
+          old = """export interface ExtractOptions {\n  /** Optional YouTube session cookies for age-gate / login-required bypass. */\n  youTubeCookies?: string;\n}\n"""
+          new = """export interface ExtractOptions {\n  /** Optional YouTube session cookies for age-gate / login-required bypass. */\n  youTubeCookies?: string;\n  /** Sources to skip after a provider returned the wrong media container. */\n  excludeSources?: YouTubeSource[];\n}\n"""
+          if old not in s:
+              raise SystemExit('ExtractOptions target not found')
+          s = s.replace(old, new, 1)
+
+          old = """  const id = extractYouTubeId(pageUrl);\n  if (!id) return fail('Invalid YouTube URL');\n\n  // If an external PO-token server is configured"""
+          new = """  const id = extractYouTubeId(pageUrl);\n  if (!id) return fail('Invalid YouTube URL');\n\n  const excludedSources = new Set<YouTubeSource>(options?.excludeSources ?? []);\n\n  // If an external PO-token server is configured"""
+          if old not in s:
+              raise SystemExit('extractYouTube insertion target not found')
+          s = s.replace(old, new, 1)
+
+          old = """  let innertube = await innertubeFormats(id, {\n    cookies: options?.youTubeCookies,\n    poToken: playerPo ?? undefined,\n  });"""
+          new = """  let innertube = excludedSources.has('innertube')\n    ? { formats: [], status: undefined, reason: undefined, botChallenged: false }\n    : await innertubeFormats(id, {\n        cookies: options?.youTubeCookies,\n        poToken: playerPo ?? undefined,\n      });"""
+          if old not in s:
+              raise SystemExit('innertube target not found')
+          s = s.replace(old, new, 1)
+
+          old = """      const retried = await innertubeFormats(id, {\n        cookies: options?.youTubeCookies,\n        poToken: freshToken,\n      });"""
+          new = """      const retried = excludedSources.has('innertube')\n        ? { formats: [], status: undefined, reason: undefined, botChallenged: false }\n        : await innertubeFormats(id, {\n            cookies: options?.youTubeCookies,\n            poToken: freshToken,\n          });"""
+          if old not in s:
+              raise SystemExit('innertube retry target not found')
+          s = s.replace(old, new, 1)
+
+          old = """    const [piped, latest, invidious, embed] = await Promise.all([\n      pipedFormats(id),\n      invidiousLatestVersionFormats(id),\n      invidiousFormats(id),\n      youtubeEmbedFormats(id),\n    ]);"""
+          new = """    const [piped, latest, invidious, embed] = await Promise.all([\n      excludedSources.has('piped') ? Promise.resolve({ formats: [], error: undefined }) : pipedFormats(id),\n      excludedSources.has('invidious-latest') ? Promise.resolve([]) : invidiousLatestVersionFormats(id),\n      excludedSources.has('invidious-api') ? Promise.resolve([]) : invidiousFormats(id),\n      excludedSources.has('youtube-embed') ? Promise.resolve([]) : youtubeEmbedFormats(id),\n    ]);"""
+          if old not in s:
+              raise SystemExit('mirror race target not found')
+          s = s.replace(old, new, 1)
+
+          old = """  if (!formats.length) {\n    const farmFormats = await nineConvertFormats(id, format === 'mp4' ? 'mp4' : 'mp3', quality);"""
+          new = """  if (!formats.length && !excludedSources.has('9convert')) {\n    const farmFormats = await nineConvertFormats(id, format === 'mp4' ? 'mp4' : 'mp3', quality);"""
+          if old not in s:
+              raise SystemExit('9convert target not found')
+          s = s.replace(old, new, 1)
+
+          old = """  if (!formats.length) {\n    const alldl = await alldlFormats(id, format === 'mp4' ? 'mp4' : 'mp3');"""
+          new = """  if (!formats.length && !excludedSources.has('alldl')) {\n    const alldl = await alldlFormats(id, format === 'mp4' ? 'mp4' : 'mp3');"""
+          if old not in s:
+              raise SystemExit('AllDL target not found')
+          s = s.replace(old, new, 1)
+
+          old = """  if (!formats.length && isCobaltConfigured()) {\n    const cobalt = await cobaltFormats(pageUrl, format === 'mp4' ? 'video' : 'audio');"""
+          new = """  if (!formats.length && !excludedSources.has('cobalt') && isCobaltConfigured()) {\n    const cobalt = await cobaltFormats(pageUrl, format === 'mp4' ? 'video' : 'audio');"""
+          if old not in s:
+              raise SystemExit('Cobalt target not found')
+          s = s.replace(old, new, 1)
+
+          old = """  if (!formats.length && !triedApify) {\n    if (isApifyConfigured()) {"""
+          new = """  if (!formats.length && !triedApify && !excludedSources.has('apify')) {\n    if (isApifyConfigured()) {"""
+          if old not in s:
+              raise SystemExit('Apify target not found')
+          s = s.replace(old, new, 1)
+
+          # Make the final returned media identify its source so a wrong-container
+          # response can be excluded on the next extraction attempt.
+          old = """          note: notes[source],\n        });"""
+          new = """          note: notes[source] || 'Innertube stream',\n        });"""
+          if old not in s:
+              raise SystemExit('MP3 note target not found')
+          s = s.replace(old, new, 1)
+
+          old = """  return ok({\n    url: mediaUrl,\n    mimeType,\n    extension: extensionForMime(mimeType, 'mp4'),\n    qualityLabel: picked.qualityLabel,\n    note: source === 'innertube' ? undefined : undefined,\n  });"""
+          if old in s:
+              s = s.replace(old, """  return ok({\n    url: mediaUrl,\n    mimeType,\n    extension: extensionForMime(mimeType, 'mp4'),\n    qualityLabel: picked.qualityLabel,\n    note: source === 'innertube' ? 'Innertube stream' : undefined,\n  });""", 1)
+
+          p.write_text(s)
+
+          p = Path('src/app/api/convert/route.ts')
+          s = p.read_text()
+          old = """      const extracted = await extractMedia(platform, rawUrl, format, quality, { youTubeCookies });"""
+          new = """      const excludedSources = new Set<'innertube' | 'piped' | 'invidious-latest' | 'invidious-api' | 'youtube-embed' | '9convert' | 'alldl' | 'cobalt' | 'apify'>();\n      if (attempt > 1 && previousWrongSource) excludedSources.add(previousWrongSource);\n\n      const extracted = await extractMedia(platform, rawUrl, format, quality, {\n        youTubeCookies,\n        excludeSources: platform === 'youtube' || platform === 'youtubemusic' ? [...excludedSources] : undefined,\n      });"""
+          if old not in s:
+              raise SystemExit('extractMedia call target not found')
+          s = s.replace(old, new, 1)
+
+          old = """  try {\n    for (let attempt = 1; attempt <= MAX_CONVERT_ATTEMPTS; attempt += 1) {"""
+          new = """  try {\n    let previousWrongSource: 'innertube' | 'piped' | 'invidious-latest' | 'invidious-api' | 'youtube-embed' | '9convert' | 'alldl' | 'cobalt' | 'apify' | undefined;\n    for (let attempt = 1; attempt <= MAX_CONVERT_ATTEMPTS; attempt += 1) {"""
+          if old not in s:
+              raise SystemExit('attempt loop target not found')
+          s = s.replace(old, new, 1)
+
+          old = """          if (wrongType && !apifyStream && attempt < MAX_CONVERT_ATTEMPTS) {\n            console.warn("""
+          new = """          if (wrongType && !apifyStream && attempt < MAX_CONVERT_ATTEMPTS) {\n            const sourceByNote: Record<string, typeof previousWrongSource> = {\n              'Piped fallback stream': 'piped',\n              'Invidious relayed stream': 'invidious-latest',\n              'Invidious fallback stream': 'invidious-api',\n              'YouTube embed fallback stream': 'youtube-embed',\n              '9Convert farm fallback': '9convert',\n              'AllDL fallback download': 'alldl',\n              'Cobalt fallback stream': 'cobalt',\n              'Apify Actor fallback download': 'apify',\n              'Innertube stream': 'innertube',\n            };\n            previousWrongSource = sourceByNote[extracted.note || ''];\n            console.warn("""
+          if old not in s:
+              raise SystemExit('wrong-container retry target not found')
+          s = s.replace(old, new, 1)
+
+          p.write_text(s)
+          PY
+
+      - name: Commit patch
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/lib/extract.ts src/app/api/convert/route.ts
+          git diff --cached --quiet || git commit -m 'fix: skip failed media source on container retry'
+          git push
+
+      - name: Remove temporary workflow
+        if: success()
+        run: |
+          rm -f .github/workflows/fix-source-retry.yml
+          git add .github/workflows/fix-source-retry.yml
+          git commit -m 'chore: remove temporary source retry workflow'
+          git push
