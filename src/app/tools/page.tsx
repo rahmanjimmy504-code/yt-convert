@@ -16,10 +16,10 @@ const MAX_LINKS = 50;
 function parseLinks(value: string): string[] {
   const seen = new Set<string>();
   const links: string[] = [];
-  for (const raw of value.split(/[\\s,]+/)) {
+  for (const raw of value.split(/[\s,]+/)) {
     const candidate = raw.trim().replace(/[),.;]+$/, '');
     if (!candidate) continue;
-    const url = /^https?:\\/\\//i.test(candidate) ? candidate : `https://${candidate}`;
+    const url = /^https?:\/\//i.test(candidate) ? candidate : `https://${candidate}`;
     try {
       const parsed = new URL(url);
       if (!/^https?:$/.test(parsed.protocol)) continue;
@@ -76,7 +76,7 @@ export default function ToolsPage() {
   const copyList = async () => {
     if (!items.length) return;
     try {
-      await navigator.clipboard.writeText(items.map(item => item.url).join('\\n'));
+      await navigator.clipboard.writeText(items.map(item => item.url).join('\n'));
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1800);
     } catch {}
@@ -108,7 +108,7 @@ export default function ToolsPage() {
             }}
             rows={7}
             spellCheck={false}
-            placeholder={'Paste one or many links…\\nhttps://youtu.be/example\\nhttps://soundcloud.com/example'}
+            placeholder={'Paste one or many links…\nhttps://youtu.be/example\nhttps://soundcloud.com/example'}
             className="w-full rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 p-3 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-red-500 resize-y"
           />
 
