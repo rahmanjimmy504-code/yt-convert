@@ -94,7 +94,10 @@ export async function youtubeiFallbackFormats(videoId: string): Promise<PlayerFo
     for (const client of clients) {
       try {
         const info = await Promise.race([
-          yt.getInfo(videoId, client),
+          // youtubei.js v18 expects the client profile inside the options
+          // object; passing the string as the second argument no longer
+          // matches GetVideoInfoOptions and breaks the production build.
+          yt.getInfo(videoId, { client }),
           new Promise<never>((_, reject) =>
             setTimeout(() => reject(new Error('youtubei.js request timeout')), FALLBACK_TIMEOUT_MS),
           ),
