@@ -719,6 +719,8 @@ export async function invidiousFormats(videoId: string): Promise<PlayerFormat[]>
 export interface ExtractOptions {
   /** Optional YouTube session cookies for age-gate / login-required bypass. */
   youTubeCookies?: string;
+  /** Sources to skip after a provider returned the wrong media container. */
+  excludeSources?: YouTubeSource[];
 }
 
 type YouTubeSource =
@@ -740,6 +742,8 @@ async function extractYouTube(
 ): Promise<ExtractResult> {
   const id = extractYouTubeId(pageUrl);
   if (!id) return fail('Invalid YouTube URL');
+
+  const excludedSources = new Set<YouTubeSource>(options?.excludeSources ?? []);
 
   // If an external PO-token server is configured, fetch a token up front so
   // it can be attached to the Innertube player requests. A failure here is
@@ -771,10 +775,12 @@ async function extractYouTube(
   const playerPo = playerToken || sessionToken;
 
   // Primary: Innertube clients that return direct googlevideo URLs.
-  let innertube = await innertubeFormats(id, {
-    cookies: options?.youTubeCookies,
-    poToken: playerPo ?? undefined,
-  });
+  let innertube = excludedSources.has('innertube')
+    ? { formats: [], status: undefined, reason: undefined, botChallenged: false }
+    : await innertubeFormats(id, {
+        cookies: options?.youTubeCookies,
+        poToken: playerPo ?? undefined,
+      });
 
   // Durable fix for the bot wall: when every client was refused with a
   // BotGuard IP challenge — or when the up-front token fetch failed and so the
@@ -798,10 +804,12 @@ async function extractYouTube(
       forceRefresh: true,
     }).catch(() => null);
     if (freshToken && freshToken.poToken !== playerPo?.poToken) {
-      const retried = await innertubeFormats(id, {
-        cookies: options?.youTubeCookies,
-        poToken: freshToken,
-      });
+      const retried = excludedSources.has('innertube')
+        ? { formats: [], status: undefined, reason: undefined, botChallenged: false }
+        : await innertubeFormats(id, {
+            cookies: options?.youTubeCookies,
+            poToken: freshToken,
+          });
       // Keep the retry only when it actually improved things, so a flakier
       // second answer cannot mask the first, more specific refusal.
       if (retried.formats.length || !innertube.status) innertube = retried;
@@ -857,10 +865,10 @@ async function extractYouTube(
     // relayed Piped/latest_version streams, because googlevideo URLs are bound
     // to the public IP that extracted them; those relays preserve that egress.
     const [piped, latest, invidious, embed] = await Promise.all([
-      pipedFormats(id),
-      invidiousLatestVersionFormats(id),
-      invidiousFormats(id),
-      youtubeEmbedFormats(id),
+      excludedSources.has('piped') ? Promise.resolve({ formats: [], error: undefined }) : pipedFormats(id),
+      excludedSources.has('invidious-latest') ? Promise.resolve([]) : invidiousLatestVersionFormats(id),
+      excludedSources.has('invidious-api') ? Promise.resolve([]) : invidiousFormats(id),
+      excludedSources.has('youtube-embed') ? Promise.resolve([]) : youtubeEmbedFormats(id),
     ]);
     pipedError = piped.error;
     if (piped.formats.length) {
@@ -896,7 +904,7 @@ async function extractYouTube(
   // survive a BotGuard wall on this Vercel host. Empty/404 farm hops are
   // explicitly non-fatal and fall through to cobalt/the honest error below.
   let cobaltError: string | undefined;
-  if (!formats.length) {
+  if (!formats.length && !excludedSources.has('9convert')) {
     const farmFormats = await nineConvertFormats(id, format === 'mp4' ? 'mp4' : 'mp3', quality);
     if (farmFormats.length) {
       formats = farmFormats;
@@ -911,7 +919,7 @@ async function extractYouTube(
   // timeout-bounded attempt, byte-sniffed for container honesty, and any
   // failure returns nothing so cobalt still runs (and, on non-bot-walled
   // requests, Apify remains after cobalt as the paid final fallback).
-  if (!formats.length) {
+  if (!formats.length && !excludedSources.has('alldl')) {
     const alldl = await alldlFormats(id, format === 'mp4' ? 'mp4' : 'mp3');
     if (alldl.length) {
       formats = alldl;
@@ -929,7 +937,7 @@ async function extractYouTube(
   // here, so even a compromised instance cannot make /api/convert fetch an
   // arbitrary host. A URL that fails that check is treated as no result at
   // all rather than being silently proxied.
-  if (!formats.length && isCobaltConfigured()) {
+  if (!formats.length && !excludedSources.has('cobalt') && isCobaltConfigured()) {
     const cobalt = await cobaltFormats(pageUrl, format === 'mp4' ? 'video' : 'audio');
     const cobaltUrls = cobalt.formats.filter(f => f.url && isAllowedMediaUrl(f.url));
     if (cobaltUrls.length) {
@@ -949,7 +957,7 @@ async function extractYouTube(
   // is re-checked against the media-host allowlist here (api.apify.com is
   // only proxiable while APIFY_TOKEN is set), so a hostile or changed Actor
   // cannot make /api/convert fetch an arbitrary host.
-  if (!formats.length && !triedApify) {
+  if (!formats.length && !triedApify && !excludedSources.has('apify')) {
     if (isApifyConfigured()) {
       await runApifyFallback('last-resort');
     } else {
@@ -1035,7 +1043,7 @@ async function extractYouTube(
           mimeType: 'audio/mpeg',
           extension: 'mp3',
           qualityLabel: mp3.qualityLabel,
-          note: notes[source],
+          note: notes[source] || 'Innertube stream',
         });
       }
     }

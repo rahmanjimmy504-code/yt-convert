@@ -189,8 +189,15 @@ export async function GET(request: Request) {
   const MAX_CONVERT_ATTEMPTS = 3;
 
   try {
+    let previousWrongSource: 'innertube' | 'piped' | 'invidious-latest' | 'invidious-api' | 'youtube-embed' | '9convert' | 'alldl' | 'cobalt' | 'apify' | undefined;
     for (let attempt = 1; attempt <= MAX_CONVERT_ATTEMPTS; attempt += 1) {
-      const extracted = await extractMedia(platform, rawUrl, format, quality, { youTubeCookies });
+      const excludedSources = new Set<'innertube' | 'piped' | 'invidious-latest' | 'invidious-api' | 'youtube-embed' | '9convert' | 'alldl' | 'cobalt' | 'apify'>();
+      if (attempt > 1 && previousWrongSource) excludedSources.add(previousWrongSource);
+
+      const extracted = await extractMedia(platform, rawUrl, format, quality, {
+        youTubeCookies,
+        excludeSources: platform === 'youtube' || platform === 'youtubemusic' ? [...excludedSources] : undefined,
+      });
       if (isExtractError(extracted)) {
         recordEvent({ type: 'lookup', platform, ok: false, error: 'convert failed' });
         return json(extracted.error, 502);
@@ -423,6 +430,18 @@ export async function GET(request: Request) {
           // change on replay, so they fall through to the honest error below.
           const apifyStream = isApifyMediaUrl(extracted.url);
           if (wrongType && !apifyStream && attempt < MAX_CONVERT_ATTEMPTS) {
+            const sourceByNote: Record<string, typeof previousWrongSource> = {
+              'Piped fallback stream': 'piped',
+              'Invidious relayed stream': 'invidious-latest',
+              'Invidious fallback stream': 'invidious-api',
+              'YouTube embed fallback stream': 'youtube-embed',
+              '9Convert farm fallback': '9convert',
+              'AllDL fallback download': 'alldl',
+              'Cobalt fallback stream': 'cobalt',
+              'Apify Actor fallback download': 'apify',
+              'Innertube stream': 'innertube',
+            };
+            previousWrongSource = sourceByNote[extracted.note || ''];
             console.warn(
               `[convert] wrong container on attempt ${attempt}/${MAX_CONVERT_ATTEMPTS} (${waitForSniff.reason}); re-extracting and retrying`,
             );
