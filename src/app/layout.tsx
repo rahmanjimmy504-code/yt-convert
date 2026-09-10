@@ -3,6 +3,7 @@ import localFont from "next/font/local";
 import "./globals.css";
 import { getSiteUrl } from "@/lib/site";
 import CookieConsent from "@/components/cookie-consent";
+import GitHubStarButton from "@/components/github-star-button";
 
 // Geist is vendored locally (see src/app/fonts/LICENSE-Geist.txt) so builds
 // don't depend on fetching fonts from Google Fonts at compile time.
@@ -124,6 +125,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body className={`${geistSans.variable} antialiased font-sans bg-gray-50 text-gray-900 min-h-screen`}>
         {children}
+        <GitHubStarButton />
         {/* Cookie-consent notice: shown once per visitor, reopenable from the
             footer "Cookie settings" link. Stores the choice in a single
             first-party cookie (see src/lib/cookies.ts). */}
