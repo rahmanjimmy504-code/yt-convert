@@ -2,21 +2,12 @@
 // Keeping this in one place prevents the two sides from drifting apart.
 
 export type PlatformKey =
-  | 'youtube'
-  | 'youtubemusic'
-  | 'soundcloud'
-  | 'twitter'
-  | 'instagram'
-  | 'spotify'
-  | 'deezer'
-  | 'applemusic'
-  | 'amazonmusic'
-  | 'tiktok'
-  | 'facebook'
-  | 'snapchat'
-  | 'br';
+  | 'youtube' | 'youtubemusic' | 'soundcloud' | 'twitter' | 'instagram'
+  | 'spotify' | 'deezer' | 'applemusic' | 'amazonmusic' | 'tiktok'
+  | 'facebook' | 'snapchat' | 'br';
 
-export type FormatKey = 'flav' | 'mp3' | 'm4a' | 'opus' | 'mp4';
+/** User-selectable output formats. */
+export type FormatKey = 'flac' | 'mp3' | 'm4a' | 'aac' | 'opus' | 'mp4';
 
 export const PLATFORM_KEYS: PlatformKey[] = [
   'youtube', 'youtubemusic', 'soundcloud', 'twitter', 'instagram', 'spotify',
@@ -46,7 +37,6 @@ export const PLATFORM_COLORS: Record<PlatformKey, string> = {
 };
 
 const DEFAULT_COLOR = 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400';
-
 export function platformLabel(p: string): string { return (PLATFORM_LABELS as Record<string, string>)[p] || ''; }
 export function platformColor(p: string): string { return (PLATFORM_COLORS as Record<string, string>)[p] || DEFAULT_COLOR; }
 
@@ -75,7 +65,7 @@ export function detectPlatform(input: string): PlatformKey | null {
 export function canConvertPlatform(platform: PlatformKey): boolean {
   switch (platform) {
     case 'youtube': case 'youtubemusic': case 'soundcloud': case 'twitter': case 'instagram': case 'tiktok': case 'facebook': return true;
-    case 'spotify': case 'deezer': case 'applemusic': case 'amazonmusic': case 'snapchat': case 'br': return false;
+    default: return false;
   }
 }
 
