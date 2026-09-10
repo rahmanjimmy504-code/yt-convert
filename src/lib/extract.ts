@@ -1144,7 +1144,7 @@ async function extractYouTube(
     mimeType: /video\/mp4|application\/mp4/i.test(mimeType) ? 'video/mp4' : mimeType,
     extension: 'mp4',
     qualityLabel: picked.qualityLabel,
-    note: notes[source],
+    note: notes[source] || 'Innertube stream',
   });
 }
 
