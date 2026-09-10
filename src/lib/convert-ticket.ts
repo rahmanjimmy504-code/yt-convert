@@ -5,6 +5,11 @@ import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
  * CAPTCHA-gated /api/video-info lookup. Bound to the exact media URL and the
  * client IP so a leaked ticket cannot be replayed against another link or
  * from another address.
+ *
+ * Ticket signing is intentionally stateless so the app does not require a
+ * paid database or cache. CONVERT_TICKET_SECRET is the active signing key;
+ * CONVERT_TICKET_SECRET_PREVIOUS can temporarily hold the previous key during
+ * a zero-downtime secret rotation.
  */
 
 export const CONVERT_TICKET_TTL_MS = 10 * 60 * 1000;
@@ -14,17 +19,12 @@ const globalForTicket = globalThis as typeof globalThis & {
   __ytConvertTicketSecretWarned?: boolean;
 };
 
-/** True when neither CONVERT_TICKET_SECRET nor CAPTCHA_SECRET is configured. */
 export function isConvertTicketSecretMissing(): boolean {
   return !process.env.CONVERT_TICKET_SECRET && !process.env.CAPTCHA_SECRET;
 }
 
-function ticketSecret(): string {
+function primarySecret(): string {
   if (isConvertTicketSecretMissing()) {
-    // Without a shared secret each serverless instance generates its own
-    // random key, so a ticket issued by /api/video-info on one instance fails
-    // verification on the instance that serves /api/convert — the user sees
-    // "Download ticket is invalid" intermittently. Warn once per process.
     if (!globalForTicket.__ytConvertTicketSecretWarned) {
       globalForTicket.__ytConvertTicketSecretWarned = true;
       console.warn(
@@ -41,8 +41,14 @@ function ticketSecret(): string {
   );
 }
 
-function sign(payload: string): string {
-  return createHmac('sha256', ticketSecret()).update(payload).digest('base64url');
+function verificationSecrets(): string[] {
+  const current = primarySecret();
+  const previous = process.env.CONVERT_TICKET_SECRET_PREVIOUS?.trim();
+  return previous && previous !== current ? [current, previous] : [current];
+}
+
+function sign(payload: string, secret = primarySecret()): string {
+  return createHmac('sha256', secret).update(payload).digest('base64url');
 }
 
 function safeEquals(actual: string, expected: string): boolean {
@@ -52,6 +58,8 @@ function safeEquals(actual: string, expected: string): boolean {
 }
 
 interface TicketPayload {
+  v: 1;
+  jti: string;
   u: string;
   ip: string;
   exp: number;
@@ -62,7 +70,13 @@ export type ConvertTicketResult =
   | { ok: false; reason: 'missing' | 'tampered' | 'expired' | 'url' | 'ip' };
 
 export function issueConvertTicket(url: string, ip: string, now = Date.now()): string {
-  const payload: TicketPayload = { u: url, ip, exp: now + CONVERT_TICKET_TTL_MS };
+  const payload: TicketPayload = {
+    v: 1,
+    jti: randomBytes(16).toString('hex'),
+    u: url,
+    ip,
+    exp: now + CONVERT_TICKET_TTL_MS,
+  };
   const encoded = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
   return `${encoded}.${sign(encoded)}`;
 }
@@ -79,7 +93,8 @@ export function verifyConvertTicket(
 
   const encoded = ticket.slice(0, separator);
   const signature = ticket.slice(separator + 1);
-  if (!safeEquals(signature, sign(encoded))) return { ok: false, reason: 'tampered' };
+  const signatureValid = verificationSecrets().some((secret) => safeEquals(signature, sign(encoded, secret)));
+  if (!signatureValid) return { ok: false, reason: 'tampered' };
 
   let payload: TicketPayload;
   try {
@@ -88,7 +103,15 @@ export function verifyConvertTicket(
     return { ok: false, reason: 'tampered' };
   }
 
-  if (!payload || typeof payload.u !== 'string' || typeof payload.ip !== 'string' || !Number.isFinite(payload.exp)) {
+  if (
+    !payload ||
+    payload.v !== 1 ||
+    typeof payload.jti !== 'string' ||
+    payload.jti.length < 16 ||
+    typeof payload.u !== 'string' ||
+    typeof payload.ip !== 'string' ||
+    !Number.isFinite(payload.exp)
+  ) {
     return { ok: false, reason: 'tampered' };
   }
   if (payload.exp <= now) return { ok: false, reason: 'expired' };
