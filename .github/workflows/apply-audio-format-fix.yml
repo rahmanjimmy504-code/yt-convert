@@ -1,0 +1,142 @@
+name: Apply audio format fix
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply audio format and media validation changes
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          def replace(path, old, new, count=1):
+              p = Path(path)
+              s = p.read_text()
+              if old not in s:
+                  raise SystemExit(f'Missing expected text in {path}: {old[:120]!r}')
+              s = s.replace(old, new, count)
+              p.write_text(s)
+
+          # API/shared format type: MP3, native M4A/AAC, or MP4.
+          replace('src/lib/platforms.ts',
+                  "export type FormatKey = 'mp3' | 'mp4';",
+                  "export type FormatKey = 'mp3' | 'm4a' | 'mp4';")
+
+          # Both MP3 and M4A use the audio bitrate picker.
+          replace('src/lib/youtube-formats.ts',
+                  "export function isValidQuality(format: 'mp3' | 'mp4', quality: string): boolean {",
+                  "export function isValidQuality(format: 'mp3' | 'm4a' | 'mp4', quality: string): boolean {")
+          replace('src/lib/youtube-formats.ts',
+                  "return format === 'mp3'\n    ? (AUDIO_KBPS_OPTIONS as readonly string[]).includes(quality)",
+                  "return format === 'mp3' || format === 'm4a'\n    ? (AUDIO_KBPS_OPTIONS as readonly string[]).includes(quality)")
+
+          # The content sniffer already understands M4A; make the acceptance
+          # gate honour it as a first-class requested container.
+          replace('src/lib/media-content.ts',
+                  "`requested` is the user's actual selection ('mp3' or 'mp4').",
+                  "`requested` is the user's actual selection ('mp3', 'm4a', or 'mp4').")
+          replace('src/lib/media-content.ts',
+                  "requested: 'mp3' | 'mp4',",
+                  "requested: 'mp3' | 'm4a' | 'mp4',")
+          replace('src/lib/media-content.ts',
+                  "  if (requested === 'mp3') {\n",
+                  """  if (requested === 'm4a') {\n    if (AUDIO_MP4_MIME.test(contentType || '') && (container === 'm4a' || container === 'unknown')) {\n      return { ok: true, container: 'm4a' };\n    }\n    if (container === 'm4a') return { ok: true, container: 'm4a' };\n    if (container === 'mp3') return { ok: false, container, reason: 'upstream returned MP3, not M4A' };\n    if (container === 'mp4') return { ok: false, container, reason: 'upstream returned MP4 video, not M4A audio' };\n    if (container === 'webm' || container === 'ogg') return { ok: false, container, reason: 'upstream returned WebM/Ogg/Opus, not M4A' };\n    if (container === 'aac') return { ok: false, container, reason: 'upstream returned raw AAC, not M4A' };\n    if (container === 'unknown' && !AUDIO_MP4_MIME.test(contentType || '')) {\n      return { ok: false, container: 'unknown', reason: 'response body did not start with M4A/MP4 magic bytes' };\n    }\n    return { ok: true, container: 'm4a' };\n  }\n\n  if (requested === 'mp3') {\n""")
+
+          # M4A should stay a native audio download. Do not send an M4A request
+          # through MP3-only conversion farms or pretend a converted file is
+          # native M4A.
+          replace('src/lib/extract.ts',
+                  "const canTranscodeMp3 = want === 'audio' && isTranscodeEnabled();",
+                  "const canTranscodeMp3 = format === 'mp3' && want === 'audio' && isTranscodeEnabled();")
+          replace('src/lib/extract.ts',
+                  "const needTranscodedMp3 = want === 'audio'\n    && formats.length > 0",
+                  "const needTranscodedMp3 = format === 'mp3' && want === 'audio'\n    && formats.length > 0")
+          replace('src/lib/extract.ts',
+                  "if (!formats.length && !excludedSources.has('9convert')) {\n    const farmFormats = await nineConvertFormats(id, format === 'mp4' ? 'mp4' : 'mp3', quality);",
+                  "if (!formats.length && !excludedSources.has('9convert') && format !== 'm4a') {\n    const farmFormats = await nineConvertFormats(id, format === 'mp4' ? 'mp4' : 'mp3', quality);")
+          replace('src/lib/extract.ts',
+                  "if (!formats.length && !excludedSources.has('alldl')) {\n    const alldl = await alldlFormats(id, format === 'mp4' ? 'mp4' : 'mp3');",
+                  "if (!formats.length && !excludedSources.has('alldl') && format !== 'm4a') {\n    const alldl = await alldlFormats(id, format === 'mp4' ? 'mp4' : 'mp3');")
+          replace('src/lib/extract.ts',
+                  "if (!formats.length && !excludedSources.has('cobalt') && isCobaltConfigured()) {\n    const cobalt = await cobaltFormats(pageUrl, format === 'mp4' ? 'video' : 'audio');",
+                  "if (!formats.length && !excludedSources.has('cobalt') && isCobaltConfigured() && format !== 'm4a') {\n    const cobalt = await cobaltFormats(pageUrl, format === 'mp4' ? 'video' : 'audio');")
+
+          replace('src/lib/extract.ts',
+                  """  if (kind === 'audio') {\n    const mp3 = pickYouTubeFormat(formats, 'audio', quality);\n    if (mp3?.url) {\n""",
+                  """  if (kind === 'audio') {\n    // M4A is YouTube's native AAC-in-MP4 audio container. Only accept a real\n    // M4A/AAC source here; never rename MP3, WebM or video MP4 to .m4a.\n    if (format === 'm4a') {\n      const m4aCandidates = formats.filter(f =>\n        typeof f.url === 'string' &&\n        isAllowedMediaUrl(f.url) &&\n        /audio\\/(?:mp4|aac|x-m4a)|mp4a/i.test(f.mimeType || ''),\n      );\n      if (m4aCandidates.length) {\n        const picked = pickYouTubeFormat(m4aCandidates, 'audio', quality);\n        if (picked?.url && /audio\\/(?:mp4|aac|x-m4a)|mp4a/i.test(picked.mimeType || '')) {\n          const mimeType = picked.mimeType || 'audio/mp4';\n          const notes: Partial<Record<YouTubeSource, string>> = {\n            piped: 'Piped fallback stream',\n            'invidious-latest': 'Invidious relayed stream',\n            'invidious-api': 'Invidious fallback stream',\n            'youtube-embed': 'YouTube embed fallback stream',\n          };\n          return ok({\n            url: picked.url,\n            mimeType,\n            extension: 'm4a',\n            qualityLabel: picked.qualityLabel,\n            note: notes[source] || 'Native M4A/AAC audio stream',\n          });\n        }\n      }\n      return fail(\n        'No real M4A/AAC audio source is available from this server. Choose MP3 or use a converter below.',\n      );\n    }\n\n    const mp3 = pickYouTubeFormat(formats, 'audio', quality);\n    if (mp3?.url) {\n""")
+
+          # Route-level format validation and media response validation.
+          replace('src/app/api/convert/route.ts',
+                  "requested: 'mp3' | 'mp4',",
+                  "requested: 'mp3' | 'm4a' | 'mp4',")
+          replace('src/app/api/convert/route.ts',
+                  "if (format !== 'mp3' && format !== 'mp4') return json('Format must be mp3 or mp4', 400);",
+                  "if (format !== 'mp3' && format !== 'm4a' && format !== 'mp4') return json('Format must be mp3, m4a or mp4', 400);")
+          replace('src/app/api/convert/route.ts',
+                  "const requestedExt = format === 'mp3' ? 'mp3' : 'mp4';",
+                  "const requestedExt = format;")
+          replace('src/app/api/convert/route.ts',
+                  "const wantedMime = format === 'mp3' ? 'audio/mpeg' : 'video/mp4';",
+                  "const wantedMime = format === 'mp3' ? 'audio/mpeg' : format === 'm4a' ? 'audio/mp4' : 'video/mp4';")
+
+          # UI: Audio now has its own file-type selector (MP3/M4A), while
+          # bitrate remains the quality control for either audio type.
+          replace('src/app/page.tsx',
+                  "if (f === 'mp3' || f === 'mp4') setFormat(f);",
+                  "if (f === 'mp3' || f === 'm4a' || f === 'mp4') setFormat(f);")
+          replace('src/app/page.tsx',
+                  "const quality = format === 'mp3' ? audioQuality : videoQuality;",
+                  "const quality = format === 'mp3' || format === 'm4a' ? audioQuality : videoQuality;")
+          replace('src/app/page.tsx',
+                  "const am = a.formats.includes(format) ? 1 : 0;",
+                  "const am = a.formats.includes(format === 'm4a' ? 'mp3' : format) ? 1 : 0;")
+          replace('src/app/page.tsx',
+                  "const bm = b.formats.includes(format) ? 1 : 0;",
+                  "const bm = b.formats.includes(format === 'm4a' ? 'mp3' : format) ? 1 : 0;")
+          replace('src/app/page.tsx',
+                  "{format === 'mp3'\n                      ? videoInfo?.transcoding",
+                  "{(format === 'mp3' || format === 'm4a')\n                      ? format === 'm4a'\n                        ? ' Audio keeps the native AAC/M4A container — no re-encoding.'\n                        : videoInfo?.transcoding")
+          replace('src/app/page.tsx',
+                  "(format === 'mp3' ? 'bg-white dark:bg-gray-700 shadow-sm' : 'text-gray-500')",
+                  "((format === 'mp3' || format === 'm4a') ? 'bg-white dark:bg-gray-700 shadow-sm' : 'text-gray-500')")
+          replace('src/app/page.tsx',
+                  """{format === 'mp3' ? (\n                    <div>\n                      <label className="block text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-1.5">Bitrate</label>\n""",
+                  """{format === 'mp3' || format === 'm4a' ? (\n                    <div className="space-y-3">\n                      <div>\n                        <label className="block text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-1.5">File type</label>\n                        <div className="flex flex-wrap gap-1.5">\n                          {(['mp3', 'm4a'] as const).map(type => (\n                            <button\n                              key={type}\n                              type="button"\n                              onClick={() => handleFormatChange(type)}\n                              aria-pressed={format === type}\n                              className={'px-2.5 py-1 rounded-md text-[11px] font-medium border transition-colors ' + (format === type\n                                ? 'bg-red-600 text-white border-red-600'\n                                : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-700 hover:border-red-300 dark:hover:border-red-800')}\n                            >\n                              {type.toUpperCase()}\n                            </button>\n                          ))}\n                        </div>\n                      </div>\n                      <div>\n                      <label className="block text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-1.5">Bitrate</label>\n""")
+          replace('src/app/page.tsx',
+                  """                          ))}\n                      </div>\n                    </div>\n                  ) : (\n""",
+                  """                          ))}\n                      </div>\n                    </div>\n                      </div>\n                    </div>\n                  ) : (\n""")
+
+          # Keep this one-shot patch workflow out of the repository after it
+          # has successfully changed the source tree.
+          Path('.github/workflows/apply-audio-format-fix.yml').unlink()
+          PY
+
+      - name: Verify the changed TypeScript builds
+        run: |
+          npm ci
+          npm run lint
+
+      - name: Commit changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/app/page.tsx src/app/api/convert/route.ts src/lib/extract.ts src/lib/media-content.ts src/lib/platforms.ts src/lib/youtube-formats.ts .github/workflows/apply-audio-format-fix.yml
+          if git diff --cached --quiet; then
+            echo "No changes needed."
+            exit 0
+          fi
+          git commit -m "feat: add selectable audio file types"
+          git push
