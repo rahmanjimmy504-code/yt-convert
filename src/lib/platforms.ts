@@ -10,8 +10,8 @@ export type PlatformKey =
 export type FormatKey = 'flac' | 'mp3' | 'm4a' | 'aac' | 'opus' | 'mp4';
 
 export const PLATFORM_KEYS: PlatformKey[] = [
-  'youtube', 'youtubemusic', 'soundcloud', 'twitter', 'instagram', 'spotify',
-  'deezer', 'applemusic', 'amazonmusic', 'tiktok', 'facebook', 'snapchat', 'br',
+  'youtube', 'youtubemusic', 'soundcloud', 'twitter', 'instagram',
+  'spotify', 'deezer', 'applemusic', 'amazonmusic', 'tiktok', 'facebook', 'snapchat', 'br',
 ];
 
 export const PLATFORM_LABELS: Record<PlatformKey, string> = {
@@ -44,21 +44,22 @@ export function detectPlatform(input: string): PlatformKey | null {
   const u = input.trim();
   if (!u) return null;
   if (!/^https?:\/\//i.test(u) && !/^\w+\.\w{2,}/i.test(u)) return null;
-  const host = u.replace(/^https?:\/\//i, '').split(/[/?#]/)[0].toLowerCase();
-  if (host === 'music.youtube.com') return 'youtubemusic';
-  if (host === 'youtube.com' || host === 'youtu.be' || host === 'm.youtube.com' || host === 'youtube-nocookie.com' || host.endsWith('.youtube.com') || host.endsWith('.youtu.be') || host.endsWith('.youtube-nocookie.com')) return 'youtube';
-  if (host === 'soundcloud.com' || host.endsWith('.soundcloud.com')) return 'soundcloud';
-  if (host === 'twitter.com' || host === 'x.com' || host.endsWith('.twitter.com') || host.endsWith('.x.com')) return 'twitter';
-  if (host === 'instagram.com' || host === 'instagr.am' || host.endsWith('.instagram.com')) return 'instagram';
-  if (host === 'spotify.com' || host === 'open.spotify.com' || host === 'play.spotify.com' || host.endsWith('.spotify.com')) return 'spotify';
-  if (host === 'deezer.com' || host === 'deezer.page.link' || host.endsWith('.deezer.com')) return 'deezer';
-  if (host === 'facebook.com' || host === 'fb.watch' || host.endsWith('.facebook.com')) return 'facebook';
-  if (host === 'tiktok.com' || host.endsWith('.tiktok.com')) return 'tiktok';
-  if (host === 'snapchat.com' || host === 'story.snapchat.com' || host === 't.snapchat.com' || host === 'w.snapchat.com' || host.endsWith('.snapchat.com')) return 'snapchat';
-  if (host === 'music.apple.com' || host === 'itunes.apple.com' || host === 'geo.itunes.apple.com') return 'applemusic';
-  const path = u.replace(/^https?:\/\/[^/]+/i, '').split(/[?#]/)[0];
-  if (/^music\.amazon\.[a-z.]+$/.test(host) || (/^(?:www\.)?amazon\.[a-z.]+$/.test(host) && /^\/music(?:\/|$)/i.test(path))) return 'amazonmusic';
-  if (host === 'bereal.com' || host.endsWith('.bereal.com')) return 'br';
+  const host = u.replace(/^https?:\/\//i, '').split(/[/?#]/)[0] ?? '';
+  const normalizedHost = host.toLowerCase();
+  if (normalizedHost === 'music.youtube.com') return 'youtubemusic';
+  if (normalizedHost === 'youtube.com' || normalizedHost === 'youtu.be' || normalizedHost === 'm.youtube.com' || normalizedHost === 'youtube-nocookie.com' || normalizedHost.endsWith('.youtube.com') || normalizedHost.endsWith('.youtu.be') || normalizedHost.endsWith('.youtube-nocookie.com')) return 'youtube';
+  if (normalizedHost === 'soundcloud.com' || normalizedHost.endsWith('.soundcloud.com')) return 'soundcloud';
+  if (normalizedHost === 'twitter.com' || normalizedHost === 'x.com' || normalizedHost.endsWith('.twitter.com') || normalizedHost.endsWith('.x.com')) return 'twitter';
+  if (normalizedHost === 'instagram.com' || normalizedHost === 'instagr.am' || normalizedHost.endsWith('.instagram.com')) return 'instagram';
+  if (normalizedHost === 'spotify.com' || normalizedHost === 'open.spotify.com' || normalizedHost === 'play.spotify.com' || normalizedHost.endsWith('.spotify.com')) return 'spotify';
+  if (normalizedHost === 'deezer.com' || normalizedHost === 'deezer.page.link' || normalizedHost.endsWith('.deezer.com')) return 'deezer';
+  if (normalizedHost === 'facebook.com' || normalizedHost === 'fb.watch' || normalizedHost.endsWith('.facebook.com')) return 'facebook';
+  if (normalizedHost === 'tiktok.com' || normalizedHost.endsWith('.tiktok.com')) return 'tiktok';
+  if (normalizedHost === 'snapchat.com' || normalizedHost === 'story.snapchat.com' || normalizedHost === 't.snapchat.com' || normalizedHost === 'w.snapchat.com' || normalizedHost.endsWith('.snapchat.com')) return 'snapchat';
+  if (normalizedHost === 'music.apple.com' || normalizedHost === 'itunes.apple.com' || normalizedHost === 'geo.itunes.apple.com') return 'applemusic';
+  const path = u.replace(/^https?:\/\/[^/]+/i, '').split(/[?#]/)[0] ?? '';
+  if (/^music\.amazon\.[a-z.]+$/.test(normalizedHost) || (/^(?:www\.)?amazon\.[a-z.]+$/.test(normalizedHost) && /^\/music(?:\/|$)/i.test(path))) return 'amazonmusic';
+  if (normalizedHost === 'bereal.com' || normalizedHost.endsWith('.bereal.com')) return 'br';
   return null;
 }
 
@@ -83,5 +84,5 @@ export function convertUnavailableReason(platform: PlatformKey): string {
 
 export function extractYouTubeId(url: string): string | null {
   const m = url.match(/(?:v=|youtu\.be\/|shorts\/|live\/|embed\/|clip\/|\/v\/)([a-zA-Z0-9_-]{11})(?![\w-])/i);
-  return m ? m[1] : null;
+  return m?.[1] ?? null;
 }
