@@ -96,3 +96,5 @@ jobs:
           git rm .github/workflows/wire-youtubei-fallback.yml
           git commit -m "chore: remove temporary youtubei wiring workflow"
           git push
+
+# Trigger the temporary patch workflow now that the workflow file exists on main.
