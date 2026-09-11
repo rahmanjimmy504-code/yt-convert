@@ -1,0 +1,207 @@
+name: Migrate browser audio converter
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install open-source FFmpeg WASM converter
+        run: npm install @ffmpeg/ffmpeg@0.12.15 @ffmpeg/util@0.12.2 --save
+
+      - name: Patch browser conversion flow
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+
+          p = Path('src/app/page.tsx')
+          s = p.read_text()
+
+          if "import { FFmpeg } from '@ffmpeg/ffmpeg';" not in s:
+              anchor = "import Captcha from '@/components/captcha';\n"
+              imports = "import { FFmpeg } from '@ffmpeg/ffmpeg';\nimport { toBlobURL } from '@ffmpeg/util';\n"
+              if anchor not in s:
+                  raise SystemExit('Could not find page import anchor')
+              s = s.replace(anchor, anchor + imports, 1)
+
+          marker = "type ReportIssue = 'dead' | 'unsafe' | 'wrong' | 'other';"
+          helper = r'''type BrowserAudioTarget = 'flac' | 'm4a' | 'aac' | 'opus';
+
+let browserFfmpegPromise: Promise<FFmpeg> | null = null;
+
+async function getBrowserFfmpeg(): Promise<FFmpeg> {
+  if (!browserFfmpegPromise) {
+    browserFfmpegPromise = (async () => {
+      const ffmpeg = new FFmpeg();
+      const base = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/umd';
+      await ffmpeg.load({
+        coreURL: await toBlobURL(`${base}/ffmpeg-core.js`, 'text/javascript'),
+        wasmURL: await toBlobURL(`${base}/ffmpeg-core.wasm`, 'application/wasm'),
+      });
+      return ffmpeg;
+    })().catch(err => {
+      browserFfmpegPromise = null;
+      throw err;
+    });
+  }
+  return browserFfmpegPromise;
+}
+
+async function convertMp3InBrowser(
+  mp3: Blob,
+  target: BrowserAudioTarget,
+  bitrate: string,
+): Promise<Blob> {
+  const ffmpeg = await getBrowserFfmpeg();
+  const input = new Uint8Array(await mp3.arrayBuffer());
+  await ffmpeg.writeFile('input.mp3', input);
+
+  const kbps = /^\d+$/.test(bitrate) ? bitrate : '192';
+  let output = '';
+  let mime = '';
+  let args: string[] = [];
+
+  switch (target) {
+    case 'flac':
+      output = 'output.flac';
+      mime = 'audio/flac';
+      args = ['-i', 'input.mp3', '-vn', '-c:a', 'flac', output];
+      break;
+    case 'm4a':
+      output = 'output.m4a';
+      mime = 'audio/mp4';
+      args = ['-i', 'input.mp3', '-vn', '-c:a', 'aac', '-b:a', `${kbps}k`, output];
+      break;
+    case 'aac':
+      output = 'output.aac';
+      mime = 'audio/aac';
+      args = ['-i', 'input.mp3', '-vn', '-c:a', 'aac', '-b:a', `${kbps}k`, '-f', 'adts', output];
+      break;
+    case 'opus':
+      output = 'output.opus';
+      mime = 'audio/ogg';
+      args = ['-i', 'input.mp3', '-vn', '-c:a', 'libopus', '-b:a', `${kbps}k`, '-f', 'ogg', output];
+      break;
+  }
+
+  const code = await ffmpeg.exec(args);
+  if (code !== 0) throw new Error(`Open-source audio conversion failed (${target.toUpperCase()}).`);
+  const data = await ffmpeg.readFile(output);
+  await Promise.all([
+    ffmpeg.deleteFile('input.mp3').catch(() => {}),
+    ffmpeg.deleteFile(output).catch(() => {}),
+  ]);
+  return new Blob([data as Uint8Array<ArrayBuffer>], { type: mime });
+}
+
+function saveBrowserAudio(blob: Blob, title: string, extension: BrowserAudioTarget): void {
+  const objectUrl = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = objectUrl;
+  link.download = `${(title || 'download').replace(/[\\/:*?"<>|]+/g, '_')}.${extension}`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+}
+
+'''
+          if 'async function convertMp3InBrowser(' not in s:
+              if marker not in s:
+                  raise SystemExit('Could not find helper insertion marker')
+              s = s.replace(marker, helper + marker, 1)
+
+          start = s.index('  const downloadHere = async () => {')
+          end = s.index('\n\n  const submitReport = async () => {', start)
+          new_fn = r'''  const downloadHere = async () => {
+    if (!videoInfo?.convertTicket || converting) return;
+    const u = url.trim();
+    const targetFormat = format;
+    const quality = targetFormat === 'mp4' ? videoQuality : audioQuality;
+    // MP3 is the canonical server-side audio source. Every other requested
+    // audio format is produced by the open-source FFmpeg WebAssembly build in
+    // the user's browser, so the Worker never needs native FFmpeg or a paid
+    // conversion API.
+    const serverFormat: FormatKey = targetFormat === 'mp4' || targetFormat === 'mp3' ? targetFormat : 'mp3';
+    const href = `/api/convert?url=${encodeURIComponent(u)}&format=${serverFormat}&quality=${encodeURIComponent(quality)}&ticket=${encodeURIComponent(videoInfo.convertTicket)}&title=${encodeURIComponent(videoInfo.title || '')}`;
+    setConverting(true);
+    setConvertError('');
+    setConvertSource('');
+    try {
+      const response = await fetch(href, {
+        headers: {
+          ...(ytCookies.trim() ? { 'X-YouTube-Cookies': ytCookies.trim() } : {}),
+        },
+      });
+      const type = response.headers.get('content-type') || '';
+      if (!response.ok || type.includes('application/json')) {
+        const data = (await response.json().catch(() => ({}))) as { error?: string };
+        setConvertError(data.error || 'Could not convert this link. Try a converter below.');
+        return;
+      }
+      setConvertSource((response.headers.get('x-conversion-note') || '').trim());
+
+      if (targetFormat === 'mp3' || targetFormat === 'mp4') {
+        await response.body?.cancel().catch(() => undefined);
+        const link = document.createElement('a');
+        link.href = href;
+        link.rel = 'noopener';
+        link.setAttribute('download', '');
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        return;
+      }
+
+      const sourceBlob = await response.blob();
+      const converted = await convertMp3InBrowser(sourceBlob, targetFormat, audioQuality);
+      saveBrowserAudio(converted, videoInfo.title || 'download', targetFormat);
+    } catch (err) {
+      setConvertError(err instanceof Error && err.message ? err.message : 'Could not convert this link. Try a converter below.');
+    } finally {
+      setConverting(false);
+    }
+  };'''
+          s = s[:start] + new_fn + s[end:]
+          p.write_text(s)
+
+          # Make the UI explicit that non-MP3 audio is converted locally in
+          # the browser from the server's canonical MP3 source.
+          p = Path('src/app/page.tsx')
+          s = p.read_text()
+          old = "      // Which source served the file (Innertube, AllDL, cobalt, ...). Shown\n      // on the card; also what makes a fallback smoke test provable."
+          new = "      // For non-MP3 audio, this is the source of the canonical MP3 input;\n      // FFmpeg WASM then creates the format selected by the user locally.\n      // Which source served the file (Innertube, AllDL, cobalt, ...). Shown\n      // on the card; also what makes a fallback smoke test provable."
+          s = s.replace(old, new, 1)
+          p.write_text(s)
+
+          import subprocess
+          subprocess.run(['git', 'config', 'user.name', 'github-actions[bot]'], check=True)
+          subprocess.run(['git', 'config', 'user.email', '41898282+github-actions[bot]@users.noreply.github.com'], check=True)
+          subprocess.run(['git', 'add', 'package.json', 'package-lock.json', 'src/app/page.tsx'], check=True)
+          subprocess.run(['git', 'commit', '-m', 'feat: convert audio formats with open-source ffmpeg wasm'], check=True)
+          subprocess.run(['git', 'push'], check=True)
+
+      - name: Remove migration workflow
+        if: success()
+        run: |
+          git rm .github/workflows/migrate-browser-audio-converter.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'chore: remove one-shot audio converter migration'
+          git push
