@@ -1,35 +1,55 @@
-# @rahmanjimmy504-code/yt-convert
+# @jimmy_1234ha/yt-convert
 
 Public TypeScript/JavaScript SDK for a running [YT Convert](https://github.com/rahmanjimmy504-code/yt-convert) deployment.
 
 ## Install
 
 ```bash
-npm install @rahmanjimmy504-code/yt-convert
+npm install @jimmy_1234ha/yt-convert
+```
+
+Using Yarn:
+
+```bash
+yarn add @jimmy_1234ha/yt-convert
+```
+
+Using pnpm:
+
+```bash
+pnpm add @jimmy_1234ha/yt-convert
 ```
 
 ## Quick start
 
-The API protects lookups with its CAPTCHA flow and download requests with a short-lived, IP-bound conversion ticket. The SDK does not bypass either protection; pass the CAPTCHA token obtained from your YT Convert deployment.
+The API protects lookups with its CAPTCHA flow and download requests with a short-lived conversion ticket. The SDK does not bypass either protection; pass the CAPTCHA token obtained from your YT Convert deployment.
 
 ```ts
-import { createYtConvertClient } from '@rahmanjimmy504-code/yt-convert';
+import { createYtConvertClient } from '@jimmy_1234ha/yt-convert';
 
 const client = createYtConvertClient({
-  baseUrl: 'https://your-yt-convert.example',
+  baseUrl: 'https://yt-convert.rahmanjimmy504.workers.dev',
 });
 
-const info = await client.lookup('https://www.youtube.com/watch?v=dQw4w9WgXcQ', {
-  captchaToken: captchaTokenFromYourUI,
+const url = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
+
+const info = await client.lookup(url, {
+  captchaToken,
 });
 
-const response = await client.downloadFromInfo(info, 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', {
+const response = await client.downloadFromInfo(info, url, {
   format: 'mp3',
   quality: '192',
 });
 
 const audio = await response.arrayBuffer();
 ```
+
+## CAPTCHA
+
+`captchaToken` is required for `lookup()` and `download()`. Get it from the CAPTCHA flow exposed by your YT Convert deployment, normally through `/api/captcha` and your CAPTCHA UI.
+
+Do not hard-code a fake token. CAPTCHA proofs are short-lived and normally single-use.
 
 ## Supported formats
 
@@ -58,13 +78,36 @@ Calls `/api/video-info` and returns metadata plus the short-lived conversion tic
 - `captchaToken` — required CAPTCHA proof.
 - `youtubeCookies` — optional sanitized YouTube session cookies, if the deployment supports them.
 
+Example:
+
+```ts
+const info = await client.lookup(url, { captchaToken });
+console.log(info.title);
+console.log(info.author);
+```
+
 ### `client.download(url, options)`
 
 Performs a lookup and then downloads the requested format. Returns the raw `Response`, allowing streaming or `arrayBuffer()` handling in the host application.
 
+```ts
+const response = await client.download(url, {
+  captchaToken,
+  format: 'mp3',
+  quality: '192',
+});
+```
+
 ### `client.downloadFromInfo(info, url, options)`
 
 Downloads using a `VideoInfo` object previously returned by `lookup()`.
+
+```ts
+const response = await client.downloadFromInfo(info, url, {
+  format: 'mp3',
+  quality: '192',
+});
+```
 
 ### `client.getDownloadUrl(url, info, options)`
 
