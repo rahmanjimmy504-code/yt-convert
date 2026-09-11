@@ -47,7 +47,6 @@ function indexOfBytes(haystack: Uint8Array, needle: Uint8Array): number {
 
 const ID3 = asciiToBytes('ID3');
 const FLAC = asciiToBytes('fLaC');
-const FLAC = asciiToBytes('fLaC');
 const FTYP = asciiToBytes('ftyp');
 const WEBM_EBML = new Uint8Array([0x1a, 0x45, 0xdf, 0xa3]);
 const OGGS = asciiToBytes('OggS');
@@ -75,8 +74,7 @@ export function sniffContainer(bytes: Uint8Array): MediaContainer {
     if (b >= 0x61 && b <= 0x7a) ascii[i] = b - 0x20;
   }
   for (const token of ['<!DOCTYPE HTML', '<HTML', '<HEAD', '<BODY', '<SCRIPT', '<!--']) {
-    const upper = asciiToBytes(token);
-    if (indexOfBytes(ascii, upper) >= 0) return 'html';
+    if (indexOfBytes(ascii, asciiToBytes(token)) >= 0) return 'html';
   }
 
   for (let i = 0; i < head.length; i += 1) {
@@ -147,8 +145,6 @@ export function acceptMediaResponse(
     return { ok: true, container: 'mp4' };
   }
 
-  // Audio formats other than MP3 are accepted only when the sniffed container
-  // is a genuine matching container. We never make a fake extension pass.
   const audioMatches =
     (requested === 'flac' && container === 'flac') ||
     (requested === 'm4a' && container === 'm4a') ||
