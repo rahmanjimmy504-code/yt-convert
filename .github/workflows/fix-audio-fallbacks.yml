@@ -1,0 +1,86 @@
+name: Fix audio format fallback routing
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Patch audio fallback routing
+        shell: python
+        run: |
+          from pathlib import Path
+
+          p = Path('src/lib/extract.ts')
+          s = p.read_text()
+
+          old = """  const needTranscodedMp3 = want === 'audio'\n    && formats.length > 0\n    && !formats.some(f => /audio\\/(mpeg|mp3)/i.test(f.mimeType || ''));\n"""
+          new = """  // Only MP3 needs a real MP3 source/transcode. M4A, AAC and Opus are\n  // valid native YouTube audio targets and must not be discarded merely\n  // because YouTube did not return an MP3 stream.\n  const needTranscodedMp3 = format === 'mp3'\n    && formats.length > 0\n    && !formats.some(f => /audio\\/(mpeg|mp3)/i.test(f.mimeType || ''));\n"""
+          if old not in s:
+              raise SystemExit('extract.ts: MP3 gate pattern not found')
+          s = s.replace(old, new, 1)
+
+          old = """  if (!formats.length && !excludedSources.has('9convert')) {\n    const farmFormats = await nineConvertFormats(id, format === 'mp4' ? 'mp4' : 'mp3', quality);\n"""
+          new = """  if (!formats.length && !excludedSources.has('9convert') && (format === 'mp3' || format === 'mp4')) {\n    const farmFormats = await nineConvertFormats(id, format, quality);\n"""
+          if old not in s:
+              raise SystemExit('extract.ts: 9Convert pattern not found')
+          s = s.replace(old, new, 1)
+
+          old = """  if (!formats.length && !excludedSources.has('alldl')) {\n    const alldl = await alldlFormats(id, format === 'mp4' ? 'mp4' : 'mp3');\n"""
+          new = """  if (!formats.length && !excludedSources.has('alldl') && (format === 'mp3' || format === 'mp4')) {\n    const alldl = await alldlFormats(id, format);\n"""
+          if old not in s:
+              raise SystemExit('extract.ts: AllDL pattern not found')
+          s = s.replace(old, new, 1)
+
+          old = """  if (!formats.length && !excludedSources.has('cobalt') && isCobaltConfigured()) {\n    const cobalt = await cobaltFormats(pageUrl, format === 'mp4' ? 'video' : 'audio');\n"""
+          new = """  if (!formats.length && !excludedSources.has('cobalt') && isCobaltConfigured()) {\n    const cobaltAudioFormat = format === 'opus' ? 'opus' : 'mp3';\n    const cobalt = await cobaltFormats(pageUrl, format === 'mp4' ? 'video' : 'audio', cobaltAudioFormat);\n"""
+          if old not in s:
+              raise SystemExit('extract.ts: Cobalt call pattern not found')
+          s = s.replace(old, new, 1)
+
+          p.write_text(s)
+
+          p = Path('src/lib/cobalt.ts')
+          s = p.read_text()
+
+          s = s.replace("function toFormat(url: string, kind: 'video' | 'audio'): PlayerFormat {", "function toFormat(url: string, kind: 'video' | 'audio', audioFormat: 'mp3' | 'opus' = 'mp3'): PlayerFormat {")
+          s = s.replace("        mimeType: 'audio/mpeg',\n        audioQuality: 'AUDIO_QUALITY_MEDIUM',", "        mimeType: audioFormat === 'opus' ? 'audio/ogg' : 'audio/mpeg',\n        audioQuality: 'AUDIO_QUALITY_MEDIUM',", 1)
+          s = s.replace("  kind: 'video' | 'audio',\n  auth?: string,\n): Promise<CobaltResult> {", "  kind: 'video' | 'audio',\n  auth?: string,\n  audioFormat: 'mp3' | 'opus' = 'mp3',\n): Promise<CobaltResult> {")
+          s = s.replace("    audioFormat: 'mp3',", "    audioFormat: kind === 'audio' ? audioFormat : 'mp3',", 1)
+          s = s.replace("return url ? { formats: [toFormat(url, kind)] }", "return url ? { formats: [toFormat(url, kind, audioFormat)] }")
+          s = s.replace("if (audioUrl) return { formats: [toFormat(audioUrl, 'audio')] }", "if (audioUrl) return { formats: [toFormat(audioUrl, 'audio', audioFormat)] }")
+          s = s.replace("return { formats: [toFormat(url, kind)] };", "return { formats: [toFormat(url, kind, audioFormat)] };")
+          s = s.replace("  kind: 'video' | 'audio',\n): Promise<CobaltResult> {", "  kind: 'video' | 'audio',\n  audioFormat: 'mp3' | 'opus' = 'mp3',\n): Promise<CobaltResult> {")
+          s = s.replace("askInstance(config.url, pageUrl, kind, config.auth)", "askInstance(config.url, pageUrl, kind, config.auth, audioFormat)")
+          s = s.replace("askInstance(origin, pageUrl, kind) })),", "askInstance(origin, pageUrl, kind, undefined, audioFormat) })),")
+          s = s.replace("kind: 'video' | 'audio',\n): CobaltResult", "kind: 'video' | 'audio',\n  audioFormat: 'mp3' | 'opus' = 'mp3',\n): CobaltResult")
+
+          p.write_text(s)
+
+      - name: Remove this one-shot patch workflow after success
+        shell: bash
+        run: |
+          rm -f .github/workflows/fix-audio-fallbacks.yml
+
+      - name: Commit fixes
+        shell: bash
+        run: |
+          if git diff --quiet; then
+            echo 'No changes needed.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/lib/extract.ts src/lib/cobalt.ts .github/workflows/fix-audio-fallbacks.yml
+          git commit -m 'fix: repair audio format fallback routing'
+          git push
