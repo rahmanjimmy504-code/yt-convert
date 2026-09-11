@@ -38,6 +38,7 @@
   "exclude": [
     "node_modules",
     "po-token-server",
-    "android-app"
+    "android-app",
+    "packages/yt-convert-sdk/tsup.config.ts"
   ]
 }
