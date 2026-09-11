@@ -818,13 +818,11 @@ async function extractYouTube(
     }
   }
 
-  // When YouTube issues a bot challenge on this server's egress IP, any
-  // googlevideo media URL fetched from this host will serve an HTML challenge
-  // page rather than actual media bytes. Discard direct Innertube streams and
-  // skip the Piped/Invidious mirror race (same egress IP / same wall). If the
-  // paid Apify Actor is configured, try that single run before the slow free
-  // farm/AllDL/cobalt hops so a Cloudflare Worker isolate does not spend its
-  // whole request budget timing out before it even POSTs to Apify.
+  // When YouTube issues a BotGuard challenge on this server's egress IP,
+  // discard direct Innertube streams. Still run the independent free providers
+  // below: Piped/other mirrors and the public conversion farms use their own
+  // egress and can succeed even when this Worker IP is challenged. Apify stays
+  // at the absolute end of the chain so the free paths are always preferred.
   const ipBotBlocked = Boolean(innertube.botChallenged || isBotChallenge(innertube.status, innertube.reason));
   let formats = ipBotBlocked ? [] : innertube.formats;
   let source: YouTubeSource = 'innertube';
@@ -853,15 +851,7 @@ async function extractYouTube(
     return false;
   };
 
-  if (!formats.length && ipBotBlocked) {
-    if (isApifyConfigured()) {
-      await runApifyFallback('bot-wall');
-    } else {
-      console.log('[apify] skipped: bot-wall fast path unavailable because APIFY_TOKEN is not configured');
-    }
-  }
-
-  if (!formats.length && !ipBotBlocked) {
+  if (!formats.length) {
     // Mirror paths are independent and public instances disappear often. Race
     // them so a dead first host cannot multiply 10–12 second timeouts. Prefer
     // relayed Piped/latest_version streams, because googlevideo URLs are bound
