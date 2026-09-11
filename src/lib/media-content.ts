@@ -47,7 +47,6 @@ function indexOfBytes(haystack: Uint8Array, needle: Uint8Array): number {
 
 const ID3 = asciiToBytes('ID3');
 const FLAC = asciiToBytes('fLaC');
-const FLAC = asciiToBytes('fLaC');
 const FTYP = asciiToBytes('ftyp');
 const WEBM_EBML = new Uint8Array([0x1a, 0x45, 0xdf, 0xa3]);
 const OGGS = asciiToBytes('OggS');
