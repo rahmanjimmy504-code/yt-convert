@@ -1,0 +1,59 @@
+name: Apply free-first BotGuard fallback
+
+on:
+  push:
+    branches:
+      - fix/free-first-botguard-fallback
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Move paid Apify behind free fallbacks
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const path = 'src/lib/extract.ts';
+            const branch = context.ref.replace('refs/heads/', '');
+
+            const current = await github.rest.repos.getContent({ owner, repo, path, ref: branch });
+            if (Array.isArray(current.data) || !current.data.content) {
+              core.setFailed('Could not read extract.ts');
+              return;
+            }
+
+            const content = Buffer.from(current.data.content, 'base64').toString('utf8');
+            const oldFastPath = `  if (!formats.length && ipBotBlocked) {\n    if (isApifyConfigured()) {\n      await runApifyFallback('bot-wall');\n    } else {\n      console.log('[apify] skipped: bot-wall fast path unavailable because APIFY_TOKEN is not configured');\n    }\n  }\n\n`;
+            if (!content.includes(oldFastPath)) {
+              core.info('Bot-wall Apify fast path is already absent; no patch needed.');
+              return;
+            }
+
+            let updated = content.replace(oldFastPath, '');
+            const oldMirrorGate = '  if (!formats.length && !ipBotBlocked) {\n';
+            if (!updated.includes(oldMirrorGate)) {
+              core.setFailed('Could not find the mirror fallback gate');
+              return;
+            }
+            updated = updated.replace(oldMirrorGate, '  if (!formats.length) {\n');
+
+            const oldComment = `  // When YouTube issues a bot challenge on this server's egress IP, any\n  // googlevideo media URL fetched from this host will serve an HTML challenge\n  // page rather than actual media bytes. Discard direct Innertube streams and\n  // skip the Piped/Invidious mirror race (same egress IP / same wall). If the\n  // paid Apify Actor is configured, try that single run before the slow free\n  // farm/AllDL/cobalt hops so a Cloudflare Worker isolate does not spend its\n  // whole request budget timing out before it even POSTs to Apify.\n`;
+            const newComment = `  // When YouTube issues a BotGuard challenge on this server's egress IP,\n  // discard direct Innertube streams. Still run the independent free providers\n  // below: Piped/other mirrors and the public conversion farms use their own\n  // egress and can succeed even when this Worker IP is challenged. Apify stays\n  // at the absolute end of the chain so the free paths are always preferred.\n`;
+            if (updated.includes(oldComment)) updated = updated.replace(oldComment, newComment);
+
+            await github.rest.repos.createOrUpdateFileContents({
+              owner,
+              repo,
+              path,
+              message: 'fix: prefer free providers before Apify on BotGuard',
+              content: Buffer.from(updated, 'utf8').toString('base64'),
+              sha: current.data.sha,
+              branch,
+            });
+
+            core.info('Applied free-first BotGuard fallback ordering.');
