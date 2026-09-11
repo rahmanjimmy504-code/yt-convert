@@ -28,42 +28,93 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # One-time source migration for the first-party picker. This is deliberately
-      # limited to page.tsx so CI cannot duplicate media validation declarations.
-      - name: Ensure first-party audio format picker is present
+      # Keep this migration idempotent: it only changes the exact old code
+      # shapes, then commits once. This makes the FLAC fix self-applying without
+      # repeatedly rewriting the same source on later pushes.
+      - name: Ensure FLAC is a real server-side conversion
         if: github.event_name == 'push'
         shell: python
         run: |
           from pathlib import Path
-          import re, subprocess
+          import subprocess
 
-          p = Path('src/app/page.tsx')
-          s = p.read_text()
-          old_pattern = re.compile(
-              r"\{phase === 'input' && \(\s*<div className=\"space-y-2\">\s*<label className=\"text-sm font-semibold\">Format</label>\s*<div className=\"grid grid-cols-2 h-11 rounded-xl bg-gray-100 dark:bg-gray-800 p-1\">.*?</div>\s*</div>\s*\)\}",
-              re.S,
-          )
-          new_block = '''{phase === 'input' && (\n            <div className="space-y-2">\n              <label className="text-sm font-semibold">Format</label>\n              <div className="grid grid-cols-2 h-11 rounded-xl bg-gray-100 dark:bg-gray-800 p-1">\n                <button type="button" onClick={() => handleFormatChange(audioFormat)} className={'rounded-lg text-sm font-medium transition-all flex items-center justify-center gap-2 ' + (format !== 'mp4' ? 'bg-white dark:bg-gray-700 shadow-sm' : 'text-gray-500')}>\n                  <Music className="w-4 h-4" /> Audio\n                </button>\n                <button type="button" onClick={() => handleFormatChange('mp4')} className={'rounded-lg text-sm font-medium transition-all flex items-center justify-center gap-2 ' + (format === 'mp4' ? 'bg-white dark:bg-gray-700 shadow-sm' : 'text-gray-500')}>\n                  <Film className="w-4 h-4" /> Video\n                </button>\n              </div>\n              {format !== 'mp4' && (\n                <div className="grid grid-cols-5 gap-1.5 pt-1">\n                  {AUDIO_FORMAT_OPTIONS.map(f => (\n                    <button key={f} type="button" onClick={() => { setAudioFormat(f); setFormat(f); sSet('yt-convert-format', f); }} aria-pressed={audioFormat === f} className={'h-9 rounded-lg text-[11px] font-semibold border transition-colors ' + (audioFormat === f ? 'bg-red-600 text-white border-red-600' : 'bg-gray-50 dark:bg-gray-800 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-700 hover:border-red-300 dark:hover:border-red-800')}>{f.toUpperCase()}</button>\n                  ))}\n                </div>\n              )}\n            </div>\n          )}'''
           changed = False
-          if old_pattern.search(s):
-              s2 = old_pattern.sub(new_block, s, count=1)
-              if s2 != s:
-                  p.write_text(s2)
-                  changed = True
 
-          # Make the saved selection migration accept all audio formats.
+          # 1) Tell the extractor that a source audio stream can be transcoded
+          # to a requested target format instead of pretending the source is
+          # already FLAC.
+          p = Path('src/lib/extract.ts')
           s = p.read_text()
-          old_saved = "    if (f === 'mp3' || f === 'mp4') setFormat(f);\n    else if (f === 'audio') setFormat('mp3'); // migrate legacy value"
-          new_saved = "    if ((['flac', 'mp3', 'm4a', 'aac', 'opus'] as readonly string[]).includes(f)) { setFormat(f as FormatKey); setAudioFormat(f as Exclude<FormatKey, 'mp4'>); }\n    else if (f === 'mp4') setFormat('mp4');\n    else if (f === 'audio') { setFormat('mp3'); setAudioFormat('mp3'); } // migrate legacy value"
-          if old_saved in s:
-              p.write_text(s.replace(old_saved, new_saved, 1))
+          old = "  transcodeToMp3?: boolean;\n}"
+          new = "  transcodeToMp3?: boolean;\n  /** Re-encode the source audio to the requested non-MP3 audio format. */\n  transcodeToAudio?: 'flac';\n}"
+          if old in s and new not in s:
+              s = s.replace(old, new, 1)
               changed = True
+
+          old_branch = "      if (native?.url) { const extension = requestedAudio === 'opus' && /audio\\/webm/i.test(native.mimeType || '') ? 'webm' : requestedAudio; return ok({ url: native.url, mimeType: native.mimeType || 'application/octet-stream', extension, qualityLabel: native.qualityLabel, note: 'Native audio stream' }); }\n      return fail(`No native ${requestedAudio.toUpperCase()} stream is available from this source. Choose another format or use a converter below.`);"
+          new_branch = "      if (native?.url) { const extension = requestedAudio === 'opus' && /audio\\/webm/i.test(native.mimeType || '') ? 'webm' : requestedAudio; return ok({ url: native.url, mimeType: native.mimeType || 'application/octet-stream', extension, qualityLabel: native.qualityLabel, note: 'Native audio stream' }); }\n      if (requestedAudio === 'flac' && isTranscodeEnabled()) {\n        const best = pickYouTubeFormat(formats, 'audio', 'best');\n        if (best?.url && isAllowedMediaUrl(best.url)) {\n          return ok({\n            url: best.url,\n            mimeType: best.mimeType || 'audio/mp4',\n            extension: extensionForMime(best.mimeType || 'audio/mp4', 'm4a'),\n            qualityLabel: best.qualityLabel,\n            transcodeToAudio: 'flac',\n            note: 'Converted to FLAC on this server (ffmpeg).',\n          });\n        }\n      }\n      return fail(`No native ${requestedAudio.toUpperCase()} stream is available from this source. Choose another format or use a converter below.`);"
+          if old_branch in s and new_branch not in s:
+              s = s.replace(old_branch, new_branch, 1)
+              changed = True
+          p.write_text(s)
+
+          # 2) Add a safe ffmpeg FLAC encoder. It uses the existing streaming
+          # bridge, so there is no temporary file and no shell interpolation.
+          p = Path('src/lib/ffmpeg.ts')
+          s = p.read_text()
+          marker = "export function transcodeArgs(audioUrl: string, bitrateKbps: number): string[] {"
+          flac_fn = '''export function transcodeFlacArgs(audioUrl: string): string[] {\n  return [\n    '-hide_banner',\n    '-loglevel', 'error',\n    '-nostdin',\n    '-user_agent', BROWSER_UA,\n    '-i', audioUrl,\n    '-map', '0:a:0',\n    '-vn',\n    '-c:a', 'flac',\n    '-f', 'flac',\n    'pipe:1',\n  ];\n}\n\n'''
+          if "export function transcodeFlacArgs" not in s:
+              idx = s.index(marker)
+              s = s[:idx] + flac_fn + s[idx:]
+              changed = True
+          old_export = "export function transcodeAudioToStream(audioUrl: string, bitrateKbps: number): MuxStream | null {\n  return spawnFfmpegToStream(transcodeArgs(audioUrl, bitrateKbps));\n}"
+          new_export = "export function transcodeAudioToStream(audioUrl: string, bitrateKbps: number, target: 'mp3' | 'flac' = 'mp3'): MuxStream | null {\n  return spawnFfmpegToStream(target === 'flac' ? transcodeFlacArgs(audioUrl) : transcodeArgs(audioUrl, bitrateKbps));\n}"
+          if old_export in s:
+              s = s.replace(old_export, new_export, 1)
+              changed = True
+          p.write_text(s)
+
+          # 3) Make /api/convert invoke the real FLAC encoder and emit the
+          # correct FLAC headers/filename. MP3 keeps its existing behaviour.
+          p = Path('src/app/api/convert/route.ts')
+          s = p.read_text()
+          old = "      const requestedExt = format;\n      const transcodeAvailable = format === 'mp3' && extracted.transcodeToMp3 === true && isTranscodeEnabled();"
+          new = "      const requestedExt = format;\n      const transcodeAvailable = isTranscodeEnabled() && ((format === 'mp3' && extracted.transcodeToMp3 === true) || (format === 'flac' && extracted.transcodeToAudio === 'flac'));"
+          if old in s:
+              s = s.replace(old, new, 1)
+              changed = True
+
+          old = "      const filename = sanitizeDownloadFilename(title || 'download', transcodeAvailable ? 'mp3' : extracted.extension);"
+          new = "      const filename = sanitizeDownloadFilename(title || 'download', transcodeAvailable ? format : extracted.extension);"
+          if old in s:
+              s = s.replace(old, new, 1)
+              changed = True
+
+          old = "        const transcodeRetryAfter = await rateLimit(`transcode:${ip}`, TRANSCODE_RATE_LIMIT);\n        if (transcodeRetryAfter > 0) return NextResponse.json({ error: 'Too many MP3 conversions. Please wait a moment and try again.' }, { status: 429, headers: { 'Retry-After': String(transcodeRetryAfter), 'Cache-Control': 'no-store' } });\n        const transcodeStream = transcodeAudioToStream(extracted.url, mp3BitrateKbps(quality));"
+          new = "        const transcodeRetryAfter = await rateLimit(`transcode:${ip}`, TRANSCODE_RATE_LIMIT);\n        if (transcodeRetryAfter > 0) return NextResponse.json({ error: `Too many ${format.toUpperCase()} conversions. Please wait a moment and try again.` }, { status: 429, headers: { 'Retry-After': String(transcodeRetryAfter), 'Cache-Control': 'no-store' } });\n        const transcodeStream = transcodeAudioToStream(extracted.url, mp3BitrateKbps(quality), format === 'flac' ? 'flac' : 'mp3');"
+          if old in s:
+              s = s.replace(old, new, 1)
+              changed = True
+
+          old = "        if (!transcodeStream) return json('MP3 conversion is unavailable on this server.', 502);"
+          new = "        if (!transcodeStream) return json(`${format.toUpperCase()} conversion is unavailable on this server. Try a converter below.`, 502);"
+          if old in s:
+              s = s.replace(old, new, 1)
+              changed = True
+
+          old = "        const headers = new Headers({ 'Content-Type': 'audio/mpeg', 'Content-Disposition': `attachment; filename=\"${filename.replace(/\\\"/g, '')}\"; filename*=UTF-8''${encodedName}`, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', ...conversionNoteHeaders(extracted.note) });"
+          new = "        const outputMime = format === 'flac' ? 'audio/flac' : 'audio/mpeg';\n        const headers = new Headers({ 'Content-Type': outputMime, 'Content-Disposition': `attachment; filename=\"${filename.replace(/\\\"/g, '')}\"; filename*=UTF-8''${encodedName}`, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', ...conversionNoteHeaders(extracted.note) });"
+          if old in s:
+              s = s.replace(old, new, 1)
+              changed = True
+          p.write_text(s)
 
           if changed:
               subprocess.run(['git', 'config', 'user.name', 'github-actions[bot]'], check=True)
               subprocess.run(['git', 'config', 'user.email', '41898282+github-actions[bot]@users.noreply.github.com'], check=True)
-              subprocess.run(['git', 'add', 'src/app/page.tsx'], check=True)
-              subprocess.run(['git', 'commit', '-m', 'feat: show audio file types in download picker'], check=True)
+              subprocess.run(['git', 'add', 'src/lib/extract.ts', 'src/lib/ffmpeg.ts', 'src/app/api/convert/route.ts'], check=True)
+              subprocess.run(['git', 'commit', '-m', 'fix: transcode FLAC instead of requiring native stream'], check=True)
               subprocess.run(['git', 'push'], check=True)
 
       - name: Type-check
