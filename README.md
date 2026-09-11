@@ -1,4 +1,5 @@
 # YT Convert
+<img width="180" height="180" alt="Image" src="https://github.com/user-attachments/assets/294de99c-ce56-496d-97c7-d78bd79877bc" />
 
 A clean, fast multi-platform converter website built with Next.js. Paste a link from a supported platform, see the thumbnail and metadata instantly, then download here when we can — or pick a fallback converter. For YouTube on Android, Download here can hand the video directly to Seal, YTDLnis, or NewPipe so the phone uses its own connection instead of the bot-blocked host. AUTO-SEND converters use a verified deep link or form. COPY NEEDED converters cannot be auto-filled.
 
