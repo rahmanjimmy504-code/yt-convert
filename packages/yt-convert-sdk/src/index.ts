@@ -55,7 +55,7 @@ export interface ClientOptions {
 
 export interface LookupOptions {
   /** CAPTCHA proof returned by the deployment's CAPTCHA flow. */
-  captchaToken: string;
+  captchaToken?: string;
   /** Optional sanitized YouTube session cookies supported by the deployment. */
   youtubeCookies?: string;
 }
@@ -74,7 +74,7 @@ export interface DownloadFromInfoOptions {
 }
 
 export interface YtConvertClient {
-  lookup(url: string, options: LookupOptions): Promise<VideoInfo>;
+  lookup(url: string, options?: LookupOptions): Promise<VideoInfo>;
   download(url: string, options: DownloadOptions): Promise<Response>;
   downloadFromInfo(info: VideoInfo, url: string, options: DownloadFromInfoOptions): Promise<Response>;
   getDownloadUrl(url: string, info: VideoInfo, options: DownloadFromInfoOptions): string;
@@ -121,15 +121,18 @@ export function createYtConvertClient(options: ClientOptions): YtConvertClient {
     throw new Error('YT Convert SDK: a fetch implementation is required.');
   }
 
-  async function lookup(url: string, lookupOptions: LookupOptions): Promise<VideoInfo> {
+  async function lookup(url: string, lookupOptions: LookupOptions = {}): Promise<VideoInfo> {
     if (!url.trim()) throw new Error('YT Convert SDK: url is required.');
-    if (!lookupOptions.captchaToken.trim()) throw new Error('YT Convert SDK: captchaToken is required.');
+    const captchaToken = lookupOptions.captchaToken?.trim();
+    if (!captchaToken) {
+      throw new Error('YT Convert SDK: captchaToken is required. Complete the CAPTCHA challenge and pass the returned token.');
+    }
 
     const endpoint = buildPath(baseUrl, '/api/video-info', { url: url.trim() });
     const response = await fetchImpl(endpoint, {
       headers: {
         'Accept': 'application/json',
-        'X-Captcha-Token': lookupOptions.captchaToken,
+        'X-Captcha-Token': captchaToken,
         ...(lookupOptions.youtubeCookies ? { 'X-YouTube-Cookies': lookupOptions.youtubeCookies } : {}),
       },
     });
