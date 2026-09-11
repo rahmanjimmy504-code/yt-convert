@@ -29,7 +29,7 @@ jobs:
         run: npm ci
 
       - name: Apply requested audio format implementation
-        if: github.event_name == 'push'
+        if: github.event_name == 'push' || github.event_name == 'pull_request'
         shell: python
         run: |
           from pathlib import Path
