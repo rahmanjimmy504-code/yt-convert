@@ -205,8 +205,9 @@ export default function Home() {
     setHistory(sGetJ<HistoryItem[]>('yt-convert-history') || []);
     setFavorite(sGet('yt-convert-fav'));
     const f = sGet('yt-convert-format');
-    if (f === 'mp3' || f === 'mp4') setFormat(f);
-    else if (f === 'audio') setFormat('mp3'); // migrate legacy value
+    if ((['flac', 'mp3', 'm4a', 'aac', 'opus'] as readonly string[]).includes(f)) { setFormat(f as FormatKey); setAudioFormat(f as Exclude<FormatKey, 'mp4'>); }
+    else if (f === 'mp4') setFormat('mp4');
+    else if (f === 'audio') { setFormat('mp3'); setAudioFormat('mp3'); } // migrate legacy value
     else if (f === 'video') setFormat('mp4'); // migrate legacy value
     const aq = sGet('yt-convert-audio-quality');
     if ((AUDIO_KBPS_OPTIONS as readonly string[]).includes(aq)) setAudioQuality(aq);
@@ -802,15 +803,14 @@ export default function Home() {
           )}
           {phase === 'input' && (
             <div className="space-y-2">
-              <label className="text-sm font-semibold">Format</label>
-              <div className="grid grid-cols-2 h-11 rounded-xl bg-gray-100 dark:bg-gray-800 p-1">
-                <button onClick={() => handleFormatChange('mp3')} className={'rounded-lg text-sm font-medium transition-all flex items-center justify-center gap-2 ' + (format === 'mp3' ? 'bg-white dark:bg-gray-700 shadow-sm' : 'text-gray-500')}>
-                  <Music className="w-4 h-4" /> MP3
-                </button>
-                <button onClick={() => handleFormatChange('mp4')} className={'rounded-lg text-sm font-medium transition-all flex items-center justify-center gap-2 ' + (format === 'mp4' ? 'bg-white dark:bg-gray-700 shadow-sm' : 'text-gray-500')}>
-                  <Film className="w-4 h-4" /> MP4
-                </button>
+              <label className="text-sm font-semibold">File type</label>
+              <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5">
+                {AUDIO_FORMAT_OPTIONS.map(f => (
+                  <button key={f} type="button" onClick={() => { setAudioFormat(f); setFormat(f); sSet('yt-convert-format', f); }} aria-pressed={audioFormat === f && format !== 'mp4'} className={'h-10 rounded-lg text-xs font-semibold border transition-colors ' + (audioFormat === f && format !== 'mp4' ? 'bg-red-600 text-white border-red-600' : 'bg-gray-50 dark:bg-gray-800 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-700 hover:border-red-300 dark:hover:border-red-800')}>{f.toUpperCase()}</button>
+                ))}
+                <button type="button" onClick={() => handleFormatChange('mp4')} aria-pressed={format === 'mp4'} className={'h-10 rounded-lg text-xs font-semibold border transition-colors ' + (format === 'mp4' ? 'bg-red-600 text-white border-red-600' : 'bg-gray-50 dark:bg-gray-800 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-700 hover:border-red-300 dark:hover:border-red-800')}>MP4</button>
               </div>
+              <p className="text-[11px] text-gray-400">Choose the file type before fetching the link.</p>
             </div>
           )}
           {phase === 'input' && <p className="text-xs text-gray-400 text-center animate-pulse">{tips[tipIdx]}</p>}
