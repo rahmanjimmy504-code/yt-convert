@@ -896,7 +896,10 @@ async function extractYouTube(
   // server instead — first-party, no third-party egress. MP4 keeps the
   // existing "formats present → use them" fast path.
   const canTranscodeMp3 = want === 'audio' && isTranscodeEnabled();
-  const needTranscodedMp3 = want === 'audio'
+  // Only MP3 needs a real MP3 source/transcode. M4A, AAC and Opus are
+  // valid native YouTube audio targets and must not be discarded merely
+  // because YouTube did not return an MP3 stream.
+  const needTranscodedMp3 = format === 'mp3'
     && formats.length > 0
     && !formats.some(f => /audio\/(mpeg|mp3)/i.test(f.mimeType || ''));
   if (needTranscodedMp3 && !canTranscodeMp3) formats = [];
@@ -906,8 +909,8 @@ async function extractYouTube(
   // survive a BotGuard wall on this Vercel host. Empty/404 farm hops are
   // explicitly non-fatal and fall through to cobalt/the honest error below.
   let cobaltError: string | undefined;
-  if (!formats.length && !excludedSources.has('9convert')) {
-    const farmFormats = await nineConvertFormats(id, format === 'mp4' ? 'mp4' : 'mp3', quality);
+  if (!formats.length && !excludedSources.has('9convert') && (format === 'mp3' || format === 'mp4')) {
+    const farmFormats = await nineConvertFormats(id, format, quality);
     if (farmFormats.length) {
       formats = farmFormats;
       source = '9convert';
@@ -921,8 +924,8 @@ async function extractYouTube(
   // timeout-bounded attempt, byte-sniffed for container honesty, and any
   // failure returns nothing so cobalt still runs (and, on non-bot-walled
   // requests, Apify remains after cobalt as the paid final fallback).
-  if (!formats.length && !excludedSources.has('alldl')) {
-    const alldl = await alldlFormats(id, format === 'mp4' ? 'mp4' : 'mp3');
+  if (!formats.length && !excludedSources.has('alldl') && (format === 'mp3' || format === 'mp4')) {
+    const alldl = await alldlFormats(id, format);
     if (alldl.length) {
       formats = alldl;
       source = 'alldl';
@@ -940,7 +943,8 @@ async function extractYouTube(
   // arbitrary host. A URL that fails that check is treated as no result at
   // all rather than being silently proxied.
   if (!formats.length && !excludedSources.has('cobalt') && isCobaltConfigured()) {
-    const cobalt = await cobaltFormats(pageUrl, format === 'mp4' ? 'video' : 'audio');
+    const cobaltAudioFormat = format === 'opus' ? 'opus' : 'mp3';
+    const cobalt = await cobaltFormats(pageUrl, format === 'mp4' ? 'video' : 'audio', cobaltAudioFormat);
     const cobaltUrls = cobalt.formats.filter(f => f.url && isAllowedMediaUrl(f.url));
     if (cobaltUrls.length) {
       formats = cobaltUrls;

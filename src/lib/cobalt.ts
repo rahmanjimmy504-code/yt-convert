@@ -107,7 +107,7 @@ function asString(value: unknown): string {
  * the single URL in one PlayerFormat that satisfies the picker. Video results
  * are muxed mp4 (video+audio), audio results are mp3.
  */
-function toFormat(url: string, kind: 'video' | 'audio'): PlayerFormat {
+function toFormat(url: string, kind: 'video' | 'audio', audioFormat: 'mp3' | 'opus' = 'mp3'): PlayerFormat {
   return kind === 'video'
     ? {
         url,
@@ -120,7 +120,7 @@ function toFormat(url: string, kind: 'video' | 'audio'): PlayerFormat {
       }
     : {
         url,
-        mimeType: 'audio/mpeg',
+        mimeType: audioFormat === 'opus' ? 'audio/ogg' : 'audio/mpeg',
         audioQuality: 'AUDIO_QUALITY_MEDIUM',
         bitrate: 0,
         height: 0,
@@ -157,6 +157,7 @@ export function cobaltErrorText(payload: Record<string, unknown>): string {
 export function interpretCobaltPayload(
   payload: Record<string, unknown>,
   kind: 'video' | 'audio',
+  audioFormat: 'mp3' | 'opus' = 'mp3',
 ): CobaltResult {
   const status = asString(payload.status);
 
@@ -166,7 +167,7 @@ export function interpretCobaltPayload(
 
   if (status === 'redirect' || status === 'tunnel') {
     const url = asString(payload.url);
-    return url ? { formats: [toFormat(url, kind)] } : { formats: [], error: `${status} without a url` };
+    return url ? { formats: [toFormat(url, kind, audioFormat)] } : { formats: [], error: `${status} without a url` };
   }
 
   if (status === 'picker') {
@@ -174,7 +175,7 @@ export function interpretCobaltPayload(
     // For an audio request prefer the dedicated audio track when present.
     if (kind === 'audio') {
       const audioUrl = asString(payload.audio);
-      if (audioUrl) return { formats: [toFormat(audioUrl, 'audio')] };
+      if (audioUrl) return { formats: [toFormat(audioUrl, 'audio', audioFormat)] };
     }
     for (const item of items) {
       if (!item || typeof item !== 'object') continue;
@@ -183,7 +184,7 @@ export function interpretCobaltPayload(
       // Skip photos: a slideshow image is not a usable mp3/mp4 result.
       if (type && type !== 'video' && type !== 'gif') continue;
       const url = asString(entry.url);
-      if (url) return { formats: [toFormat(url, kind)] };
+      if (url) return { formats: [toFormat(url, kind, audioFormat)] };
     }
     return { formats: [], error: 'picker had no usable video entry' };
   }
@@ -206,6 +207,7 @@ async function askInstance(
   pageUrl: string,
   kind: 'video' | 'audio',
   auth?: string,
+  audioFormat: 'mp3' | 'opus' = 'mp3',
 ): Promise<CobaltResult> {
   const headers: Record<string, string> = {
     Accept: 'application/json',
@@ -220,7 +222,7 @@ async function askInstance(
     // returns a muxed file. Both avoid the separate-track problem that the
     // Innertube path has to solve itself.
     downloadMode: kind === 'audio' ? 'audio' : 'auto',
-    audioFormat: 'mp3',
+    audioFormat: kind === 'audio' ? audioFormat : 'mp3',
     videoQuality: '1080',
     filenameStyle: 'basic',
     // Keep processing server-side: we stream the result through the convert
@@ -263,13 +265,14 @@ async function askInstance(
 export async function cobaltFormats(
   pageUrl: string,
   kind: 'video' | 'audio',
+  audioFormat: 'mp3' | 'opus' = 'mp3',
 ): Promise<CobaltResult> {
   const errors: string[] = [];
   const config = cobaltConfigFromEnv();
 
   // 1. The operator's own instance.
   if (config) {
-    const result = await askInstance(config.url, pageUrl, kind, config.auth);
+    const result = await askInstance(config.url, pageUrl, kind, config.auth, audioFormat);
     if (result.formats.length) return result;
     if (result.error) errors.push(`${hostOf(config.url)}: ${result.error}`);
 
@@ -291,7 +294,7 @@ export async function cobaltFormats(
   if (!discovered.length) return { formats: [], error: errors[0] };
 
   const attempts = await Promise.all(
-    discovered.map(async origin => ({ origin, result: await askInstance(origin, pageUrl, kind) })),
+    discovered.map(async origin => ({ origin, result: await askInstance(origin, pageUrl, kind, undefined, audioFormat) })),
   );
 
   for (const { origin, result } of attempts) {
