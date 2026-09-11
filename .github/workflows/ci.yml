@@ -86,8 +86,8 @@ jobs:
 
           if changed:
               subprocess.run(['git','config','user.name','github-actions[bot]'], check=True)
-              subprocess.run(['git','config','user.email','41898282+users.noreply.github.com'], check=True)
-              subprocess.run(['git','add','src','.github/workflows/add-audio-format-picker.yml'], check=True)
+              subprocess.run(['git','config','user.email','41898282+github-actions[bot]@users.noreply.github.com'], check=True)
+              subprocess.run(['git','add','src','.github/workflows'], check=True)
               subprocess.run(['git','commit','-m','feat: add file type picker to initial form'], check=True)
               subprocess.run(['git','push'], check=True)
 
