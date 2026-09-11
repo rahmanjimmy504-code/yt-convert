@@ -4,10 +4,7 @@
   "description": "A clean, fast multi-platform link converter website built with Next.js.",
   "license": "GPL-3.0-or-later",
   "private": false,
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/rahmanjimmy504-code/yt-convert.git"
-  },
+  "repository": {"type": "git", "url": "git+https://github.com/rahmanjimmy504-code/yt-convert.git"},
   "homepage": "https://github.com/rahmanjimmy504-code/yt-convert#readme",
   "scripts": {
     "dev": "next dev",
@@ -37,6 +34,7 @@
     "youtubei.js": "18.0.0"
   },
   "devDependencies": {
+    "tsup": "^8.5.0",
     "vite-node": "^6.0.0",
     "vitest": "^4.1.10",
     "wrangler": "^4.123.0"
