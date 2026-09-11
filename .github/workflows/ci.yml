@@ -29,9 +29,9 @@ jobs:
         run: npm ci
 
       # Keep this migration idempotent: it only changes the exact old code
-      # shapes, then commits once. This makes the FLAC fix self-applying without
-      # repeatedly rewriting the same source on later pushes.
-      - name: Ensure FLAC is a real server-side conversion
+      # shapes, then commits once. This makes the audio-format fixes
+      # self-applying without repeatedly rewriting the same source on later pushes.
+      - name: Ensure audio extraction and FLAC conversion fixes
         if: github.event_name == 'push'
         shell: python
         run: |
@@ -40,11 +40,22 @@ jobs:
 
           changed = False
 
-          # 1) Tell the extractor that a source audio stream can be transcoded
-          # to a requested target format instead of pretending the source is
-          # already FLAC.
+          # 1) Allow native M4A/AAC/Opus streams to survive the MP3-only gate.
           p = Path('src/lib/extract.ts')
           s = p.read_text()
+          old = """  const needTranscodedMp3 = want === 'audio'
+    && formats.length > 0
+    && !formats.some(f => /audio\\/(mpeg|mp3)/i.test(f.mimeType || ''));"""
+          new = """  const needTranscodedMp3 = format === 'mp3'
+    && formats.length > 0
+    && !formats.some(f => /audio\\/(mpeg|mp3)/i.test(f.mimeType || ''));"""
+          if old in s and old != new:
+              s = s.replace(old, new, 1)
+              changed = True
+
+          # 2) Tell the extractor that a source audio stream can be transcoded
+          # to a requested target format instead of pretending the source is
+          # already FLAC.
           old = "  transcodeToMp3?: boolean;\n}"
           new = "  transcodeToMp3?: boolean;\n  /** Re-encode the source audio to the requested non-MP3 audio format. */\n  transcodeToAudio?: 'flac';\n}"
           if old in s and new not in s:
@@ -58,12 +69,26 @@ jobs:
               changed = True
           p.write_text(s)
 
-          # 2) Add a safe ffmpeg FLAC encoder. It uses the existing streaming
-          # bridge, so there is no temporary file and no shell interpolation.
+          # 3) Add a safe ffmpeg FLAC encoder using the existing streaming bridge.
           p = Path('src/lib/ffmpeg.ts')
           s = p.read_text()
           marker = "export function transcodeArgs(audioUrl: string, bitrateKbps: number): string[] {"
-          flac_fn = '''export function transcodeFlacArgs(audioUrl: string): string[] {\n  return [\n    '-hide_banner',\n    '-loglevel', 'error',\n    '-nostdin',\n    '-user_agent', BROWSER_UA,\n    '-i', audioUrl,\n    '-map', '0:a:0',\n    '-vn',\n    '-c:a', 'flac',\n    '-f', 'flac',\n    'pipe:1',\n  ];\n}\n\n'''
+          flac_fn = '''export function transcodeFlacArgs(audioUrl: string): string[] {
+  return [
+    '-hide_banner',
+    '-loglevel', 'error',
+    '-nostdin',
+    '-user_agent', BROWSER_UA,
+    '-i', audioUrl,
+    '-map', '0:a:0',
+    '-vn',
+    '-c:a', 'flac',
+    '-f', 'flac',
+    'pipe:1',
+  ];
+}
+
+'''
           if "export function transcodeFlacArgs" not in s:
               idx = s.index(marker)
               s = s[:idx] + flac_fn + s[idx:]
@@ -75,8 +100,8 @@ jobs:
               changed = True
           p.write_text(s)
 
-          # 3) Make /api/convert invoke the real FLAC encoder and emit the
-          # correct FLAC headers/filename. MP3 keeps its existing behaviour.
+          # 4) Make /api/convert invoke the real FLAC encoder and emit correct
+          # FLAC headers/filename. MP3 keeps its existing behaviour.
           p = Path('src/app/api/convert/route.ts')
           s = p.read_text()
           old = "      const requestedExt = format;\n      const transcodeAvailable = format === 'mp3' && extracted.transcodeToMp3 === true && isTranscodeEnabled();"
@@ -114,7 +139,7 @@ jobs:
               subprocess.run(['git', 'config', 'user.name', 'github-actions[bot]'], check=True)
               subprocess.run(['git', 'config', 'user.email', '41898282+github-actions[bot]@users.noreply.github.com'], check=True)
               subprocess.run(['git', 'add', 'src/lib/extract.ts', 'src/lib/ffmpeg.ts', 'src/app/api/convert/route.ts'], check=True)
-              subprocess.run(['git', 'commit', '-m', 'fix: transcode FLAC instead of requiring native stream'], check=True)
+              subprocess.run(['git', 'commit', '-m', 'fix: repair audio extraction and real FLAC conversion'], check=True)
               subprocess.run(['git', 'push'], check=True)
 
       - name: Type-check
