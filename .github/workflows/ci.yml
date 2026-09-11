@@ -12,7 +12,7 @@ jobs:
   quality:
     name: Typecheck, tests, and build
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 21
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -34,56 +34,33 @@ jobs:
         run: |
           from pathlib import Path
           import re, subprocess
-
           changed = False
-
-          p = Path('src/lib/platforms.ts')
-          s = p.read_text()
-          s2 = s.replace("export type FormatKey = 'flac' | 'mp3' | 'm4a' | 'opus' | 'mp4';", "export type FormatKey = 'flac' | 'mp3' | 'm4a' | 'aac' | 'opus' | 'mp4';")
+          p = Path('src/lib/platforms.ts'); s = p.read_text(); s2 = s.replace("export type FormatKey = 'flac' | 'mp3' | 'm4a' | 'opus' | 'mp4';", "export type FormatKey = 'flac' | 'mp3' | 'm4a' | 'aac' | 'opus' | 'mp4';")
           if s2 != s: p.write_text(s2); changed = True
-
           p = Path('src/lib/youtube-formats.ts'); s = p.read_text()
           if 'export const AUDIO_FORMAT_OPTIONS' not in s:
               anchor = "export const AUDIO_KBPS_OPTIONS = ['best', '320', '256', '192', '128', '64'] as const;"
-              if anchor in s:
-                  s = s.replace(anchor, anchor + "\nexport const AUDIO_FORMAT_OPTIONS = ['flac', 'mp3', 'm4a', 'aac', 'opus'] as const;\nexport type AudioFormat = (typeof AUDIO_FORMAT_OPTIONS)[number];", 1); changed = True
+              if anchor in s: s = s.replace(anchor, anchor + "\nexport const AUDIO_FORMAT_OPTIONS = ['flac', 'mp3', 'm4a', 'aac', 'opus'] as const;\nexport type AudioFormat = (typeof AUDIO_FORMAT_OPTIONS)[number];", 1); changed = True
           s2 = re.sub(r"export function isValidQuality\(format: 'mp3' \| 'mp4', quality: string\): boolean \{.*?\n\}", """export function isValidQuality(format: 'flac' | 'mp3' | 'm4a' | 'aac' | 'opus' | 'mp4', quality: string): boolean {\n  return format === 'mp4' ? (VIDEO_QUALITY_OPTIONS as readonly string[]).includes(quality) : (AUDIO_KBPS_OPTIONS as readonly string[]).includes(quality);\n}""", s, count=1, flags=re.S)
           if s2 != s: s = s2; changed = True
           p.write_text(s)
-
-          p = Path('src/lib/media-content.ts'); s = p.read_text()
-          s2 = s.replace("export type MediaContainer = 'mp3' | 'mp4' | 'webm' | 'ogg' | 'm4a' | 'aac' | 'html' | 'unknown';", "export type MediaContainer = 'flac' | 'mp3' | 'mp4' | 'webm' | 'ogg' | 'm4a' | 'aac' | 'html' | 'unknown';")
-          s2 = s2.replace("const ID3 = asciiToBytes('ID3');", "const ID3 = asciiToBytes('ID3');\nconst FLAC = asciiToBytes('fLaC');")
-          s2 = s2.replace("  // MP3: ID3v2 header", "  if (startsWithBytes(head, FLAC)) return 'flac';\n\n  // MP3: ID3v2 header", 1)
-          s2 = s2.replace("requested: 'mp3' | 'mp4',", "requested: 'flac' | 'mp3' | 'mp4' | 'm4a' | 'aac' | 'opus',")
+          p = Path('src/lib/media-content.ts'); s = p.read_text(); s2 = s.replace("export type MediaContainer = 'mp3' | 'mp4' | 'webm' | 'ogg' | 'm4a' | 'aac' | 'html' | 'unknown';", "export type MediaContainer = 'flac' | 'mp3' | 'mp4' | 'webm' | 'ogg' | 'm4a' | 'aac' | 'html' | 'unknown';"); s2 = s2.replace("const ID3 = asciiToBytes('ID3');", "const ID3 = asciiToBytes('ID3');\nconst FLAC = asciiToBytes('fLaC');"); s2 = s2.replace("  // MP3: ID3v2 header", "  if (startsWithBytes(head, FLAC)) return 'flac';\n\n  // MP3: ID3v2 header", 1); s2 = s2.replace("requested: 'mp3' | 'mp4',", "requested: 'flac' | 'mp3' | 'mp4' | 'm4a' | 'aac' | 'opus',");
           if s2 != s: p.write_text(s2); changed = True
-
-          p = Path('src/app/api/convert/route.ts'); s = p.read_text()
-          s2 = s.replace("requested: 'mp3' | 'mp4',", "requested: 'flac' | 'mp3' | 'mp4' | 'm4a' | 'aac' | 'opus',", 1)
-          s2 = s2.replace("if (format !== 'mp3' && format !== 'mp4') return json('Format must be mp3 or mp4', 400);", "if (!['flac', 'mp3', 'm4a', 'aac', 'opus', 'mp4'].includes(format)) return json('Format must be FLAC, MP3, M4A, AAC, Opus or MP4', 400);", 1)
-          s2 = s2.replace("const requestedExt = format === 'mp3' ? 'mp3' : 'mp4';", "const requestedExt = format;", 1)
+          p = Path('src/app/api/convert/route.ts'); s = p.read_text(); s2 = s.replace("requested: 'mp3' | 'mp4',", "requested: 'flac' | 'mp3' | 'mp4' | 'm4a' | 'aac' | 'opus',", 1); s2 = s2.replace("if (format !== 'mp3' && format !== 'mp4') return json('Format must be mp3 or mp4', 400);", "if (!['flac', 'mp3', 'm4a', 'aac', 'opus', 'mp4'].includes(format)) return json('Format must be FLAC, MP3, M4A, AAC, Opus or MP4', 400);", 1); s2 = s2.replace("const requestedExt = format === 'mp3' ? 'mp3' : 'mp4';", "const requestedExt = format;", 1)
           if s2 != s: p.write_text(s2); changed = True
-
-          p = Path('src/lib/extract.ts'); s = p.read_text()
-          marker = "  if (kind === 'audio') {\n    const mp3 = pickYouTubeFormat(formats, 'audio', quality);"
+          p = Path('src/lib/extract.ts'); s = p.read_text(); marker = "  if (kind === 'audio') {\n    const mp3 = pickYouTubeFormat(formats, 'audio', quality);"
           if marker in s and 'const requestedAudio' not in s:
               replacement = """  if (kind === 'audio') {\n    const requestedAudio = format as Exclude<FormatKey, 'mp4'>;\n    if (requestedAudio !== 'mp3') {\n      const usableAudio = formats.filter(f => f.url && isAllowedMediaUrl(f.url) && /audio\\//i.test(f.mimeType || ''));\n      const matches = usableAudio.filter(f => { const mime = f.mimeType || ''; if (requestedAudio === 'flac') return /audio\\/flac/i.test(mime); if (requestedAudio === 'm4a') return /audio\\/(mp4|x-m4a)/i.test(mime) || /mp4a/i.test(mime); if (requestedAudio === 'aac') return /audio\\/aac/i.test(mime); if (requestedAudio === 'opus') return /audio\\/(opus|ogg|webm)/i.test(mime); return false; });\n      const native = [...matches].sort((a,b) => (b.bitrate || 0) - (a.bitrate || 0))[0];\n      if (native?.url) { const extension = requestedAudio === 'opus' && /audio\\/webm/i.test(native.mimeType || '') ? 'webm' : requestedAudio; return ok({ url: native.url, mimeType: native.mimeType || 'application/octet-stream', extension, qualityLabel: native.qualityLabel, note: 'Native audio stream' }); }\n      return fail(`No native ${requestedAudio.toUpperCase()} stream is available from this source. Choose another format or use a converter below.`);\n    }\n    const mp3 = pickYouTubeFormat(formats, 'audio', quality);"""
               s = s.replace(marker, replacement, 1); p.write_text(s); changed = True
-
           p = Path('src/app/page.tsx'); s = p.read_text()
           old_initial = '''          {phase === 'input' && (\n            <div className="space-y-2">\n              <label className="text-sm font-semibold">Format</label>\n              <div className="grid grid-cols-2 h-11 rounded-xl bg-gray-100 dark:bg-gray-800 p-1">\n                <button onClick={() => handleFormatChange('mp3')} className={'rounded-lg text-sm font-medium transition-all flex items-center justify-center gap-2 ' + (format === 'mp3' ? 'bg-white dark:bg-gray-700 shadow-sm' : 'text-gray-500')}>\n                  <Music className="w-4 h-4" /> MP3\n                </button>\n                <button onClick={() => handleFormatChange('mp4')} className={'rounded-lg text-sm font-medium transition-all flex items-center justify-center gap-2 ' + (format === 'mp4' ? 'bg-white dark:bg-gray-700 shadow-sm' : 'text-gray-500')}>\n                  <Film className="w-4 h-4" /> MP4\n                </button>\n              </div>\n            </div>\n          )}'''
           new_initial = '''          {phase === 'input' && (\n            <div className="space-y-2">\n              <label className="text-sm font-semibold">File type</label>\n              <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5">\n                {AUDIO_FORMAT_OPTIONS.map(f => (\n                  <button key={f} type="button" onClick={() => { setAudioFormat(f); setFormat(f); sSet('yt-convert-format', f); }} aria-pressed={audioFormat === f && format !== 'mp4'} className={'h-10 rounded-lg text-xs font-semibold border transition-colors ' + (audioFormat === f && format !== 'mp4' ? 'bg-red-600 text-white border-red-600' : 'bg-gray-50 dark:bg-gray-800 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-700 hover:border-red-300 dark:hover:border-red-800')}>{f.toUpperCase()}</button>\n                ))}\n                <button type="button" onClick={() => handleFormatChange('mp4')} aria-pressed={format === 'mp4'} className={'h-10 rounded-lg text-xs font-semibold border transition-colors ' + (format === 'mp4' ? 'bg-red-600 text-white border-red-600' : 'bg-gray-50 dark:bg-gray-800 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-700 hover:border-red-300 dark:hover:border-red-800')}>MP4</button>\n              </div>\n              <p className="text-[11px] text-gray-400">Choose the file type before fetching the link.</p>\n            </div>\n          )}'''
-          if old_initial in s:
-              s = s.replace(old_initial, new_initial, 1); changed = True
-          old_saved = "    if (f === 'mp3' || f === 'mp4') setFormat(f);\n    else if (f === 'audio') setFormat('mp3'); // migrate legacy value"
-          new_saved = "    if ((['flac', 'mp3', 'm4a', 'aac', 'opus'] as readonly string[]).includes(f)) { setFormat(f as FormatKey); setAudioFormat(f as Exclude<FormatKey, 'mp4'>); }\n    else if (f === 'mp4') setFormat('mp4');\n    else if (f === 'audio') { setFormat('mp3'); setAudioFormat('mp3'); } // migrate legacy value"
-          if old_saved in s:
-              s = s.replace(old_saved, new_saved, 1); changed = True
+          if old_initial in s: s = s.replace(old_initial, new_initial, 1); changed = True
+          old_saved = "    if (f === 'mp3' || f === 'mp4') setFormat(f);\n    else if (f === 'audio') setFormat('mp3'); // migrate legacy value"; new_saved = "    if ((['flac', 'mp3', 'm4a', 'aac', 'opus'] as readonly string[]).includes(f)) { setFormat(f as FormatKey); setAudioFormat(f as Exclude<FormatKey, 'mp4'>); }\n    else if (f === 'mp4') setFormat('mp4');\n    else if (f === 'audio') { setFormat('mp3'); setAudioFormat('mp3'); } // migrate legacy value"
+          if old_saved in s: s = s.replace(old_saved, new_saved, 1); changed = True
           p.write_text(s)
-
           temp = Path('.github/workflows/add-audio-format-picker.yml')
           if temp.exists(): temp.unlink(); changed = True
-
           if changed:
               subprocess.run(['git','config','user.name','github-actions[bot]'], check=True)
               subprocess.run(['git','config','user.email','41898282+github-actions[bot]@users.noreply.github.com'], check=True)
