@@ -34,7 +34,6 @@
     "youtubei.js": "18.0.0"
   },
   "devDependencies": {
-    "tsup": "^8.5.0",
     "vite-node": "^6.0.0",
     "vitest": "^4.1.10",
     "wrangler": "^4.123.0"
