@@ -8,9 +8,10 @@ on:
 permissions:
   contents: write
 
-# Migration workflow: installs FFmpeg WASM support, repairs audio fallback
-# routing, and commits the browser-side conversion implementation.
-# Triggered by this workflow-only change against the current main branch.
+# One-shot migration: install open-source FFmpeg WASM support, repair audio
+# fallback routing, commit the browser-side conversion implementation, then
+# remove this workflow. This comment change intentionally retriggers the
+# migration after the Cobalt fallback fixes landed.
 
 jobs:
   migrate:
@@ -32,46 +33,47 @@ jobs:
         shell: python
         run: |
           from pathlib import Path
+          import re
           import subprocess
 
           changed = []
 
-          # 1. Native M4A/AAC/Opus must not be thrown away just because there
-          # is no native MP3. Only an actual MP3 request needs MP3 conversion.
+          # 1. Only MP3 requests require MP3 conversion. Native M4A/AAC/Opus
+          # candidates must remain eligible for their own requested formats.
           p = Path('src/lib/extract.ts')
           s = p.read_text()
-          old = """const needTranscodedMp3 = want === 'audio'\n    && formats.length > 0\n    && !formats.some(f => /audio\\/(mpeg|mp3)/i.test(f.mimeType || ''));"""
-          new = """const needTranscodedMp3 = format === 'mp3'\n    && formats.length > 0\n    && !formats.some(f => /audio\\/(mpeg|mp3)/i.test(f.mimeType || ''));"""
-          if old in s:
-              s = s.replace(old, new, 1)
+          s2 = re.sub(r"const needTranscodedMp3 = want === 'audio'", "const needTranscodedMp3 = format === 'mp3'", s, count=1)
+          if s2 != s:
               changed.append('extract MP3-only routing')
+              s = s2
           p.write_text(s)
 
-          # 2. Cobalt must preserve the requested Opus format.
+          # 2. Cobalt must preserve the requested Opus format all the way to
+          # the response interpreter.
           p = Path('src/lib/cobalt.ts')
           s = p.read_text()
-          s2 = s.replace(
-              "return interpretCobaltPayload(data, kind);",
-              "return interpretCobaltPayload(data, kind, audioFormat);",
-              1,
-          )
+          s2 = s.replace('return interpretCobaltPayload(data, kind);', 'return interpretCobaltPayload(data, kind, audioFormat);', 1)
           if s2 != s:
               changed.append('Cobalt Opus propagation')
               s = s2
           p.write_text(s)
 
-          # 3. Generalise the server-side transcode failure message.
+          # 3. Generalise server-side transcode diagnostics.
           p = Path('src/app/api/convert/route.ts')
           s = p.read_text()
-          old = "return json('Could not convert the audio to MP3 on this server. Try again, or use a converter below.', 502);"
-          new = "return json(`Could not convert the audio to ${format.toUpperCase()} on this server. Try again, or use a converter below.`, 502);"
-          if old in s:
-              s = s.replace(old, new, 1)
+          s2 = s.replace(
+              "Could not convert the audio to MP3 on this server. Try again, or use a converter below.",
+              "Could not convert the audio to ${format.toUpperCase()} on this server. Try again, or use a converter below.",
+              1,
+          )
+          if s2 != s:
               changed.append('generic transcode error')
+              s = s2
           p.write_text(s)
 
-          # 4. Browser-side FFmpeg WASM conversion. The server supplies a real
-          # MP3 for FLAC/M4A/AAC/Opus; the browser performs the final conversion.
+          # 4. Add browser-side FFmpeg WASM conversion without running FFmpeg
+          # in the Cloudflare Worker. The server still supplies a real MP3;
+          # the browser performs the final FLAC/M4A/AAC/Opus conversion.
           p = Path('src/app/page.tsx')
           s = p.read_text()
 
