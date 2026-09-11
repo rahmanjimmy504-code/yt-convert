@@ -1,6 +1,6 @@
 {
   "name": "@jimmy_1234ha/yt-convert",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Public TypeScript SDK for the YT Convert media conversion API.",
   "license": "MIT",
   "type": "module",
