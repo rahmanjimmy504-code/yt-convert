@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: ['**']
   pull_request:
 
 permissions:
@@ -29,7 +29,7 @@ jobs:
         run: npm ci
 
       - name: Apply requested audio format implementation
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        if: github.event_name == 'push'
         shell: python
         run: |
           from pathlib import Path
@@ -71,13 +71,10 @@ jobs:
               s = s.replace(marker, replacement, 1); p.write_text(s); changed = True
 
           p = Path('src/app/page.tsx'); s = p.read_text()
-          # Keep the already-added result-card picker, and add the same picker
-          # to the initial form so the user chooses the file type before Go.
           old_initial = '''          {phase === 'input' && (\n            <div className="space-y-2">\n              <label className="text-sm font-semibold">Format</label>\n              <div className="grid grid-cols-2 h-11 rounded-xl bg-gray-100 dark:bg-gray-800 p-1">\n                <button onClick={() => handleFormatChange('mp3')} className={'rounded-lg text-sm font-medium transition-all flex items-center justify-center gap-2 ' + (format === 'mp3' ? 'bg-white dark:bg-gray-700 shadow-sm' : 'text-gray-500')}>\n                  <Music className="w-4 h-4" /> MP3\n                </button>\n                <button onClick={() => handleFormatChange('mp4')} className={'rounded-lg text-sm font-medium transition-all flex items-center justify-center gap-2 ' + (format === 'mp4' ? 'bg-white dark:bg-gray-700 shadow-sm' : 'text-gray-500')}>\n                  <Film className="w-4 h-4" /> MP4\n                </button>\n              </div>\n            </div>\n          )}'''
           new_initial = '''          {phase === 'input' && (\n            <div className="space-y-2">\n              <label className="text-sm font-semibold">File type</label>\n              <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5">\n                {AUDIO_FORMAT_OPTIONS.map(f => (\n                  <button key={f} type="button" onClick={() => { setAudioFormat(f); setFormat(f); sSet('yt-convert-format', f); }} aria-pressed={audioFormat === f && format !== 'mp4'} className={'h-10 rounded-lg text-xs font-semibold border transition-colors ' + (audioFormat === f && format !== 'mp4' ? 'bg-red-600 text-white border-red-600' : 'bg-gray-50 dark:bg-gray-800 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-700 hover:border-red-300 dark:hover:border-red-800')}>{f.toUpperCase()}</button>\n                ))}\n                <button type="button" onClick={() => handleFormatChange('mp4')} aria-pressed={format === 'mp4'} className={'h-10 rounded-lg text-xs font-semibold border transition-colors ' + (format === 'mp4' ? 'bg-red-600 text-white border-red-600' : 'bg-gray-50 dark:bg-gray-800 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-700 hover:border-red-300 dark:hover:border-red-800')}>MP4</button>\n              </div>\n              <p className="text-[11px] text-gray-400">Choose the file type before fetching the link.</p>\n            </div>\n          )}'''
           if old_initial in s:
               s = s.replace(old_initial, new_initial, 1); changed = True
-          # Restore saved audio format choices across reloads.
           old_saved = "    if (f === 'mp3' || f === 'mp4') setFormat(f);\n    else if (f === 'audio') setFormat('mp3'); // migrate legacy value"
           new_saved = "    if ((['flac', 'mp3', 'm4a', 'aac', 'opus'] as readonly string[]).includes(f)) { setFormat(f as FormatKey); setAudioFormat(f as Exclude<FormatKey, 'mp4'>); }\n    else if (f === 'mp4') setFormat('mp4');\n    else if (f === 'audio') { setFormat('mp3'); setAudioFormat('mp3'); } // migrate legacy value"
           if old_saved in s:
@@ -89,21 +86,10 @@ jobs:
 
           if changed:
               subprocess.run(['git','config','user.name','github-actions[bot]'], check=True)
-              subprocess.run(['git','config','user.email','41898282+github-actions[bot]@users.noreply.github.com'], check=True)
+              subprocess.run(['git','config','user.email','41898282+users.noreply.github.com'], check=True)
               subprocess.run(['git','add','src','.github/workflows/add-audio-format-picker.yml'], check=True)
               subprocess.run(['git','commit','-m','feat: add file type picker to initial form'], check=True)
               subprocess.run(['git','push'], check=True)
-
-      - name: Remove temporary youtubei patch workflow
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-        run: |
-          if [ -f .github/workflows/wire-youtubei-fallback.yml ]; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git rm .github/workflows/wire-youtubei-fallback.yml
-            git commit -m "chore: remove temporary youtubei wiring workflow"
-            git push
-          fi
 
       - name: Type-check
         run: npm run typecheck
