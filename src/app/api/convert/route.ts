@@ -198,7 +198,7 @@ export async function GET(request: Request) {
       }
 
       const requestedExt = format;
-      const transcodeAvailable = format === 'mp3' && extracted.transcodeToMp3 === true && isTranscodeEnabled();
+      const transcodeAvailable = isTranscodeEnabled() && ((format === 'mp3' && extracted.transcodeToMp3 === true) || (format === 'flac' && extracted.transcodeToAudio === 'flac'));
       if (extracted.extension !== requestedExt && !transcodeAvailable) {
         const source = wrongSourceFor(extracted);
         if ((platform === 'youtube' || platform === 'youtubemusic') && source && attempt < MAX_CONVERT_ATTEMPTS) {
@@ -210,7 +210,7 @@ export async function GET(request: Request) {
         return json(`No real ${requestedExt.toUpperCase()} source was available for this video. Try a converter below.`, 502);
       }
 
-      const filename = sanitizeDownloadFilename(title || 'download', transcodeAvailable ? 'mp3' : extracted.extension);
+      const filename = sanitizeDownloadFilename(title || 'download', transcodeAvailable ? format : extracted.extension);
 
       let muxStream: ReturnType<typeof muxMediaToStream> = null;
       let streamUrl = extracted.url;
@@ -253,9 +253,9 @@ export async function GET(request: Request) {
       if (transcodeAvailable) {
         if (!isAllowedMediaUrl(extracted.url)) return json('Refusing to fetch a non-allowlisted media host.', 502);
         const transcodeRetryAfter = await rateLimit(`transcode:${ip}`, TRANSCODE_RATE_LIMIT);
-        if (transcodeRetryAfter > 0) return NextResponse.json({ error: 'Too many MP3 conversions. Please wait a moment and try again.' }, { status: 429, headers: { 'Retry-After': String(transcodeRetryAfter), 'Cache-Control': 'no-store' } });
-        const transcodeStream = transcodeAudioToStream(extracted.url, mp3BitrateKbps(quality));
-        if (!transcodeStream) return json('MP3 conversion is unavailable on this server.', 502);
+        if (transcodeRetryAfter > 0) return NextResponse.json({ error: `Too many ${format.toUpperCase()} conversions. Please wait a moment and try again.` }, { status: 429, headers: { 'Retry-After': String(transcodeRetryAfter), 'Cache-Control': 'no-store' } });
+        const transcodeStream = transcodeAudioToStream(extracted.url, mp3BitrateKbps(quality), format === 'flac' ? 'flac' : 'mp3');
+        if (!transcodeStream) return json(`${format.toUpperCase()} conversion is unavailable on this server. Try a converter below.`, 502);
         const started = await Promise.race([transcodeStream.started, new Promise<boolean | null>(resolve => setTimeout(() => resolve(null), 3000))]);
         if (started === false) {
           transcodeStream.kill();
@@ -263,7 +263,8 @@ export async function GET(request: Request) {
         }
         request.signal.addEventListener('abort', () => transcodeStream.kill(), { once: true });
         const encodedName = encodeURIComponent(filename).replace(/['()]/g, '');
-        const headers = new Headers({ 'Content-Type': 'audio/mpeg', 'Content-Disposition': `attachment; filename="${filename.replace(/\"/g, '')}"; filename*=UTF-8''${encodedName}`, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', ...conversionNoteHeaders(extracted.note) });
+        const outputMime = format === 'flac' ? 'audio/flac' : 'audio/mpeg';
+        const headers = new Headers({ 'Content-Type': outputMime, 'Content-Disposition': `attachment; filename="${filename.replace(/\"/g, '')}"; filename*=UTF-8''${encodedName}`, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', ...conversionNoteHeaders(extracted.note) });
         recordEvent({ type: 'lookup', platform, ok: true });
         return new Response(transcodeStream.body, { status: 200, headers });
       }

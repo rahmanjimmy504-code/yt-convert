@@ -52,6 +52,8 @@ export interface ExtractedMedia {
    * relabelling the file.
    */
   transcodeToMp3?: boolean;
+  /** Re-encode the source audio to the requested non-MP3 audio format. */
+  transcodeToAudio?: 'flac';
 }
 
 export type ExtractResult = ExtractedMedia | { error: string };
@@ -1023,6 +1025,19 @@ async function extractYouTube(
       const matches = usableAudio.filter(f => { const mime = f.mimeType || ''; if (requestedAudio === 'flac') return /audio\/flac/i.test(mime); if (requestedAudio === 'm4a') return /audio\/(mp4|x-m4a)/i.test(mime) || /mp4a/i.test(mime); if (requestedAudio === 'aac') return /audio\/aac/i.test(mime); if (requestedAudio === 'opus') return /audio\/(opus|ogg|webm)/i.test(mime); return false; });
       const native = [...matches].sort((a,b) => (b.bitrate || 0) - (a.bitrate || 0))[0];
       if (native?.url) { const extension = requestedAudio === 'opus' && /audio\/webm/i.test(native.mimeType || '') ? 'webm' : requestedAudio; return ok({ url: native.url, mimeType: native.mimeType || 'application/octet-stream', extension, qualityLabel: native.qualityLabel, note: 'Native audio stream' }); }
+      if (requestedAudio === 'flac' && isTranscodeEnabled()) {
+        const best = pickYouTubeFormat(formats, 'audio', 'best');
+        if (best?.url && isAllowedMediaUrl(best.url)) {
+          return ok({
+            url: best.url,
+            mimeType: best.mimeType || 'audio/mp4',
+            extension: extensionForMime(best.mimeType || 'audio/mp4', 'm4a'),
+            qualityLabel: best.qualityLabel,
+            transcodeToAudio: 'flac',
+            note: 'Converted to FLAC on this server (ffmpeg).',
+          });
+        }
+      }
       return fail(`No native ${requestedAudio.toUpperCase()} stream is available from this source. Choose another format or use a converter below.`);
     }
     const mp3 = pickYouTubeFormat(formats, 'audio', quality);

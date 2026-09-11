@@ -124,6 +124,21 @@ const LOW_WATER = 32;
  * MP3. `-write_xing 0` keeps the output a plain frame stream (no Xing/Info
  * tag), which is what a non-seekable pipe can emit deterministically.
  */
+export function transcodeFlacArgs(audioUrl: string): string[] {
+  return [
+    '-hide_banner',
+    '-loglevel', 'error',
+    '-nostdin',
+    '-user_agent', BROWSER_UA,
+    '-i', audioUrl,
+    '-map', '0:a:0',
+    '-vn',
+    '-c:a', 'flac',
+    '-f', 'flac',
+    'pipe:1',
+  ];
+}
+
 export function transcodeArgs(audioUrl: string, bitrateKbps: number): string[] {
   return [
     '-hide_banner',
@@ -252,6 +267,6 @@ export function muxMediaToStream(videoUrl: string, audioUrl: string): MuxStream 
 }
 
 /** Re-encode an audio stream into MP3 (libmp3lame) on this server. */
-export function transcodeAudioToStream(audioUrl: string, bitrateKbps: number): MuxStream | null {
-  return spawnFfmpegToStream(transcodeArgs(audioUrl, bitrateKbps));
+export function transcodeAudioToStream(audioUrl: string, bitrateKbps: number, target: 'mp3' | 'flac' = 'mp3'): MuxStream | null {
+  return spawnFfmpegToStream(target === 'flac' ? transcodeFlacArgs(audioUrl) : transcodeArgs(audioUrl, bitrateKbps));
 }
