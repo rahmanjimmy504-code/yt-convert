@@ -34,7 +34,9 @@ const client = createYtConvertClient({
 
 The API requires a CAPTCHA proof before looking up media. Your app should show the CAPTCHA from your YT Convert deployment and use the returned token.
 
-For a custom deployment, use its `/api/captcha` endpoint and then send the verified token to `lookup()`.
+For a custom deployment, use its `/api/captcha` endpoint and then pass the verified token to `lookup()`.
+
+Do not use a fake or hard-coded CAPTCHA token. CAPTCHA proofs are short-lived and normally single-use.
 
 ## 4. Look up a video
 
@@ -63,6 +65,16 @@ const response = await client.downloadFromInfo(
 const data = await response.arrayBuffer();
 ```
 
+You can also use `download()` directly:
+
+```js
+const response = await client.download(url, {
+  captchaToken,
+  format: 'mp3',
+  quality: '192',
+});
+```
+
 Supported formats:
 
 - `mp3`
@@ -82,7 +94,7 @@ const client = createYtConvertClient({
 });
 
 const url = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
-const captchaToken = 'YOUR_CAPTCHA_TOKEN';
+const captchaToken = 'TOKEN_FROM_YOUR_CAPTCHA_UI';
 
 const info = await client.lookup(url, { captchaToken });
 
@@ -97,6 +109,7 @@ console.log(`Downloaded ${data.byteLength} bytes`);
 
 ## Important
 
+- The package name is **`@jimmy_1234ha/yt-convert`**.
 - The CAPTCHA token is required and is normally one-time use.
 - Conversion tickets are short-lived and bound to the request.
 - The SDK does not bypass CAPTCHA, DRM, private videos, or membership restrictions.
