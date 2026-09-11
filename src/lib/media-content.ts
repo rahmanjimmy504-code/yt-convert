@@ -55,6 +55,7 @@ function indexOfBytes(haystack: Uint8Array, needle: Uint8Array): number {
 /** MP3 ID3v2 header starts with "ID3" then version bytes. */
 const ID3 = asciiToBytes('ID3');
 const FLAC = asciiToBytes('fLaC');
+const FLAC = asciiToBytes('fLaC');
 /** MPEG 1/2/2.5 audio frame sync: 11 set bits (0xFFE0), layer III commonly. */
 function isMpegFrameSync(bytes: Uint8Array, offset = 0): boolean {
   if (bytes.length - offset < 2) return false;
@@ -144,6 +145,8 @@ export function sniffContainer(bytes: Uint8Array): MediaContainer {
     if (b === 0x7b || b === 0x5b) return 'html'; // '{' or '['
     break;
   }
+
+  if (startsWithBytes(head, FLAC)) return 'flac';
 
   if (startsWithBytes(head, FLAC)) return 'flac';
 
