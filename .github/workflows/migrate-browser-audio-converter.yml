@@ -24,12 +24,55 @@ jobs:
       - name: Install open-source FFmpeg WASM converter
         run: npm install @ffmpeg/ffmpeg@0.12.15 @ffmpeg/util@0.12.2 --save
 
-      - name: Patch browser conversion flow
+      - name: Patch audio extraction and browser conversion
         shell: python
         run: |
           from pathlib import Path
           import re
+          import subprocess
 
+          changed = []
+
+          # 1. Native M4A/AAC/Opus must not be thrown away just because there
+          # is no native MP3. Only an actual MP3 request needs MP3 conversion.
+          p = Path('src/lib/extract.ts')
+          s = p.read_text()
+          old = """const needTranscodedMp3 = want === 'audio'\n    && formats.length > 0\n    && !formats.some(f => /audio\\/(mpeg|mp3)/i.test(f.mimeType || ''));"""
+          new = """const needTranscodedMp3 = format === 'mp3'\n    && formats.length > 0\n    && !formats.some(f => /audio\\/(mpeg|mp3)/i.test(f.mimeType || ''));"""
+          if old in s:
+              s = s.replace(old, new, 1)
+              changed.append('extract MP3-only routing')
+          p.write_text(s)
+
+          # 2. Cobalt must actually receive the requested Opus format and must
+          # preserve that format when interpreting the response. Otherwise an
+          # Opus request can be returned as MP3 and rejected by /api/convert.
+          p = Path('src/lib/cobalt.ts')
+          s = p.read_text()
+          s2 = s.replace(
+              "return interpretCobaltPayload(data, kind);",
+              "return interpretCobaltPayload(data, kind, audioFormat);",
+              1,
+          )
+          if s2 != s:
+              changed.append('Cobalt Opus propagation')
+              s = s2
+          p.write_text(s)
+
+          # 3. Generalise the server-side transcode failure message so it never
+          # incorrectly says MP3 for a FLAC request.
+          p = Path('src/app/api/convert/route.ts')
+          s = p.read_text()
+          old = "return json('Could not convert the audio to MP3 on this server. Try again, or use a converter below.', 502);"
+          new = "return json(`Could not convert the audio to ${format.toUpperCase()} on this server. Try again, or use a converter below.`, 502);"
+          if old in s:
+              s = s.replace(old, new, 1)
+              changed.append('generic transcode error')
+          p.write_text(s)
+
+          # 4. Browser-side FFmpeg WASM conversion. The server supplies a real
+          # MP3 for FLAC/M4A/AAC/Opus; the user's browser performs the final
+          # open-source conversion, avoiding native FFmpeg on Cloudflare.
           p = Path('src/app/page.tsx')
           s = p.read_text()
 
@@ -177,21 +220,14 @@ function saveBrowserAudio(blob: Blob, title: string, extension: BrowserAudioTarg
   };'''
           s = s[:start] + new_fn + s[end:]
           p.write_text(s)
+          changed.append('browser FFmpeg WASM conversion')
 
-          import subprocess
+          if not changed:
+              raise SystemExit('No migration changes were needed')
+
           subprocess.run(['git', 'config', 'user.name', 'github-actions[bot]'], check=True)
           subprocess.run(['git', 'config', 'user.email', '41898282+github-actions[bot]@users.noreply.github.com'], check=True)
-          subprocess.run(['git', 'add', 'package.json', 'package-lock.json', 'src/app/page.tsx'], check=True)
-          subprocess.run(['git', 'commit', '-m', 'feat: convert audio formats with open-source ffmpeg wasm'], check=True)
+          subprocess.run(['git', 'rm', '.github/workflows/migrate-browser-audio-converter.yml'], check=True)
+          subprocess.run(['git', 'add', 'package.json', 'package-lock.json', 'src/app/page.tsx', 'src/lib/extract.ts', 'src/lib/cobalt.ts', 'src/app/api/convert/route.ts'], check=True)
+          subprocess.run(['git', 'commit', '-m', 'fix: repair audio stream fallbacks and browser conversion'], check=True)
           subprocess.run(['git', 'push'], check=True)
-
-      - name: Remove migration workflow
-        if: success()
-        run: |
-          git rm .github/workflows/migrate-browser-audio-converter.yml
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git commit -m 'chore: remove one-shot audio converter migration'
-          git push
-
-# Force a fresh push-triggered migration run.
