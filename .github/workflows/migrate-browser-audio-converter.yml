@@ -8,6 +8,10 @@ on:
 permissions:
   contents: write
 
+# Migration workflow: installs FFmpeg WASM support, repairs audio fallback
+# routing, and commits the browser-side conversion implementation.
+# Triggered by this workflow-only change against the current main branch.
+
 jobs:
   migrate:
     runs-on: ubuntu-latest
@@ -28,7 +32,6 @@ jobs:
         shell: python
         run: |
           from pathlib import Path
-          import re
           import subprocess
 
           changed = []
@@ -44,9 +47,7 @@ jobs:
               changed.append('extract MP3-only routing')
           p.write_text(s)
 
-          # 2. Cobalt must actually receive the requested Opus format and must
-          # preserve that format when interpreting the response. Otherwise an
-          # Opus request can be returned as MP3 and rejected by /api/convert.
+          # 2. Cobalt must preserve the requested Opus format.
           p = Path('src/lib/cobalt.ts')
           s = p.read_text()
           s2 = s.replace(
@@ -59,8 +60,7 @@ jobs:
               s = s2
           p.write_text(s)
 
-          # 3. Generalise the server-side transcode failure message so it never
-          # incorrectly says MP3 for a FLAC request.
+          # 3. Generalise the server-side transcode failure message.
           p = Path('src/app/api/convert/route.ts')
           s = p.read_text()
           old = "return json('Could not convert the audio to MP3 on this server. Try again, or use a converter below.', 502);"
@@ -71,8 +71,7 @@ jobs:
           p.write_text(s)
 
           # 4. Browser-side FFmpeg WASM conversion. The server supplies a real
-          # MP3 for FLAC/M4A/AAC/Opus; the user's browser performs the final
-          # open-source conversion, avoiding native FFmpeg on Cloudflare.
+          # MP3 for FLAC/M4A/AAC/Opus; the browser performs the final conversion.
           p = Path('src/app/page.tsx')
           s = p.read_text()
 
@@ -106,51 +105,27 @@ async function getBrowserFfmpeg(): Promise<FFmpeg> {
   return browserFfmpegPromise;
 }
 
-async function convertMp3InBrowser(
-  mp3: Blob,
-  target: BrowserAudioTarget,
-  bitrate: string,
-): Promise<Blob> {
+async function convertMp3InBrowser(mp3: Blob, target: BrowserAudioTarget, bitrate: string): Promise<Blob> {
   const ffmpeg = await getBrowserFfmpeg();
-  const input = new Uint8Array(await mp3.arrayBuffer());
-  await ffmpeg.writeFile('input.mp3', input);
+  await ffmpeg.writeFile('input.mp3', new Uint8Array(await mp3.arrayBuffer()));
 
   const kbps = /^\d+$/.test(bitrate) ? bitrate : '192';
-  let output = '';
-  let mime = '';
-  let args: string[] = [];
+  const jobs: Record<BrowserAudioTarget, { output: string; mime: string; args: string[] }> = {
+    flac: { output: 'output.flac', mime: 'audio/flac', args: ['-i', 'input.mp3', '-vn', '-c:a', 'flac', 'output.flac'] },
+    m4a: { output: 'output.m4a', mime: 'audio/mp4', args: ['-i', 'input.mp3', '-vn', '-c:a', 'aac', '-b:a', `${kbps}k`, 'output.m4a'] },
+    aac: { output: 'output.aac', mime: 'audio/aac', args: ['-i', 'input.mp3', '-vn', '-c:a', 'aac', '-b:a', `${kbps}k`, '-f', 'adts', 'output.aac'] },
+    opus: { output: 'output.opus', mime: 'audio/ogg', args: ['-i', 'input.mp3', '-vn', '-c:a', 'libopus', '-b:a', `${kbps}k`, '-f', 'ogg', 'output.opus'] },
+  };
 
-  switch (target) {
-    case 'flac':
-      output = 'output.flac';
-      mime = 'audio/flac';
-      args = ['-i', 'input.mp3', '-vn', '-c:a', 'flac', output];
-      break;
-    case 'm4a':
-      output = 'output.m4a';
-      mime = 'audio/mp4';
-      args = ['-i', 'input.mp3', '-vn', '-c:a', 'aac', '-b:a', `${kbps}k`, output];
-      break;
-    case 'aac':
-      output = 'output.aac';
-      mime = 'audio/aac';
-      args = ['-i', 'input.mp3', '-vn', '-c:a', 'aac', '-b:a', `${kbps}k`, '-f', 'adts', output];
-      break;
-    case 'opus':
-      output = 'output.opus';
-      mime = 'audio/ogg';
-      args = ['-i', 'input.mp3', '-vn', '-c:a', 'libopus', '-b:a', `${kbps}k`, '-f', 'ogg', output];
-      break;
-  }
-
-  const code = await ffmpeg.exec(args);
+  const job = jobs[target];
+  const code = await ffmpeg.exec(job.args);
   if (code !== 0) throw new Error(`Open-source audio conversion failed (${target.toUpperCase()}).`);
-  const data = await ffmpeg.readFile(output);
+  const data = await ffmpeg.readFile(job.output);
   await Promise.all([
     ffmpeg.deleteFile('input.mp3').catch(() => {}),
-    ffmpeg.deleteFile(output).catch(() => {}),
+    ffmpeg.deleteFile(job.output).catch(() => {}),
   ]);
-  return new Blob([data as Uint8Array<ArrayBuffer>], { type: mime });
+  return new Blob([data as Uint8Array<ArrayBuffer>], { type: job.mime });
 }
 
 function saveBrowserAudio(blob: Blob, title: string, extension: BrowserAudioTarget): void {
