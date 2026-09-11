@@ -134,10 +134,6 @@ function saveBrowserAudio(blob: Blob, title: string, extension: BrowserAudioTarg
     const u = url.trim();
     const targetFormat = format;
     const quality = targetFormat === 'mp4' ? videoQuality : audioQuality;
-    // MP3 is the canonical server-side audio source. Every other requested
-    // audio format is produced by the open-source FFmpeg WebAssembly build in
-    // the user's browser, so the Worker never needs native FFmpeg or a paid
-    // conversion API.
     const serverFormat: FormatKey = targetFormat === 'mp4' || targetFormat === 'mp3' ? targetFormat : 'mp3';
     const href = `/api/convert?url=${encodeURIComponent(u)}&format=${serverFormat}&quality=${encodeURIComponent(quality)}&ticket=${encodeURIComponent(videoInfo.convertTicket)}&title=${encodeURIComponent(videoInfo.title || '')}`;
     setConverting(true);
@@ -158,14 +154,15 @@ function saveBrowserAudio(blob: Blob, title: string, extension: BrowserAudioTarg
       setConvertSource((response.headers.get('x-conversion-note') || '').trim());
 
       if (targetFormat === 'mp3' || targetFormat === 'mp4') {
-        await response.body?.cancel().catch(() => undefined);
+        const sourceBlob = await response.blob();
+        const objectUrl = URL.createObjectURL(sourceBlob);
         const link = document.createElement('a');
-        link.href = href;
-        link.rel = 'noopener';
-        link.setAttribute('download', '');
+        link.href = objectUrl;
+        link.download = `${(videoInfo.title || 'download').replace(/[\\/:*?"<>|]+/g, '_')}.${targetFormat}`;
         document.body.appendChild(link);
         link.click();
         link.remove();
+        setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
         return;
       }
 
@@ -179,15 +176,6 @@ function saveBrowserAudio(blob: Blob, title: string, extension: BrowserAudioTarg
     }
   };'''
           s = s[:start] + new_fn + s[end:]
-          p.write_text(s)
-
-          # Make the UI explicit that non-MP3 audio is converted locally in
-          # the browser from the server's canonical MP3 source.
-          p = Path('src/app/page.tsx')
-          s = p.read_text()
-          old = "      // Which source served the file (Innertube, AllDL, cobalt, ...). Shown\n      // on the card; also what makes a fallback smoke test provable."
-          new = "      // For non-MP3 audio, this is the source of the canonical MP3 input;\n      // FFmpeg WASM then creates the format selected by the user locally.\n      // Which source served the file (Innertube, AllDL, cobalt, ...). Shown\n      // on the card; also what makes a fallback smoke test provable."
-          s = s.replace(old, new, 1)
           p.write_text(s)
 
           import subprocess
@@ -205,3 +193,5 @@ function saveBrowserAudio(blob: Blob, title: string, extension: BrowserAudioTarg
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git commit -m 'chore: remove one-shot audio converter migration'
           git push
+
+# Force a fresh push-triggered migration run.
