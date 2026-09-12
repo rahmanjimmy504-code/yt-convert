@@ -1,0 +1,249 @@
+name: Repair YouTube pipeline
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply proven downloader architecture fixes
+        shell: python
+        run: |
+          from pathlib import Path
+          import re, subprocess
+
+          changed = False
+
+          # 1) Follow the proven multi-client InnerTube approach. ANDROID_VR
+          # is especially valuable because it can return signed direct URLs
+          # without signature-cipher work.
+          p = Path('src/lib/youtubei-fallback.ts')
+          s = p.read_text()
+          s2 = s.replace(
+              "const clients = ['YTMUSIC_ANDROID', 'ANDROID', 'TV_EMBEDDED', 'IOS'] as const;",
+              "const clients = ['ANDROID_VR', 'YTMUSIC_ANDROID', 'ANDROID', 'IOS', 'TV_EMBEDDED'] as const;",
+          )
+          if s2 != s:
+              s = s2
+              changed = True
+          p.write_text(s)
+
+          # 2) The current first-party converter proxies Googlevideo URLs from
+          # the server. Other working projects avoid this IP-binding problem
+          # by letting the user's browser follow the signed CDN URL directly.
+          # On an upstream refusal, return a redirect rather than converting
+          # a valid signed URL into a server-side 502.
+          p = Path('src/app/api/convert/route.ts')
+          s = p.read_text()
+          old = """      const upstream = await fetchAllowedMedia(streamUrl, { headers: upstreamHeaders });
+      if ((!upstream.ok && upstream.status !== 206) || !upstream.body) {
+        recordEvent({ type: 'lookup', platform, ok: false, error: 'convert upstream' });
+        return json('The media host refused the stream. Try a converter below.', 502);
+      }
+"""
+          new = """      const upstream = await fetchAllowedMedia(streamUrl, { headers: upstreamHeaders });
+      if ((!upstream.ok && upstream.status !== 206) || !upstream.body) {
+        // YouTube CDN URLs can be bound to the IP that minted them. If the
+        // Worker egress is refused but the URL itself is allowlisted, let the
+        // user's browser request the signed URL directly. This mirrors the
+        // client-side direct-download architecture used by successful
+        // Cloudflare downloader projects and avoids a false 502.
+        if ((platform === 'youtube' || platform === 'youtubemusic') && isAllowedMediaUrl(streamUrl)) {
+          recordEvent({ type: 'lookup', platform, ok: true });
+          return Response.redirect(streamUrl, 302);
+        }
+        recordEvent({ type: 'lookup', platform, ok: false, error: 'convert upstream' });
+        return json('The media host refused the stream. Try a converter below.', 502);
+      }
+"""
+          if old not in s:
+              raise SystemExit('convert route upstream block not found')
+          s = s.replace(old, new, 1)
+          p.write_text(s)
+          changed = True
+
+          # 3) Add a browser-side converter helper as a separate module. It
+          # loads FFmpeg WASM from a public CDN at runtime, so the Worker does
+          # not need a native binary and package-lock remains untouched.
+          helper = Path('src/lib/browser-audio-convert.ts')
+          helper.write_text(r'''/* Browser-only final audio conversion. No server binary is required. */
+
+export type BrowserAudioFormat = 'flac' | 'm4a' | 'aac' | 'opus';
+
+type FFmpegLike = {
+  load(options: { coreURL: string; wasmURL: string }): Promise<void>;
+  writeFile(name: string, data: Uint8Array): Promise<void>;
+  exec(args: string[]): Promise<number>;
+  readFile(name: string): Promise<Uint8Array>;
+  deleteFile(name: string): Promise<void>;
+};
+
+type UtilLike = { toBlobURL(url: string, mime: string): Promise<string> };
+
+let instancePromise: Promise<FFmpegLike> | null = null;
+
+async function getFFmpeg(): Promise<FFmpegLike> {
+  if (!instancePromise) {
+    instancePromise = (async () => {
+      // Keep the library itself out of the Next.js server bundle. The runtime
+      // import is executed only after a user explicitly requests conversion.
+      const loadModule = new Function('u', 'return import(u)') as (url: string) => Promise<any>;
+      const [ffmpegModule, utilModule] = await Promise.all([
+        loadModule('https://esm.sh/@ffmpeg/ffmpeg@0.12.15'),
+        loadModule('https://esm.sh/@ffmpeg/util@0.12.2'),
+      ]);
+      const ffmpeg = new ffmpegModule.FFmpeg() as FFmpegLike;
+      const util = utilModule as UtilLike;
+      const base = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/umd';
+      await ffmpeg.load({
+        coreURL: await util.toBlobURL(`${base}/ffmpeg-core.js`, 'text/javascript'),
+        wasmURL: await util.toBlobURL(`${base}/ffmpeg-core.wasm`, 'application/wasm'),
+      });
+      return ffmpeg;
+    })().catch(error => {
+      instancePromise = null;
+      throw error;
+    });
+  }
+  return instancePromise;
+}
+
+export async function convertMp3Blob(mp3: Blob, format: BrowserAudioFormat, quality: string): Promise<Blob> {
+  const ffmpeg = await getFFmpeg();
+  const input = `input-${Date.now()}.mp3`;
+  const output = `output-${Date.now()}`;
+  const bitrate = /^\d+$/.test(quality) ? quality : '192';
+  const jobs: Record<BrowserAudioFormat, { file: string; mime: string; args: string[] }> = {
+    flac: { file: `${output}.flac`, mime: 'audio/flac', args: ['-i', input, '-vn', '-c:a', 'flac', `${output}.flac`] },
+    m4a: { file: `${output}.m4a`, mime: 'audio/mp4', args: ['-i', input, '-vn', '-c:a', 'aac', '-b:a', `${bitrate}k`, `${output}.m4a`] },
+    aac: { file: `${output}.aac`, mime: 'audio/aac', args: ['-i', input, '-vn', '-c:a', 'aac', '-b:a', `${bitrate}k`, '-f', 'adts', `${output}.aac`] },
+    opus: { file: `${output}.ogg`, mime: 'audio/ogg', args: ['-i', input, '-vn', '-c:a', 'libopus', '-b:a', `${bitrate}k`, '-f', 'ogg', `${output}.ogg`] },
+  };
+  const job = jobs[format];
+  await ffmpeg.writeFile(input, new Uint8Array(await mp3.arrayBuffer()));
+  const code = await ffmpeg.exec(job.args);
+  if (code !== 0) throw new Error(`Browser conversion to ${format.toUpperCase()} failed.`);
+  const data = await ffmpeg.readFile(job.file);
+  await ffmpeg.deleteFile(input).catch(() => {});
+  await ffmpeg.deleteFile(job.file).catch(() => {});
+  return new Blob([data], { type: job.mime });
+}
+
+export function downloadBrowserBlob(blob: Blob, title: string, extension: string): void {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `${(title || 'download').replace(/[\\/:*?"<>|]+/g, '_')}.${extension}`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+''')
+          changed = True
+
+          # 4) Replace the old first-party download handler with a route that
+          # asks the server for MP3 when a browser conversion is needed, then
+          # converts locally. MP4/M4A direct signed streams can be followed by
+          # the browser without making Cloudflare fetch the CDN bytes.
+          p = Path('src/app/page.tsx')
+          s = p.read_text()
+          if "from '@/lib/browser-audio-convert'" not in s:
+              anchor = "import Captcha from '@/components/captcha';\n"
+              s = s.replace(anchor, anchor + "import { convertMp3Blob, downloadBrowserBlob } from '@/lib/browser-audio-convert';\n", 1)
+
+          start = s.index('  const downloadHere = async () => {')
+          end = s.index('\n\n  const submitReport = async () => {', start)
+          replacement = r'''  const downloadHere = async () => {
+    if (!videoInfo?.convertTicket || converting) return;
+    const u = url.trim();
+    const target = format;
+    const quality = target === 'mp4' ? videoQuality : audioQuality;
+    const browserAudio = target === 'flac' || target === 'm4a' || target === 'aac' || target === 'opus';
+    const serverFormat = browserAudio ? 'mp3' : target;
+    const href = `/api/convert?url=${encodeURIComponent(u)}&format=${serverFormat}&quality=${encodeURIComponent(quality)}&ticket=${encodeURIComponent(videoInfo.convertTicket)}&title=${encodeURIComponent(videoInfo.title || '')}`;
+    setConverting(true);
+    setConvertError('');
+    setConvertSource('');
+    try {
+      // For MP3/MP4 the server can return the actual file or a signed CDN
+      // redirect. Navigating directly preserves the CDN's IP binding.
+      if (!browserAudio) {
+        const link = document.createElement('a');
+        link.href = href;
+        link.rel = 'noopener';
+        link.setAttribute('download', '');
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        return;
+      }
+
+      // Get a real MP3 source first. The browser performs the final requested
+      // conversion locally with open-source FFmpeg WASM; no media is uploaded.
+      const response = await fetch(href, {
+        headers: {
+          ...(ytCookies.trim() ? { 'X-YouTube-Cookies': ytCookies.trim() } : {}),
+        },
+      });
+      const type = response.headers.get('content-type') || '';
+      if (!response.ok || type.includes('application/json')) {
+        const data = (await response.json().catch(() => ({}))) as { error?: string };
+        setConvertError(data.error || 'Could not fetch the source audio. Try a converter below.');
+        return;
+      }
+      setConvertSource((response.headers.get('x-conversion-note') || '').trim());
+      const source = await response.blob();
+      const converted = await convertMp3Blob(source, target, audioQuality);
+      downloadBrowserBlob(converted, videoInfo.title || 'download', target);
+    } catch (err) {
+      setConvertError(err instanceof Error ? err.message : 'Could not convert this link. Try a converter below.');
+    } finally {
+      setConverting(false);
+    }
+  };'''
+          s = s[:start] + replacement + s[end:]
+          p.write_text(s)
+          changed = True
+
+          # 5) Add focused regression tests for the extraction decisions that
+          # previously caused false "native format" failures.
+          test = Path('src/lib/youtube-format-regression.test.ts')
+          test.write_text(r'''import { describe, expect, it } from 'vitest';
+import { pickYouTubeFormat } from './youtube-formats';
+
+describe('YouTube format selection', () => {
+  it('recognises YouTube AAC audio carried in audio/mp4', () => {
+    const picked = pickYouTubeFormat([
+      { url: 'https://example.com/a.m4a', mimeType: 'audio/mp4; codecs="mp4a.40.2"', bitrate: 128000, audioQuality: 'AUDIO_QUALITY_MEDIUM', itag: 140 },
+    ], 'audio', 'best');
+    expect(picked?.itag).toBe(140);
+  });
+
+  it('keeps progressive MP4 as a video candidate', () => {
+    const picked = pickYouTubeFormat([
+      { url: 'https://example.com/v.mp4', mimeType: 'video/mp4; codecs="avc1.42001E, mp4a.40.2"', bitrate: 500000, height: 360, audioQuality: 'AUDIO_QUALITY_MEDIUM', itag: 18 },
+    ], 'video', 'best');
+    expect(picked?.itag).toBe(18);
+  });
+});
+''')
+          changed = True
+
+          # Commit only the actual repair files. No secrets are added.
+          if changed:
+              subprocess.run(['git', 'config', 'user.name', 'github-actions[bot]'], check=True)
+              subprocess.run(['git', 'config', 'user.email', '41898282+github-actions[bot]@users.noreply.github.com'], check=True)
+              subprocess.run(['git', 'add', 'src/lib/youtubei-fallback.ts', 'src/app/api/convert/route.ts', 'src/app/page.tsx', 'src/lib/browser-audio-convert.ts', 'src/lib/youtube-format-regression.test.ts'], check=True)
+              subprocess.run(['git', 'commit', '-m', 'fix: use proven direct CDN and browser conversion paths'], check=True)
+              subprocess.run(['git', 'push'], check=True)
