@@ -1,4 +1,4 @@
-name: Migrate browser audio converter
+name: Repair live media fallbacks
 
 on:
   push:
@@ -8,13 +8,8 @@ on:
 permissions:
   contents: write
 
-# One-shot migration: install open-source FFmpeg WASM support, repair audio
-# fallback routing, commit the browser-side conversion implementation, then
-# remove this workflow. This comment change intentionally retriggers the
-# migration after the Cobalt fallback fixes landed.
-
 jobs:
-  migrate:
+  repair:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -26,10 +21,10 @@ jobs:
           node-version: 20
           cache: npm
 
-      - name: Install open-source FFmpeg WASM converter
+      - name: Install browser FFmpeg WASM
         run: npm install @ffmpeg/ffmpeg@0.12.15 @ffmpeg/util@0.12.2 --save
 
-      - name: Patch audio extraction and browser conversion
+      - name: Repair extraction and conversion paths
         shell: python
         run: |
           from pathlib import Path
@@ -38,51 +33,74 @@ jobs:
 
           changed = []
 
-          # 1. Only MP3 requests require MP3 conversion. Native M4A/AAC/Opus
-          # candidates must remain eligible for their own requested formats.
+          # MP3 is the only format that should require an MP3 transcode.
           p = Path('src/lib/extract.ts')
           s = p.read_text()
           s2 = re.sub(r"const needTranscodedMp3 = want === 'audio'", "const needTranscodedMp3 = format === 'mp3'", s, count=1)
           if s2 != s:
-              changed.append('extract MP3-only routing')
               s = s2
-          p.write_text(s)
+              changed.append('MP3-only transcode routing')
 
-          # 2. Cobalt must preserve the requested Opus format all the way to
-          # the response interpreter.
-          p = Path('src/lib/cobalt.ts')
-          s = p.read_text()
-          s2 = s.replace('return interpretCobaltPayload(data, kind);', 'return interpretCobaltPayload(data, kind, audioFormat);', 1)
+          # YouTube's AAC track is normally audio/mp4 with an mp4a codec, not
+          # audio/aac. Accept both representations as AAC/M4A native audio.
+          old = "if (requestedAudio === 'aac') return /audio\\/aac/i.test(mime);"
+          new = "if (requestedAudio === 'aac') return /audio\\/(aac|mp4)/i.test(mime) || /mp4a/i.test(mime);"
+          s2 = s.replace(old, new, 1)
           if s2 != s:
-              changed.append('Cobalt Opus propagation')
               s = s2
+              changed.append('AAC native MIME matching')
+
+          # Cobalt can provide real Opus even when Innertube returned some
+          # unrelated audio formats. Let the Cobalt path run when no native
+          # Opus candidate exists instead of returning early.
+          old = "if (!formats.length && !excludedSources.has('cobalt') && isCobaltConfigured()) {"
+          new = "const hasNativeOpus = formats.some(f => f.url && /audio\\/(opus|ogg|webm)/i.test(f.mimeType || ''));\n  if ((!formats.length || (format === 'opus' && !hasNativeOpus)) && !excludedSources.has('cobalt') && isCobaltConfigured()) {"
+          s2 = s.replace(old, new, 1)
+          if s2 != s:
+              s = s2
+              changed.append('Opus Cobalt fallback')
           p.write_text(s)
 
-          # 3. Generalise server-side transcode diagnostics.
+          # A provider can return a valid-looking URL that later refuses the
+          # Worker egress. Retry with that provider excluded instead of giving
+          # up immediately. This is especially important for googlevideo URLs
+          # whose signatures are tied to the extractor's egress IP.
           p = Path('src/app/api/convert/route.ts')
           s = p.read_text()
-          s2 = s.replace(
-              "Could not convert the audio to MP3 on this server. Try again, or use a converter below.",
-              "Could not convert the audio to ${format.toUpperCase()} on this server. Try again, or use a converter below.",
-              1,
-          )
-          if s2 != s:
-              changed.append('generic transcode error')
-              s = s2
+          old = """      const upstream = await fetchAllowedMedia(streamUrl, { headers: upstreamHeaders });
+      if ((!upstream.ok && upstream.status !== 206) || !upstream.body) {
+        recordEvent({ type: 'lookup', platform, ok: false, error: 'convert upstream' });
+        return json('The media host refused the stream. Try a converter below.', 502);
+      }
+"""
+          new = """      const upstream = await fetchAllowedMedia(streamUrl, { headers: upstreamHeaders });
+      if ((!upstream.ok && upstream.status !== 206) || !upstream.body) {
+        const source = wrongSourceFor(extracted);
+        if ((platform === 'youtube' || platform === 'youtubemusic') && source && attempt < MAX_CONVERT_ATTEMPTS && !excludedSources.has(source)) {
+          previousWrongSource = source;
+          console.warn(`[convert] media host refused ${format}; excluding ${source} and retrying`);
+          continue;
+        }
+        recordEvent({ type: 'lookup', platform, ok: false, error: 'convert upstream' });
+        return json('The media host refused the stream. Try a converter below.', 502);
+      }
+"""
+          if old not in s:
+              raise SystemExit('Could not find upstream refusal block')
+          s = s.replace(old, new, 1)
           p.write_text(s)
+          changed.append('retry refused media providers')
 
-          # 4. Add browser-side FFmpeg WASM conversion without running FFmpeg
-          # in the Cloudflare Worker. The server still supplies a real MP3;
-          # the browser performs the final FLAC/M4A/AAC/Opus conversion.
+          # The browser converter handles the formats Cloudflare cannot
+          # encode natively. Keep the Worker response honest: it always gets
+          # a real MP3, then the browser makes FLAC/M4A/AAC/Opus.
           p = Path('src/app/page.tsx')
           s = p.read_text()
-
           if "import { FFmpeg } from '@ffmpeg/ffmpeg';" not in s:
               anchor = "import Captcha from '@/components/captcha';\n"
-              imports = "import { FFmpeg } from '@ffmpeg/ffmpeg';\nimport { toBlobURL } from '@ffmpeg/util';\n"
               if anchor not in s:
-                  raise SystemExit('Could not find page import anchor')
-              s = s.replace(anchor, anchor + imports, 1)
+                  raise SystemExit('Could not find Captcha import anchor')
+              s = s.replace(anchor, anchor + "import { FFmpeg } from '@ffmpeg/ffmpeg';\nimport { toBlobURL } from '@ffmpeg/util';\n", 1)
 
           marker = "type ReportIssue = 'dead' | 'unsafe' | 'wrong' | 'other';"
           helper = r'''type BrowserAudioTarget = 'flac' | 'm4a' | 'aac' | 'opus';
@@ -93,7 +111,7 @@ async function getBrowserFfmpeg(): Promise<FFmpeg> {
   if (!browserFfmpegPromise) {
     browserFfmpegPromise = (async () => {
       const ffmpeg = new FFmpeg();
-      const base = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/umd';
+      const base = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm';
       await ffmpeg.load({
         coreURL: await toBlobURL(`${base}/ffmpeg-core.js`, 'text/javascript'),
         wasmURL: await toBlobURL(`${base}/ffmpeg-core.wasm`, 'application/wasm'),
@@ -110,7 +128,6 @@ async function getBrowserFfmpeg(): Promise<FFmpeg> {
 async function convertMp3InBrowser(mp3: Blob, target: BrowserAudioTarget, bitrate: string): Promise<Blob> {
   const ffmpeg = await getBrowserFfmpeg();
   await ffmpeg.writeFile('input.mp3', new Uint8Array(await mp3.arrayBuffer()));
-
   const kbps = /^\d+$/.test(bitrate) ? bitrate : '192';
   const jobs: Record<BrowserAudioTarget, { output: string; mime: string; args: string[] }> = {
     flac: { output: 'output.flac', mime: 'audio/flac', args: ['-i', 'input.mp3', '-vn', '-c:a', 'flac', 'output.flac'] },
@@ -118,15 +135,12 @@ async function convertMp3InBrowser(mp3: Blob, target: BrowserAudioTarget, bitrat
     aac: { output: 'output.aac', mime: 'audio/aac', args: ['-i', 'input.mp3', '-vn', '-c:a', 'aac', '-b:a', `${kbps}k`, '-f', 'adts', 'output.aac'] },
     opus: { output: 'output.opus', mime: 'audio/ogg', args: ['-i', 'input.mp3', '-vn', '-c:a', 'libopus', '-b:a', `${kbps}k`, '-f', 'ogg', 'output.opus'] },
   };
-
   const job = jobs[target];
   const code = await ffmpeg.exec(job.args);
-  if (code !== 0) throw new Error(`Open-source audio conversion failed (${target.toUpperCase()}).`);
+  if (code !== 0) throw new Error(`Browser audio conversion failed (${target.toUpperCase()}).`);
   const data = await ffmpeg.readFile(job.output);
-  await Promise.all([
-    ffmpeg.deleteFile('input.mp3').catch(() => {}),
-    ffmpeg.deleteFile(job.output).catch(() => {}),
-  ]);
+  await ffmpeg.deleteFile('input.mp3').catch(() => {});
+  await ffmpeg.deleteFile(job.output).catch(() => {});
   return new Blob([data as Uint8Array<ArrayBuffer>], { type: job.mime });
 }
 
@@ -144,7 +158,7 @@ function saveBrowserAudio(blob: Blob, title: string, extension: BrowserAudioTarg
 '''
           if 'async function convertMp3InBrowser(' not in s:
               if marker not in s:
-                  raise SystemExit('Could not find helper insertion marker')
+                  raise SystemExit('Could not find ReportIssue marker')
               s = s.replace(marker, helper + marker, 1)
 
           start = s.index('  const downloadHere = async () => {')
@@ -160,11 +174,7 @@ function saveBrowserAudio(blob: Blob, title: string, extension: BrowserAudioTarg
     setConvertError('');
     setConvertSource('');
     try {
-      const response = await fetch(href, {
-        headers: {
-          ...(ytCookies.trim() ? { 'X-YouTube-Cookies': ytCookies.trim() } : {}),
-        },
-      });
+      const response = await fetch(href, { headers: { ...(ytCookies.trim() ? { 'X-YouTube-Cookies': ytCookies.trim() } : {}) } });
       const type = response.headers.get('content-type') || '';
       if (!response.ok || type.includes('application/json')) {
         const data = (await response.json().catch(() => ({}))) as { error?: string };
@@ -172,9 +182,8 @@ function saveBrowserAudio(blob: Blob, title: string, extension: BrowserAudioTarg
         return;
       }
       setConvertSource((response.headers.get('x-conversion-note') || '').trim());
-
+      const sourceBlob = await response.blob();
       if (targetFormat === 'mp3' || targetFormat === 'mp4') {
-        const sourceBlob = await response.blob();
         const objectUrl = URL.createObjectURL(sourceBlob);
         const link = document.createElement('a');
         link.href = objectUrl;
@@ -185,8 +194,6 @@ function saveBrowserAudio(blob: Blob, title: string, extension: BrowserAudioTarg
         setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
         return;
       }
-
-      const sourceBlob = await response.blob();
       const converted = await convertMp3InBrowser(sourceBlob, targetFormat, audioQuality);
       saveBrowserAudio(converted, videoInfo.title || 'download', targetFormat);
     } catch (err) {
@@ -197,14 +204,16 @@ function saveBrowserAudio(blob: Blob, title: string, extension: BrowserAudioTarg
   };'''
           s = s[:start] + new_fn + s[end:]
           p.write_text(s)
-          changed.append('browser FFmpeg WASM conversion')
+          changed.append('browser FFmpeg conversion')
 
           if not changed:
-              raise SystemExit('No migration changes were needed')
+              raise SystemExit('No changes made')
 
           subprocess.run(['git', 'config', 'user.name', 'github-actions[bot]'], check=True)
           subprocess.run(['git', 'config', 'user.email', '41898282+github-actions[bot]@users.noreply.github.com'], check=True)
-          subprocess.run(['git', 'rm', '.github/workflows/migrate-browser-audio-converter.yml'], check=True)
           subprocess.run(['git', 'add', 'package.json', 'package-lock.json', 'src/app/page.tsx', 'src/lib/extract.ts', 'src/lib/cobalt.ts', 'src/app/api/convert/route.ts'], check=True)
-          subprocess.run(['git', 'commit', '-m', 'fix: repair audio stream fallbacks and browser conversion'], check=True)
+          subprocess.run(['git', 'commit', '-m', 'fix: retry refused media providers and repair audio formats'], check=True)
+          subprocess.run(['git', 'push'], check=True)
+          subprocess.run(['git', 'rm', '.github/workflows/migrate-browser-audio-converter.yml'], check=True)
+          subprocess.run(['git', 'commit', '-m', 'chore: remove one-shot repair workflow'], check=True)
           subprocess.run(['git', 'push'], check=True)
