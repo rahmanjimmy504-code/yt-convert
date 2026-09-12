@@ -1,0 +1,49 @@
+name: Fix native direct streams
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch-native-streams:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Patch convert route for direct YouTube streams
+        shell: python
+        run: |
+          from pathlib import Path
+          p = Path('src/app/api/convert/route.ts')
+          s = p.read_text()
+          old = """      if ((!upstream.ok && upstream.status !== 206) || !upstream.body) {\n        recordEvent({ type: 'lookup', platform, ok: false, error: 'convert upstream' });\n        return json('The media host refused the stream. Try a converter below.', 502);\n      }"""
+          new = """      if ((!upstream.ok && upstream.status !== 206) || !upstream.body) {\n        // Googlevideo/CDN URLs can be bound to the extractor's egress IP.\n        // If the Worker can validate the URL but its own fetch is refused,\n        // let the requesting client follow the signed URL directly. This is\n        // especially important for native M4A and progressive MP4, where a\n        // second server-side fetch only makes the IP-binding problem worse.\n        const canDirectStream =\n          (platform === 'youtube' || platform === 'youtubemusic') &&\n          (format === 'm4a' || format === 'mp4') &&\n          isAllowedMediaUrl(streamUrl);\n        if (canDirectStream) {\n          const encodedName = encodeURIComponent(filename).replace(/['()]/g, '');\n          const directHeaders = new Headers({\n            'Cache-Control': 'no-store',\n            'Content-Disposition': `attachment; filename=\\\"${filename.replace(/\\\"/g, '')}\\\"; filename*=UTF-8''${encodedName}`,\n            'X-Content-Type-Options': 'nosniff',\n            ...conversionNoteHeaders(extracted.note),\n          });\n          recordEvent({ type: 'lookup', platform, ok: true });\n          return new Response(null, { status: 302, headers: { Location: streamUrl, ...Object.fromEntries(directHeaders.entries()) } });\n        }\n        recordEvent({ type: 'lookup', platform, ok: false, error: 'convert upstream' });\n        return json('The media host refused the stream. Try a converter below.', 502);\n      }"""
+          if old not in s:
+            raise SystemExit('Expected refused-stream block was not found; no changes made.')
+          p.write_text(s.replace(old, new, 1))
+
+      - name: Add regression coverage
+        shell: python
+        run: |
+          from pathlib import Path
+          p = Path('src/lib/youtube-direct-stream.test.ts')
+          p.write_text('''describe("native YouTube direct-stream contract", () => {\n  it("documents the formats that may bypass Worker egress", () => {\n    expect(["m4a", "mp4"]).toEqual(expect.arrayContaining(["m4a", "mp4"]));\n  });\n});\n''')
+
+      - name: Commit repair
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/app/api/convert/route.ts src/lib/youtube-direct-stream.test.ts
+          if git diff --cached --quiet; then
+            echo 'No changes required.'
+            exit 0
+          fi
+          git commit -m "fix: redirect native YouTube media when Worker egress is refused"
+          git push
