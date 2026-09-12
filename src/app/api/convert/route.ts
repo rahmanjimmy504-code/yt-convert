@@ -279,6 +279,26 @@ export async function GET(request: Request) {
 
       const upstream = await fetchAllowedMedia(streamUrl, { headers: upstreamHeaders });
       if ((!upstream.ok && upstream.status !== 206) || !upstream.body) {
+        // Googlevideo/CDN URLs can be bound to the extractor's egress IP.
+        // If the Worker can validate the URL but its own fetch is refused,
+        // let the requesting client follow the signed URL directly. This is
+        // especially important for native M4A and progressive MP4, where a
+        // second server-side fetch only makes the IP-binding problem worse.
+        const canDirectStream =
+          (platform === 'youtube' || platform === 'youtubemusic') &&
+          (format === 'm4a' || format === 'mp4') &&
+          isAllowedMediaUrl(streamUrl);
+        if (canDirectStream) {
+          const encodedName = encodeURIComponent(filename).replace(/['()]/g, '');
+          const directHeaders = new Headers({
+            'Cache-Control': 'no-store',
+            'Content-Disposition': `attachment; filename=\"${filename.replace(/\"/g, '')}\"; filename*=UTF-8''${encodedName}`,
+            'X-Content-Type-Options': 'nosniff',
+            ...conversionNoteHeaders(extracted.note),
+          });
+          recordEvent({ type: 'lookup', platform, ok: true });
+          return new Response(null, { status: 302, headers: { Location: streamUrl, ...Object.fromEntries(directHeaders.entries()) } });
+        }
         recordEvent({ type: 'lookup', platform, ok: false, error: 'convert upstream' });
         return json('The media host refused the stream. Try a converter below.', 502);
       }
