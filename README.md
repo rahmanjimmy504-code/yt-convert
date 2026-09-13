@@ -6,6 +6,17 @@ A clean, fast multi-platform converter website built with Next.js. Paste a publi
 
 > We do not unlock private, DRM, deleted, members-only, or region-blocked content.
 
+## ✨ Highlights
+
+- Public-media lookup and first-party downloads where supported.
+- Free-provider fallback chain for YouTube / YT Music, with an optional capped Apify fallback.
+- Honest media validation: a response is never renamed to a different format just because an upstream service labelled it incorrectly.
+- CAPTCHA, rate limiting, short-lived conversion tickets, and narrow SSRF/media-host allowlists.
+- PWA support plus a native Android application with on-device audio conversion.
+- **Batch link checker:** parse up to 50 links locally, filter them by URL/platform, and export the list as JSON or CSV.
+- Privacy-friendly aggregate analytics and an admin-only operational dashboard.
+- Lightweight public health endpoint at **`/api/health`** for uptime monitors; it checks application liveness only and does not claim converter health.
+
 ## 📦 Use the public SDK
 
 Want to use YT Convert in your own JavaScript or TypeScript project? The official npm package is:
@@ -90,6 +101,19 @@ For a beginner-friendly copy-and-paste walkthrough, see **[docs/sdk-install.md](
 
 > **Important:** CAPTCHA proofs are short-lived and normally one-time use. The SDK does not bypass CAPTCHA, DRM, private videos, or membership restrictions. Use it only for media you are authorized to download.
 
+## 🧰 Local tools
+
+Open **`/tools`** in a browser to use the batch link checker. It stores only the entered URLs in local browser storage. Nothing is uploaded to the server.
+
+The tool can:
+
+- parse multiple URLs from pasted text;
+- remove duplicates and cap the list at 50 entries;
+- detect platforms locally;
+- filter a large list by URL or platform;
+- copy the list back to the clipboard;
+- export JSON or CSV without an API call.
+
 ## Supported Platforms
 
 | Platform | `PlatformKey` | First-party convert | Notes |
@@ -141,11 +165,11 @@ yt-convert/
 ├── src/                 # Next.js application and API
 ├── packages/
 │   └── yt-convert-sdk/  # Public TypeScript SDK
-├── docs/
-│   ├── sdk-install.md   # Easy SDK installation guide
-│   └── limitations.md   # Service limitations
+├── docs/                # Deployment, provider, SDK and limitation docs
 ├── public/              # PWA assets and service worker
 ├── android-app/         # Android application
+├── po-token-server/     # Optional PO-token helper service
+├── scripts/             # Verification and release tooling
 └── README.md
 ```
 
@@ -174,12 +198,31 @@ The development server runs at **http://localhost:3000** by default.
 | `npm run start` | Start the production server |
 | `npm run typecheck` | Run TypeScript checking |
 | `npm test` | Run the test suite |
+| `npm run verify:youtube` | Run the live YouTube diagnostic script |
+| `npm run cf:build` | Build the Cloudflare/OpenNext bundle |
+| `npm run cf:preview` | Preview the Cloudflare bundle locally |
+| `npm run cf:deploy` | Deploy the Cloudflare bundle |
+
+## Operational endpoints
+
+| Endpoint | Access | Purpose |
+|---|---|---|
+| `GET /api/health` | Public | Cheap application liveness check; no upstream calls |
+| `GET /api/captcha` | Public | Obtain the CAPTCHA configuration/challenge |
+| `POST /api/video-info` | CAPTCHA | Look up supported public media metadata |
+| `POST /api/convert` | Conversion ticket | Stream a validated media response |
+| `GET /api/converters/status` | Public | Check converter availability |
+| `GET /api/status` | Admin token | Operational statistics and diagnostics |
+
+The public health endpoint intentionally does not probe YouTube, Cobalt, Apify, or other third parties. This prevents an uptime monitor from consuming conversion quota or paid fallback budget.
 
 ## CAPTCHA and security
 
 Every metadata lookup requires a one-time human-verification proof. Production can use Cloudflare Turnstile; development and backup deployments can use the built-in CAPTCHA endpoint.
 
-The application also uses rate limiting, short-lived conversion tickets, SSRF/media-host allowlists, upstream response validation, and streamed downloads.
+The application also uses rate limiting, short-lived conversion tickets, SSRF/media-host allowlists, upstream response validation, streamed downloads, and security response headers including HSTS.
+
+See **[SECURITY.md](SECURITY.md)** for vulnerability reporting guidance.
 
 ## Environment variables
 
@@ -192,6 +235,8 @@ See **[`.env.example`](.env.example)** for the complete configuration list, incl
 - **[Cloudflare setup](docs/setup-cloudflare.md)**
 - **[Free deployment options](docs/setup-free.md)**
 - **[Home-server setup](docs/setup-home-server.md)**
+- **[Apify provider guide](docs/apify-provider.md)**
+- **[Security policy](SECURITY.md)**
 
 ## Deployment
 
@@ -200,6 +245,8 @@ The project supports Cloudflare Workers through OpenNext, as well as Vercel, Ren
 ## Contributing
 
 Contributions are welcome. Please read **[CONTRIBUTING.md](CONTRIBUTING.md)** and run the relevant type checks, tests, and build before opening a pull request.
+
+Dependabot is configured to group npm dependency updates for the web app, Android app, and optional PO-token server, reducing noisy update PRs while keeping dependencies monitored.
 
 ## License
 
