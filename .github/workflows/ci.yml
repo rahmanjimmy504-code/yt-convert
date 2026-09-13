@@ -40,7 +40,6 @@ jobs:
 
           changed = False
 
-          # 1) Allow native M4A/AAC/Opus streams to survive the MP3-only gate.
           p = Path('src/lib/extract.ts')
           s = p.read_text()
           old = """  const needTranscodedMp3 = want === 'audio'
@@ -53,9 +52,6 @@ jobs:
               s = s.replace(old, new, 1)
               changed = True
 
-          # 2) Tell the extractor that a source audio stream can be transcoded
-          # to a requested target format instead of pretending the source is
-          # already FLAC.
           old = "  transcodeToMp3?: boolean;\n}"
           new = "  transcodeToMp3?: boolean;\n  /** Re-encode the source audio to the requested non-MP3 audio format. */\n  transcodeToAudio?: 'flac';\n}"
           if old in s and new not in s:
@@ -69,26 +65,25 @@ jobs:
               changed = True
           p.write_text(s)
 
-          # 3) Add a safe ffmpeg FLAC encoder using the existing streaming bridge.
           p = Path('src/lib/ffmpeg.ts')
           s = p.read_text()
           marker = "export function transcodeArgs(audioUrl: string, bitrateKbps: number): string[] {"
           flac_fn = '''export function transcodeFlacArgs(audioUrl: string): string[] {
-  return [
-    '-hide_banner',
-    '-loglevel', 'error',
-    '-nostdin',
-    '-user_agent', BROWSER_UA,
-    '-i', audioUrl,
-    '-map', '0:a:0',
-    '-vn',
-    '-c:a', 'flac',
-    '-f', 'flac',
-    'pipe:1',
-  ];
-}
+    return [
+      '-hide_banner',
+      '-loglevel', 'error',
+      '-nostdin',
+      '-user_agent', BROWSER_UA,
+      '-i', audioUrl,
+      '-map', '0:a:0',
+      '-vn',
+      '-c:a', 'flac',
+      '-f', 'flac',
+      'pipe:1',
+    ];
+  }
 
-'''
+  '''
           if "export function transcodeFlacArgs" not in s:
               idx = s.index(marker)
               s = s[:idx] + flac_fn + s[idx:]
@@ -100,8 +95,6 @@ jobs:
               changed = True
           p.write_text(s)
 
-          # 4) Make /api/convert invoke the real FLAC encoder and emit correct
-          # FLAC headers/filename. MP3 keeps its existing behaviour.
           p = Path('src/app/api/convert/route.ts')
           s = p.read_text()
           old = "      const requestedExt = format;\n      const transcodeAvailable = format === 'mp3' && extracted.transcodeToMp3 === true && isTranscodeEnabled();"
@@ -109,25 +102,21 @@ jobs:
           if old in s:
               s = s.replace(old, new, 1)
               changed = True
-
           old = "      const filename = sanitizeDownloadFilename(title || 'download', transcodeAvailable ? 'mp3' : extracted.extension);"
           new = "      const filename = sanitizeDownloadFilename(title || 'download', transcodeAvailable ? format : extracted.extension);"
           if old in s:
               s = s.replace(old, new, 1)
               changed = True
-
           old = "        const transcodeRetryAfter = await rateLimit(`transcode:${ip}`, TRANSCODE_RATE_LIMIT);\n        if (transcodeRetryAfter > 0) return NextResponse.json({ error: 'Too many MP3 conversions. Please wait a moment and try again.' }, { status: 429, headers: { 'Retry-After': String(transcodeRetryAfter), 'Cache-Control': 'no-store' } });\n        const transcodeStream = transcodeAudioToStream(extracted.url, mp3BitrateKbps(quality));"
           new = "        const transcodeRetryAfter = await rateLimit(`transcode:${ip}`, TRANSCODE_RATE_LIMIT);\n        if (transcodeRetryAfter > 0) return NextResponse.json({ error: `Too many ${format.toUpperCase()} conversions. Please wait a moment and try again.` }, { status: 429, headers: { 'Retry-After': String(transcodeRetryAfter), 'Cache-Control': 'no-store' } });\n        const transcodeStream = transcodeAudioToStream(extracted.url, mp3BitrateKbps(quality), format === 'flac' ? 'flac' : 'mp3');"
           if old in s:
               s = s.replace(old, new, 1)
               changed = True
-
           old = "        if (!transcodeStream) return json('MP3 conversion is unavailable on this server.', 502);"
           new = "        if (!transcodeStream) return json(`${format.toUpperCase()} conversion is unavailable on this server. Try a converter below.`, 502);"
           if old in s:
               s = s.replace(old, new, 1)
               changed = True
-
           old = "        const headers = new Headers({ 'Content-Type': 'audio/mpeg', 'Content-Disposition': `attachment; filename=\"${filename.replace(/\\\"/g, '')}\"; filename*=UTF-8''${encodedName}`, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', ...conversionNoteHeaders(extracted.note) });"
           new = "        const outputMime = format === 'flac' ? 'audio/flac' : 'audio/mpeg';\n        const headers = new Headers({ 'Content-Type': outputMime, 'Content-Disposition': `attachment; filename=\"${filename.replace(/\\\"/g, '')}\"; filename*=UTF-8''${encodedName}`, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', ...conversionNoteHeaders(extracted.note) });"
           if old in s:
@@ -150,3 +139,6 @@ jobs:
 
       - name: Production build
         run: npm run build
+
+      - name: Production smoke E2E
+        run: npm run test:e2e
