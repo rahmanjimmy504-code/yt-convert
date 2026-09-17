@@ -18,20 +18,23 @@ Repo: https://github.com/rahmanjimmy504-code/yt-convert
 Builds:
   - versionName: '1.0'
     versionCode: 1
-    commit: v1.1
+    commit: 341c5d0f41db24a115dc2eb2bb2a6db61298541b
     subdir: android-app/android
     sudo:
       - apt-get update
       - apt-get install -y openjdk-21-jdk-headless nodejs npm
+    gradle:
+      - yes
     prebuild:
-      - cd .. && npm ci && npm run build && npx cap sync android
+      - cd ..
+      - npm ci
+      - npm run build
+      - npx cap sync android
     scanignore:
       - android-app/android/app/src/main/cpp/lame
     ndk: 27.3.13750724
-    gradle:
-      - yes
 
-AutoUpdateMode: None
-UpdateCheckMode: None
+AutoUpdateMode: Version
+UpdateCheckMode: Tags
 CurrentVersion: '1.0'
 CurrentVersionCode: 1
