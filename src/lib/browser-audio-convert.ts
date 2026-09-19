@@ -3,7 +3,7 @@
 export type BrowserAudioFormat = 'flac' | 'm4a' | 'aac' | 'opus';
 
 type FFmpegLike = {
-  load(options: { coreURL: string; wasmURL: string }): Promise<void>;
+  load(options: { coreURL: string; wasmURL: string; classWorkerURL: string }): Promise<void>;
   writeFile(name: string, data: Uint8Array): Promise<void>;
   exec(args: string[]): Promise<number>;
   readFile(name: string): Promise<Uint8Array>;
@@ -28,11 +28,17 @@ async function getFFmpeg(): Promise<FFmpegLike> {
 
       const ffmpeg = new ffmpegModule.FFmpeg() as FFmpegLike;
       const util = utilModule as UtilLike;
-      const base = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/umd';
+      // Pin the essential FFmpeg worker explicitly. When FFmpeg is imported
+      // from a blob/dynamic module, its default `./worker.js` URL can resolve
+      // against the app origin instead of the FFmpeg package. That makes the
+      // WASM converter fail before it ever reaches the selected format.
+      const coreBase = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/umd';
+      const ffmpegBase = 'https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.15/dist/esm';
 
       await ffmpeg.load({
-        coreURL: await util.toBlobURL(`${base}/ffmpeg-core.js`, 'text/javascript'),
-        wasmURL: await util.toBlobURL(`${base}/ffmpeg-core.wasm`, 'application/wasm'),
+        coreURL: await util.toBlobURL(`${coreBase}/ffmpeg-core.js`, 'text/javascript'),
+        wasmURL: await util.toBlobURL(`${coreBase}/ffmpeg-core.wasm`, 'application/wasm'),
+        classWorkerURL: await util.toBlobURL(`${ffmpegBase}/worker.js`, 'text/javascript'),
       });
 
       return ffmpeg;
