@@ -69,7 +69,9 @@ export async function muxMp4Blobs(
     if (code !== 0) throw new Error('Browser MP4 muxing failed.');
 
     const data = await ffmpeg.readFile(outputName);
-    return new Blob([data], { type: 'video/mp4' });
+    const bytes = new Uint8Array(data.byteLength);
+    bytes.set(data);
+    return new Blob([bytes.buffer], { type: 'video/mp4' });
   } finally {
     await ffmpeg.deleteFile(videoName).catch(() => {});
     await ffmpeg.deleteFile(audioName).catch(() => {});
@@ -120,7 +122,9 @@ export async function convertMp3Blob(
     }
 
     const data = await ffmpeg.readFile(job.file);
-    return new Blob([data], { type: job.mime });
+    const bytes = new Uint8Array(data.byteLength);
+    bytes.set(data);
+    return new Blob([bytes.buffer], { type: job.mime });
   } finally {
     await ffmpeg.deleteFile(input).catch(() => {});
     await ffmpeg.deleteFile(job.file).catch(() => {});
