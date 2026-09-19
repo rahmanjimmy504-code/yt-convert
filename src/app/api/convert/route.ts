@@ -138,6 +138,7 @@ export async function GET(request: Request) {
   const quality = (searchParams.get('quality') || 'best').trim();
   const ticket = (searchParams.get('ticket') || '').trim();
   const title = (searchParams.get('title') || '').trim();
+  const browser = searchParams.get('browser') === '1';
 
   if (!rawUrl) return json('Missing url parameter', 400);
   if (rawUrl.length > 2048) return json('URL is too long', 400);
@@ -229,6 +230,18 @@ export async function GET(request: Request) {
           muxStream = muxMediaToStream(videoUrl, audioUrl);
         }
         if (!muxStream) {
+          if (browser && platform === 'youtube' && extracted.mux) {
+            return NextResponse.json({
+              browserMux: {
+                videoUrl: extracted.mux.videoUrl,
+                audioUrl: extracted.mux.audioUrl,
+                height: extracted.mux.height,
+              },
+            }, {
+              status: 200,
+              headers: { 'Cache-Control': 'no-store' },
+            });
+          }
           if (extracted.mux.progressiveUrl) streamUrl = extracted.mux.progressiveUrl;
           else return json('This resolution needs combining separate video and audio tracks, which is unavailable on this server. Choose a lower quality or a converter below.', 502);
         }
