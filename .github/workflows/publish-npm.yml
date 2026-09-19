@@ -1,0 +1,56 @@
+name: Publish npm package
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    name: Build and publish @jimmy_1234ha/yt-convert
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: packages/yt-convert-sdk
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build SDK
+        run: npm run build
+
+      - name: Typecheck SDK
+        run: npm run typecheck
+
+      - name: Test SDK
+        run: npm test
+
+      - name: Verify package metadata
+        run: |
+          PACKAGE_NAME=$(node -p "require('./package.json').name")
+          PACKAGE_VERSION=$(node -p "require('./package.json').version")
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+
+          test "$PACKAGE_NAME" = "@jimmy_1234ha/yt-convert"
+          test "$PACKAGE_VERSION" = "$TAG_VERSION"
+
+      - name: Publish to npm
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
