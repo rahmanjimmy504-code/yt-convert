@@ -555,7 +555,9 @@ export default function Home() {
   const downloadHere = async () => {
     if (!videoInfo?.convertTicket || converting) return;
     const u = url.trim();
-    const target = format;
+    // Keep the dedicated audio selector authoritative. React state can briefly
+    // lag when the format buttons are clicked immediately before Download.
+    const target: FormatKey = format === 'mp4' ? 'mp4' : audioFormat;
     const quality = target === 'mp4' ? videoQuality : audioQuality;
     const browserAudio = target === 'flac' || target === 'm4a' || target === 'aac' || target === 'opus';
     const browserMp4 = target === 'mp4';
@@ -660,6 +662,17 @@ export default function Home() {
       setConvertSource((response.headers.get('x-conversion-note') || '').trim());
       const source = await response.blob();
       const converted = await convertMp3Blob(source, target, audioQuality);
+      // Never silently deliver the MP3 source under another extension. The
+      // browser converter must produce the requested container before saving.
+      const expectedMime = {
+        flac: 'audio/flac',
+        m4a: 'audio/mp4',
+        aac: 'audio/aac',
+        opus: 'audio/ogg',
+      }[target];
+      if (converted.size === 0 || converted.type !== expectedMime) {
+        throw new Error(`Browser conversion returned an invalid ${target.toUpperCase()} file.`);
+      }
       downloadBrowserBlob(converted, videoInfo.title || 'download', target);
     } catch (err) {
       setConvertError(err instanceof Error ? err.message : 'Could not convert this link. Try a converter below.');
