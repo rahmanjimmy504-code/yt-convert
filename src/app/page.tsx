@@ -46,6 +46,7 @@ import { ANDROID_DOWNLOAD_APPS, buildAndroidDownloadIntent, type AndroidDownload
 import { AUDIO_FORMAT_OPTIONS, AUDIO_KBPS_OPTIONS, VIDEO_QUALITY_OPTIONS, type VideoQualityPlan } from '@/lib/youtube-formats';
 import { LICENSE_SPDX, LICENSE_URL, SOURCE_URL } from '@/lib/site';
 import Captcha from '@/components/captcha';
+import { convertMp3Blob, downloadBrowserBlob } from '@/lib/browser-audio-convert';
 
 type Phase = 'input' | 'loading' | 'ready' | 'error';
 
@@ -554,39 +555,67 @@ export default function Home() {
   const downloadHere = async () => {
     if (!videoInfo?.convertTicket || converting) return;
     const u = url.trim();
-    const quality = format === 'mp4' ? videoQuality : audioQuality;
-    const href = `/api/convert?url=${encodeURIComponent(u)}&format=${format}&quality=${encodeURIComponent(quality)}&ticket=${encodeURIComponent(videoInfo.convertTicket)}&title=${encodeURIComponent(videoInfo.title || '')}`;
+    const target = format;
+    const quality = target === 'mp4' ? videoQuality : audioQuality;
+    const browserAudio = target === 'flac' || target === 'm4a' || target === 'aac' || target === 'opus';
+    const serverFormat = browserAudio ? 'mp3' : target;
+    const href = `/api/convert?url=${encodeURIComponent(u)}&format=${serverFormat}&quality=${encodeURIComponent(quality)}&ticket=${encodeURIComponent(videoInfo.convertTicket)}&title=${encodeURIComponent(videoInfo.title || '')}`;
+
     setConverting(true);
     setConvertError('');
     setConvertSource('');
+
     try {
+      if (!browserAudio) {
+        const response = await fetch(href, {
+          headers: {
+            ...(ytCookies.trim() ? { 'X-YouTube-Cookies': ytCookies.trim() } : {}),
+          },
+          redirect: 'follow',
+        });
+        const type = response.headers.get('content-type') || '';
+
+        if (!response.ok || type.includes('application/json')) {
+          const data = (await response.json().catch(() => ({}))) as { error?: string };
+          setConvertError(data.error || 'Could not convert this link. Try a converter below.');
+          return;
+        }
+
+        setConvertSource((response.headers.get('x-conversion-note') || '').trim());
+        await response.body?.cancel().catch(() => undefined);
+
+        const link = document.createElement('a');
+        link.href = href;
+        link.rel = 'noopener';
+        link.setAttribute('download', '');
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        return;
+      }
+
+      // The Worker gets a real MP3 first. FLAC/M4A/AAC/Opus are then encoded
+      // locally in the browser with FFmpeg WASM, so Cloudflare never needs a
+      // native ffmpeg binary and the final container is always genuine.
       const response = await fetch(href, {
         headers: {
-          // Forward user-supplied YouTube session cookies for age-gate bypass.
           ...(ytCookies.trim() ? { 'X-YouTube-Cookies': ytCookies.trim() } : {}),
         },
       });
       const type = response.headers.get('content-type') || '';
+
       if (!response.ok || type.includes('application/json')) {
         const data = (await response.json().catch(() => ({}))) as { error?: string };
-        setConvertError(data.error || 'Could not convert this link. Try a converter below.');
+        setConvertError(data.error || 'Could not fetch the source audio. Try a converter below.');
         return;
       }
-      // Which source served the file (Innertube, AllDL, cobalt, ...). Shown
-      // on the card; also what makes a fallback smoke test provable.
+
       setConvertSource((response.headers.get('x-conversion-note') || '').trim());
-      // Do not buffer response.blob(). Cancel this probe fetch and let the
-      // browser stream the same URL natively (Range / resume supported).
-      await response.body?.cancel().catch(() => undefined);
-      const link = document.createElement('a');
-      link.href = href;
-      link.rel = 'noopener';
-      link.setAttribute('download', '');
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-    } catch {
-      setConvertError('Could not convert this link. Try a converter below.');
+      const source = await response.blob();
+      const converted = await convertMp3Blob(source, target, audioQuality);
+      downloadBrowserBlob(converted, videoInfo.title || 'download', target);
+    } catch (err) {
+      setConvertError(err instanceof Error ? err.message : 'Could not convert this link. Try a converter below.');
     } finally {
       setConverting(false);
     }
