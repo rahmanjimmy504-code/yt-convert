@@ -88,6 +88,9 @@ export async function convertMp3Blob(
   const input = `input-${Date.now()}.mp3`;
   const output = `output-${Date.now()}`;
   const bitrate = /^\d+$/.test(quality) ? quality : '192';
+  if (!['flac', 'm4a', 'aac', 'opus'].includes(format)) {
+    throw new Error(`Unsupported browser audio format: ${format}`);
+  }
 
   const jobs: Record<BrowserAudioFormat, { file: string; mime: string; args: string[] }> = {
     flac: {
