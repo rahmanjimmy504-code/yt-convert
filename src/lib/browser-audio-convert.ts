@@ -45,6 +45,38 @@ async function getFFmpeg(): Promise<FFmpegLike> {
   return instancePromise;
 }
 
+export async function muxMp4Blobs(
+  video: Blob,
+  audio: Blob,
+): Promise<Blob> {
+  const ffmpeg = await getFFmpeg();
+  const videoName = `input-video-${Date.now()}.mp4`;
+  const audioName = `input-audio-${Date.now()}.m4a`;
+  const outputName = `output-${Date.now()}.mp4`;
+
+  try {
+    await ffmpeg.writeFile(videoName, new Uint8Array(await video.arrayBuffer()));
+    await ffmpeg.writeFile(audioName, new Uint8Array(await audio.arrayBuffer()));
+    const code = await ffmpeg.exec([
+      '-i', videoName,
+      '-i', audioName,
+      '-map', '0:v:0',
+      '-map', '1:a:0',
+      '-c', 'copy',
+      '-movflags', 'faststart',
+      outputName,
+    ]);
+    if (code !== 0) throw new Error('Browser MP4 muxing failed.');
+
+    const data = await ffmpeg.readFile(outputName);
+    return new Blob([data], { type: 'video/mp4' });
+  } finally {
+    await ffmpeg.deleteFile(videoName).catch(() => {});
+    await ffmpeg.deleteFile(audioName).catch(() => {});
+    await ffmpeg.deleteFile(outputName).catch(() => {});
+  }
+}
+
 export async function convertMp3Blob(
   mp3: Blob,
   format: BrowserAudioFormat,
