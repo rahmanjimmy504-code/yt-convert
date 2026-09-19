@@ -46,7 +46,7 @@ import { ANDROID_DOWNLOAD_APPS, buildAndroidDownloadIntent, type AndroidDownload
 import { AUDIO_FORMAT_OPTIONS, AUDIO_KBPS_OPTIONS, VIDEO_QUALITY_OPTIONS, type VideoQualityPlan } from '@/lib/youtube-formats';
 import { LICENSE_SPDX, LICENSE_URL, SOURCE_URL } from '@/lib/site';
 import Captcha from '@/components/captcha';
-import { convertMp3Blob, downloadBrowserBlob } from '@/lib/browser-audio-convert';
+import { convertMp3Blob, downloadBrowserBlob, muxMp4Blobs } from '@/lib/browser-audio-convert';
 
 type Phase = 'input' | 'loading' | 'ready' | 'error';
 
@@ -558,8 +558,10 @@ export default function Home() {
     const target = format;
     const quality = target === 'mp4' ? videoQuality : audioQuality;
     const browserAudio = target === 'flac' || target === 'm4a' || target === 'aac' || target === 'opus';
+    const browserMp4 = target === 'mp4';
     const serverFormat = browserAudio ? 'mp3' : target;
-    const href = `/api/convert?url=${encodeURIComponent(u)}&format=${serverFormat}&quality=${encodeURIComponent(quality)}&ticket=${encodeURIComponent(videoInfo.convertTicket)}&title=${encodeURIComponent(videoInfo.title || '')}`;
+    const browserFlag = browserAudio || browserMp4 ? '&browser=1' : '';
+    const href = `/api/convert?url=${encodeURIComponent(u)}&format=${serverFormat}&quality=${encodeURIComponent(quality)}&ticket=${encodeURIComponent(videoInfo.convertTicket)}&title=${encodeURIComponent(videoInfo.title || '')}${browserFlag}`;
 
     setConverting(true);
     setConvertError('');
@@ -591,6 +593,51 @@ export default function Home() {
         document.body.appendChild(link);
         link.click();
         link.remove();
+        return;
+      }
+
+      if (browserMp4) {
+        const response = await fetch(href, {
+          headers: {
+            ...(ytCookies.trim() ? { 'X-YouTube-Cookies': ytCookies.trim() } : {}),
+          },
+        });
+        const type = response.headers.get('content-type') || '';
+        if (type.includes('application/json')) {
+          const data = (await response.json().catch(() => ({}))) as {
+            error?: string;
+            browserMux?: { videoUrl?: string; audioUrl?: string };
+          };
+          if (!response.ok || !data.browserMux?.videoUrl || !data.browserMux?.audioUrl) {
+            setConvertError(data.error || 'Could not prepare the MP4 tracks. Try a converter below.');
+            return;
+          }
+
+          // The Worker may be unable to remux on Cloudflare Workers. In that
+          // case it hands the browser the same signed YouTube tracks it already
+          // validated, and the browser performs a lossless stream-copy mux.
+          const [videoResponse, audioResponse] = await Promise.all([
+            fetch(data.browserMux.videoUrl),
+            fetch(data.browserMux.audioUrl),
+          ]);
+          if (!videoResponse.ok || !audioResponse.ok) {
+            setConvertError('The video provider refused one of the MP4 tracks. Try a converter below.');
+            return;
+          }
+          const [videoBlob, audioBlob] = await Promise.all([
+            videoResponse.blob(),
+            audioResponse.blob(),
+          ]);
+          const muxed = await muxMp4Blobs(videoBlob, audioBlob);
+          downloadBrowserBlob(muxed, videoInfo.title || 'download', 'mp4');
+          return;
+        }
+        if (!response.ok) {
+          const data = (await response.json().catch(() => ({}))) as { error?: string };
+          setConvertError(data.error || 'Could not convert this link. Try a converter below.');
+          return;
+        }
+        downloadBrowserBlob(await response.blob(), videoInfo.title || 'download', 'mp4');
         return;
       }
 
