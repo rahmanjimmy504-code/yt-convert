@@ -90,7 +90,7 @@ export async function youtubeiFallbackFormats(videoId: string): Promise<PlayerFo
       ),
     ]);
 
-    const clients = ['YTMUSIC_ANDROID', 'ANDROID', 'TV_EMBEDDED', 'IOS'] as const;
+    const clients = ['ANDROID_VR', 'YTMUSIC_ANDROID', 'ANDROID', 'WEB_EMBEDDED_PLAYER', 'TV_EMBEDDED', 'IOS'] as const;
     for (const client of clients) {
       try {
         const info = await Promise.race([
