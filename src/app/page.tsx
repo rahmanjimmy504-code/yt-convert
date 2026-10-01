@@ -46,7 +46,7 @@ import { ANDROID_DOWNLOAD_APPS, buildAndroidDownloadIntent, type AndroidDownload
 import { AUDIO_FORMAT_OPTIONS, AUDIO_KBPS_OPTIONS, VIDEO_QUALITY_OPTIONS, type VideoQualityPlan } from '@/lib/youtube-formats';
 import { LICENSE_SPDX, LICENSE_URL, SOURCE_URL } from '@/lib/site';
 import Captcha from '@/components/captcha';
-import { convertMp3Blob, downloadBrowserBlob, muxMp4Blobs } from '@/lib/browser-audio-convert';
+import { convertMp3Blob, downloadBrowserBlob, muxMp4Blobs, type BrowserConversionProgress, browserAudioOutputExtension } from '@/lib/browser-audio-convert';
 
 type Phase = 'input' | 'loading' | 'ready' | 'error';
 
@@ -171,7 +171,7 @@ export default function Home() {
   const [convertError, setConvertError] = useState('');
   /** Which source served the last download (from X-Conversion-Note). */
   const [convertSource, setConvertSource] = useState('');
-  const [converting, setConverting] = useState(false);
+  const [converting, setConverting] = useState(false);\n  const [conversionProgress, setConversionProgress] = useState(0);\n  const [conversionMessage, setConversionMessage] = useState('');
   // YouTube session cookies for age-gate bypass (opt-in, behind feature flag).
   // Stored in localStorage so power users don't have to re-paste every time.
   const [ytCookies, setYtCookies] = useState('');
@@ -630,7 +630,7 @@ export default function Home() {
             videoResponse.blob(),
             audioResponse.blob(),
           ]);
-          const muxed = await muxMp4Blobs(videoBlob, audioBlob);
+          const muxed = await muxMp4Blobs(videoBlob, audioBlob, (p: BrowserConversionProgress) => {\n            setConversionProgress(p.progress);\n            setConversionMessage(p.message);\n          });
           downloadBrowserBlob(muxed, videoInfo.title || 'download', 'mp4');
           return;
         }
@@ -639,7 +639,7 @@ export default function Home() {
           setConvertError(data.error || 'Could not convert this link. Try a converter below.');
           return;
         }
-        downloadBrowserBlob(await response.blob(), videoInfo.title || 'download', 'mp4');
+        setConversionProgress(0.95);\n        setConversionMessage('Saving MP4…');\n        downloadBrowserBlob(await response.blob(), videoInfo.title || 'download', 'mp4');
         return;
       }
 
@@ -661,7 +661,7 @@ export default function Home() {
 
       setConvertSource((response.headers.get('x-conversion-note') || '').trim());
       const source = await response.blob();
-      const converted = await convertMp3Blob(source, target, audioQuality);
+      const converted = await convertMp3Blob(source, target, audioQuality, (p: BrowserConversionProgress) => {\n        setConversionProgress(p.progress);\n        setConversionMessage(p.message);\n      });
       // Never silently deliver the MP3 source under another extension. The
       // browser converter must produce the requested container before saving.
       const expectedMime = {
@@ -673,7 +673,7 @@ export default function Home() {
       if (converted.size === 0 || converted.type !== expectedMime) {
         throw new Error(`Browser conversion returned an invalid ${target.toUpperCase()} file.`);
       }
-      downloadBrowserBlob(converted, videoInfo.title || 'download', target);
+      downloadBrowserBlob(converted, videoInfo.title || 'download', browserAudioOutputExtension(target as Exclude<FormatKey, 'mp4'>));
     } catch (err) {
       setConvertError(err instanceof Error ? err.message : 'Could not convert this link. Try a converter below.');
     } finally {
@@ -1119,7 +1119,7 @@ export default function Home() {
                       className="w-full h-11 rounded-xl bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white text-sm font-semibold shadow-lg shadow-red-500/20 disabled:opacity-40 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2"
                     >
                       <Download className="w-4 h-4" />
-                      {converting ? 'Starting download…' : format === 'mp3' ? 'Download audio' : 'Download video'}
+                      {converting ? (conversionMessage || `Working… ${Math.round(conversionProgress * 100)}%`) : format === 'mp3' ? 'Download audio' : 'Download video'}
                     </button>
                   ) : (
                     // Convertible platform but no ticket (transient 5xx /
