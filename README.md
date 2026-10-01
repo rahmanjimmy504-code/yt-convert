@@ -6,6 +6,8 @@ YT Convert is a public software product/project. It is **not presented as a regi
 
 The project aims to make public-media workflows clearer, safer and more reliable while being honest about technical limitations.
 
+**Roadmap:** [ROADMAP.md](ROADMAP.md)
+
 
 ## 📦 Use the public SDK
 
@@ -160,6 +162,7 @@ yt-convert/
 ├── android-app/         # Android application
 ├── po-token-server/     # Optional PO-token helper service
 ├── scripts/             # Verification and release tooling
+├── ROADMAP.md           # Public product roadmap
 └── README.md
 ```
 
