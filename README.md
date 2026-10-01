@@ -1,4 +1,5 @@
 # YT Convert
+[![Socket Badge](https://badge.socket.dev/npm/package/@jimmy_1234ha/yt-convert/0.1.2)](https://badge.socket.dev/npm/package/@jimmy_1234ha/yt-convert/0.1.2)
 
 **A privacy-conscious, open-source media conversion project built for the web.**
 
