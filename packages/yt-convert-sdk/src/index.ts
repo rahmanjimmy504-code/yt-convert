@@ -50,7 +50,7 @@ export class YtConvertApiError extends Error {
     this.name = 'YtConvertApiError';
     this.status = status;
     this.code = details.code;
-    this.retryable = details.retryable ?? status === 408 || status === 425 || status === 429 || status >= 500;
+    this.retryable = details.retryable ?? (status === 408 || status === 425 || status === 429 || status >= 500);
     this.retryAfterSeconds = details.retryAfterSeconds;
   }
 }
@@ -192,7 +192,7 @@ export function createYtConvertClient(options: ClientOptions): YtConvertClient {
 
   async function download(url: string, downloadOptions: DownloadOptions): Promise<Response> {
     const info = await lookup(url, downloadOptions);
-    return downloadFromInfo(url, info, downloadOptions);
+    return downloadFromInfo(info, url, downloadOptions);
   }
 
   async function downloadBlob(url: string, downloadOptions: DownloadOptions): Promise<Blob> {
