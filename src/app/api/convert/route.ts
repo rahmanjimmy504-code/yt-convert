@@ -19,9 +19,28 @@ const MUX_RATE_LIMIT = 3;
 const TRANSCODE_RATE_LIMIT = 3;
 
 function json(error: string, status: number, extra?: Record<string, unknown>) {
+  const code =
+    typeof extra?.code === 'string'
+      ? extra.code
+      : status === 429
+        ? 'RATE_LIMITED'
+        : status >= 500
+          ? 'UPSTREAM_ERROR'
+          : status === 403
+            ? 'FORBIDDEN'
+            : status === 400
+              ? 'BAD_REQUEST'
+              : 'CONVERSION_ERROR';
+  const retryable = status === 408 || status === 425 || status === 429 || status >= 500;
   return NextResponse.json(
-    { error, ...extra },
-    { status, headers: { 'Cache-Control': 'no-store' } },
+    { error, code, retryable, ...extra },
+    {
+      status,
+      headers: {
+        'Cache-Control': 'no-store',
+        ...(retryable && status === 429 ? { 'Retry-After': '60' } : {}),
+      },
+    },
   );
 }
 

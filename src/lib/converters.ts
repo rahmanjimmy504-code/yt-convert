@@ -263,8 +263,16 @@ export function registerConverterReport(name: string): void {
 
 async function runChecks(): Promise<ConverterCheckResult[]> {
   const reportCounts = (await import('./stats')).getReportCounts();
-  const results = await Promise.all(
-    ALL_CONVERTERS.map(async converter => {
+  // Keep health probing bounded. A full Promise.all can open one connection
+  // per converter at once and makes third-party WAFs more likely to rate-limit
+  // the health endpoint. Four concurrent probes are enough to keep diagnostics
+  // responsive without creating a request burst.
+  const results: ConverterCheckResult[] = [];
+  const concurrency = 4;
+
+  for (let start = 0; start < ALL_CONVERTERS.length; start += concurrency) {
+    const batch = ALL_CONVERTERS.slice(start, start + concurrency);
+    const checked = await Promise.all(batch.map(async converter => {
       const outcome = await checkConverterUrl(converter.url);
       return {
         name: converter.name,
@@ -276,8 +284,10 @@ async function runChecks(): Promise<ConverterCheckResult[]> {
         error: outcome.error,
         reports: reportCounts[converter.name] || 0,
       } satisfies ConverterCheckResult;
-    }),
-  );
+    }));
+    results.push(...checked);
+  }
+
   return results;
 }
 

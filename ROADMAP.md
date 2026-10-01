@@ -17,58 +17,58 @@ This is the public roadmap for YT Convert. Items are development goals, not guar
 
 ## 🟡 Reliability
 
-- [ ] Improve provider success rates
-- [ ] Expand provider health diagnostics
-- [ ] Improve retry and timeout handling
-- [ ] Improve unsupported-media error messages
-- [ ] Expand automated format tests
-- [ ] Reduce unnecessary upstream requests
+- [x] Improve provider success rates
+- [x] Expand provider health diagnostics
+- [x] Improve retry and timeout handling
+- [x] Improve unsupported-media error messages
+- [x] Expand automated format tests
+- [x] Reduce unnecessary upstream requests
 
 ## 🟡 Formats
 
-- [ ] Improve browser-side FLAC conversion
-- [ ] Improve browser-side M4A conversion
-- [ ] Improve browser-side AAC conversion
-- [ ] Improve browser-side Opus conversion
-- [ ] Improve browser-side MP4 muxing
-- [ ] Strengthen output-file validation
-- [ ] Make native vs browser conversion clearer
+- [x] Improve browser-side FLAC conversion
+- [x] Improve browser-side M4A conversion
+- [x] Improve browser-side AAC conversion
+- [x] Improve browser-side Opus conversion
+- [x] Improve browser-side MP4 muxing
+- [x] Strengthen output-file validation
+- [x] Make native vs browser conversion clearer
 
 ## 🟡 User experience
 
-- [ ] Improve mobile download flow
-- [ ] Improve accessibility
-- [ ] Improve progress feedback
-- [ ] Improve retry controls
-- [ ] Improve format selection
-- [ ] Improve PWA experience
-- [ ] Improve Android integration
+- [x] Improve mobile download flow
+- [x] Improve accessibility
+- [x] Improve progress feedback
+- [x] Improve retry controls
+- [x] Improve format selection
+- [x] Improve PWA experience
+- [x] Improve Android integration
 
 ## 🟠 Developer experience
 
-- [ ] Expand SDK examples
-- [ ] Improve SDK error types
-- [ ] Add more typed helpers
-- [ ] Improve API documentation
-- [ ] Add integration examples
-- [ ] Add release migration notes
+- [x] Expand SDK examples
+- [x] Improve SDK error types
+- [x] Add more typed helpers
+- [x] Improve API documentation
+- [x] Add integration examples
+- [x] Add release migration notes
 
 ## 🟠 Quality and security
 
-- [ ] Expand regression tests
-- [ ] Add more SSRF test cases
-- [ ] Add more malformed-media tests
-- [ ] Improve challenge-page detection
+- [x] Expand regression tests
+- [x] Add more SSRF test cases
+- [x] Add more malformed-media tests
+- [x] Improve challenge-page detection
 - [ ] Keep dependencies updated
-- [ ] Continue reducing unnecessary permissions and secrets
+- [x] Continue reducing unnecessary permissions and secrets
 
 ## 🔵 Future ideas
 
 - More public media platforms
-- Better batch workflows
-- Additional client applications
-- Improved self-hosting documentation
-- More transparent provider status information
+- [x] Better batch workflows
+- [x] Additional client applications
+- [x] Improved self-hosting documentation
+- [x] More transparent provider status information
 
 ## Principles
 

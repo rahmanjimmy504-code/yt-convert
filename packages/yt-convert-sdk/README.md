@@ -8,13 +8,13 @@ Public TypeScript/JavaScript SDK for a running [YT Convert](https://github.com/r
 npm install @jimmy_1234ha/yt-convert
 ```
 
-Using Yarn:
+Yarn:
 
 ```bash
 yarn add @jimmy_1234ha/yt-convert
 ```
 
-Using pnpm:
+pnpm:
 
 ```bash
 pnpm add @jimmy_1234ha/yt-convert
@@ -22,7 +22,7 @@ pnpm add @jimmy_1234ha/yt-convert
 
 ## Quick start
 
-The API protects lookups with its CAPTCHA flow and download requests with a short-lived conversion ticket. The SDK does not bypass either protection; pass the CAPTCHA token obtained from your YT Convert deployment.
+Lookups require a CAPTCHA proof and downloads use a short-lived conversion ticket.
 
 ```ts
 import { createYtConvertClient } from '@jimmy_1234ha/yt-convert';
@@ -33,9 +33,7 @@ const client = createYtConvertClient({
 
 const url = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
 
-const info = await client.lookup(url, {
-  captchaToken,
-});
+const info = await client.lookup(url, { captchaToken });
 
 const response = await client.downloadFromInfo(info, url, {
   format: 'mp3',
@@ -44,12 +42,6 @@ const response = await client.downloadFromInfo(info, url, {
 
 const audio = await response.arrayBuffer();
 ```
-
-## CAPTCHA
-
-`captchaToken` is required for `lookup()` and `download()`. Get it from the CAPTCHA flow exposed by your YT Convert deployment, normally through `/api/captcha` and your CAPTCHA UI.
-
-Do not hard-code a fake token. CAPTCHA proofs are short-lived and normally single-use.
 
 ## Supported formats
 
@@ -60,68 +52,109 @@ Do not hard-code a fake token. CAPTCHA proofs are short-lived and normally singl
 - `opus`
 - `mp4`
 
-Quality is passed through to the deployment as a string so the SDK remains compatible with the website's evolving quality options.
+Quality is passed through as a string so the SDK remains compatible with evolving deployment quality options.
 
 ## API
 
 ### `createYtConvertClient(options)`
 
-Creates a client for a specific YT Convert deployment.
+Options:
 
 - `baseUrl` — required deployment origin.
-- `fetch` — optional custom `fetch` implementation.
+- `fetch` — optional custom fetch implementation for tests, Node or custom runtimes.
 
 ### `client.lookup(url, options)`
 
-Calls `/api/video-info` and returns metadata plus the short-lived conversion ticket.
+Calls `/api/video-info`.
 
 - `captchaToken` — required CAPTCHA proof.
-- `youtubeCookies` — optional sanitized YouTube session cookies, if the deployment supports them.
-
-Example:
-
-```ts
-const info = await client.lookup(url, { captchaToken });
-console.log(info.title);
-console.log(info.author);
-```
+- `youtubeCookies` — optional sanitized YouTube cookies if the deployment supports them.
 
 ### `client.download(url, options)`
 
-Performs a lookup and then downloads the requested format. Returns the raw `Response`, allowing streaming or `arrayBuffer()` handling in the host application.
+Performs lookup + download and returns the raw `Response`.
+
+### `client.downloadFromInfo(info, url, options)`
+
+Downloads using a previously returned `VideoInfo`.
+
+### `client.getDownloadUrl(url, info, options)`
+
+Builds the short-lived conversion URL without making the request.
+
+### `client.downloadBlob(url, options)`
+
+Convenience helper returning a `Blob`:
 
 ```ts
-const response = await client.download(url, {
+const blob = await client.downloadBlob(url, {
   captchaToken,
   format: 'mp3',
   quality: '192',
 });
 ```
 
-### `client.downloadFromInfo(info, url, options)`
+### `client.downloadArrayBuffer(url, options)`
 
-Downloads using a `VideoInfo` object previously returned by `lookup()`.
+Convenience helper returning an `ArrayBuffer` for Node, file APIs or custom storage.
+
+### `client.health()`
+
+Calls the lightweight public `/api/health` endpoint:
 
 ```ts
-const response = await client.downloadFromInfo(info, url, {
-  format: 'mp3',
-  quality: '192',
-});
+const health = await client.health();
+console.log(health.status);
 ```
 
-### `client.getDownloadUrl(url, info, options)`
+The health endpoint only proves that the application runtime is alive. It does not claim that every media provider is working.
 
-Builds the authenticated conversion URL without making the request. The returned URL is short-lived because the underlying conversion ticket expires and is IP-bound.
+## Typed API errors
+
+Failed API calls throw `YtConvertApiError`:
+
+```ts
+import { YtConvertApiError } from '@jimmy_1234ha/yt-convert';
+
+try {
+  await client.download(url, { captchaToken, format: 'mp3' });
+} catch (error) {
+  if (error instanceof YtConvertApiError) {
+    console.log(error.status);
+    console.log(error.code);
+    console.log(error.retryable);
+    console.log(error.retryAfterSeconds);
+  }
+}
+```
+
+This lets applications distinguish a bad request from a transient upstream/rate-limit failure without parsing error-message strings.
+
+## CAPTCHA
+
+Do not hard-code fake CAPTCHA tokens. Proofs are short-lived and normally single-use.
+
+The SDK deliberately does not bypass CAPTCHA, DRM, authentication, private content or access controls.
 
 ## Browser usage
 
-The SDK uses standard Web APIs and does not require Node.js. Browser applications must still satisfy the deployment's CORS policy and CAPTCHA flow. For cross-origin browser applications, configure the YT Convert deployment to allow the application's origin before using the SDK directly from the browser.
+The SDK uses standard Web APIs and does not require Node.js. Browser applications must satisfy the deployment's CORS policy and CAPTCHA flow.
 
 ## Security model
 
-The SDK intentionally does **not** accept server secrets, provider credentials, or a way to disable CAPTCHA/rate limits. It is a thin public client around the documented public API surface.
+The SDK does not accept server secrets, provider credentials or switches for disabling security controls. It is a thin public client around the documented API.
 
-Use it only for media you are authorized to download. The underlying service does not bypass DRM or private/member-only access.
+Use it only for media you are authorized to download.
+
+## Migration notes
+
+### 0.1.2
+
+- Added `YtConvertApiError` with HTTP status, error code and retry metadata.
+- Added `downloadBlob()`.
+- Added `downloadArrayBuffer()`.
+- Added `health()`.
+- Existing `lookup()`, `download()`, `downloadFromInfo()` and `getDownloadUrl()` APIs remain compatible.
 
 ## License
 
