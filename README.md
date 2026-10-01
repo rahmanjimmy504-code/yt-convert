@@ -1,21 +1,11 @@
-<img width="180" height="180" alt="Image" src="https://github.com/user-attachments/assets/294de99c-ce56-496d-97c7-d78bd79877bc" />
-
 # YT Convert
 
-A clean, fast multi-platform converter website built with Next.js. Paste a public media link, view metadata, and download when YT Convert can legally and technically provide the media. Files are streamed rather than stored.
+**A privacy-conscious, open-source media conversion project built for the web.**
 
-> We do not unlock private, DRM, deleted, members-only, or region-blocked content.
+YT Convert is a public software product/project. It is **not presented as a registered company**, and this repository makes no claim that a company named YT Convert exists.
 
-## ✨ Highlights
+The project aims to make public-media workflows clearer, safer and more reliable while being honest about technical limitations.
 
-- Public-media lookup and first-party downloads where supported.
-- Free-provider fallback chain for YouTube / YT Music, with an optional capped Apify fallback.
-- Honest media validation: a response is never renamed to a different format just because an upstream service labelled it incorrectly.
-- CAPTCHA, rate limiting, short-lived conversion tickets, and narrow SSRF/media-host allowlists.
-- PWA support plus a native Android application with on-device audio conversion.
-- **Batch link checker:** parse up to 50 links locally, filter them by URL/platform, and export the list as JSON or CSV.
-- Privacy-friendly aggregate analytics and an admin-only operational dashboard.
-- Lightweight public health endpoint at **`/api/health`** for uptime monitors; it checks application liveness only and does not claim converter health.
 
 ## 📦 Use the public SDK
 
