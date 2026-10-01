@@ -173,8 +173,8 @@ export function createYtConvertClient(options: ClientOptions): YtConvertClient {
   }
 
   async function downloadFromInfo(
-    url: string,
     info: VideoInfo,
+    url: string,
     downloadOptions: DownloadFromInfoOptions,
   ): Promise<Response> {
     const endpoint = getDownloadUrl(url, info, downloadOptions);
