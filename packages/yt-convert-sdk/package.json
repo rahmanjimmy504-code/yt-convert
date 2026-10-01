@@ -1,6 +1,6 @@
 {
   "name": "@jimmy_1234ha/yt-convert",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Public TypeScript SDK for the YT Convert media conversion API.",
   "license": "MIT",
   "type": "module",
@@ -14,23 +14,15 @@
       "default": "./dist/index.js"
     }
   },
-  "files": [
-    "dist",
-    "README.md",
-    "LICENSE"
-  ],
+  "files": ["dist", "README.md", "LICENSE"],
   "repository": {
     "type": "git",
     "url": "https://github.com/rahmanjimmy504-code/yt-convert.git",
     "directory": "packages/yt-convert-sdk"
   },
   "homepage": "https://github.com/rahmanjimmy504-code/yt-convert",
-  "bugs": {
-    "url": "https://github.com/rahmanjimmy504-code/yt-convert/issues"
-  },
-  "publishConfig": {
-    "access": "public"
-  },
+  "bugs": {"url": "https://github.com/rahmanjimmy504-code/yt-convert/issues"},
+  "publishConfig": {"access": "public"},
   "scripts": {
     "build": "tsup",
     "typecheck": "tsc --noEmit",
