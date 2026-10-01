@@ -103,7 +103,7 @@ async function readApiError(response: Response): Promise<ApiError> {
   } catch {
     // Fall through to the generic HTTP error.
   }
-  return { error: `YT Convert API request failed with HTTP ${response.status}.` };
+  return { error: `YT Convert API request failed with HTTP ${response.status}.`, retryable: response.status === 408 || response.status === 429 || response.status >= 500 };
 }
 
 function buildPath(baseUrl: string, path: string, params: Record<string, string>): string {
@@ -139,7 +139,7 @@ export function createYtConvertClient(options: ClientOptions): YtConvertClient {
 
     if (!response.ok) {
       const error = await readApiError(response);
-      throw new Error(error.error);
+      throw new YtConvertApiError(error.error, response.status, error);
     }
     return (await response.json()) as VideoInfo;
   }
