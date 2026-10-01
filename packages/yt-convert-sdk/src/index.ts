@@ -43,7 +43,26 @@ export interface VideoInfo {
 
 export interface ApiError {
   error: string;
+  code?: string;
+  retryable?: boolean;
   canConvert?: boolean;
+  retryAfterSeconds?: number;
+}
+
+export class YtConvertApiError extends Error {
+  readonly status: number;
+  readonly code?: string;
+  readonly retryable: boolean;
+  readonly retryAfterSeconds?: number;
+
+  constructor(message: string, status: number, details: ApiError = {}) {
+    super(message);
+    this.name = 'YtConvertApiError';
+    this.status = status;
+    this.code = details.code;
+    this.retryable = details.retryable ?? status === 408 || status === 429 || status >= 500;
+    this.retryAfterSeconds = details.retryAfterSeconds;
+  }
 }
 
 export interface ClientOptions {
@@ -78,6 +97,9 @@ export interface YtConvertClient {
   download(url: string, options: DownloadOptions): Promise<Response>;
   downloadFromInfo(info: VideoInfo, url: string, options: DownloadFromInfoOptions): Promise<Response>;
   getDownloadUrl(url: string, info: VideoInfo, options: DownloadFromInfoOptions): string;
+  downloadBlob(url: string, options: DownloadOptions): Promise<Blob>;
+  downloadArrayBuffer(url: string, options: DownloadOptions): Promise<ArrayBuffer>;
+  health(): Promise<{ ok: boolean; service: string; status: string; timestamp: string }>;
 }
 
 function normalizeBaseUrl(baseUrl: string): string {
@@ -103,76 +125,25 @@ async function readApiError(response: Response): Promise<ApiError> {
   } catch {
     // Fall through to the generic HTTP error.
   }
-  return { error: `YT Convert API request failed with HTTP ${response.status}.`, retryable: response.status === 408 || response.status === 429 || response.status >= 500 };
-}
-
-function buildPath(baseUrl: string, path: string, params: Record<string, string>): string {
-  const url = new URL(path, `${baseUrl}/`);
-  for (const [key, value] of Object.entries(params)) {
-    if (value) url.searchParams.set(key, value);
-  }
-  return url.toString();
-}
-
-export function createYtConvertClient(options: ClientOptions): YtConvertClient {
-  const baseUrl = normalizeBaseUrl(options.baseUrl);
-  const fetchImpl = options.fetch ?? globalThis.fetch;
-  if (typeof fetchImpl !== 'function') {
-    throw new Error('YT Convert SDK: a fetch implementation is required.');
+  async function downloadBlob(url: string, downloadOptions: DownloadOptions): Promise<Blob> {
+    const response = await download(url, downloadOptions);
+    return response.blob();
   }
 
-  async function lookup(url: string, lookupOptions: LookupOptions = {}): Promise<VideoInfo> {
-    if (!url.trim()) throw new Error('YT Convert SDK: url is required.');
-    const captchaToken = lookupOptions.captchaToken?.trim();
-    if (!captchaToken) {
-      throw new Error('YT Convert SDK: captchaToken is required. Complete the CAPTCHA challenge and pass the returned token.');
-    }
+  async function downloadArrayBuffer(url: string, downloadOptions: DownloadOptions): Promise<ArrayBuffer> {
+    const response = await download(url, downloadOptions);
+    return response.arrayBuffer();
+  }
 
-    const endpoint = buildPath(baseUrl, '/api/video-info', { url: url.trim() });
-    const response = await fetchImpl(endpoint, {
-      headers: {
-        'Accept': 'application/json',
-        'X-Captcha-Token': captchaToken,
-        ...(lookupOptions.youtubeCookies ? { 'X-YouTube-Cookies': lookupOptions.youtubeCookies } : {}),
-      },
+  async function health(): Promise<{ ok: boolean; service: string; status: string; timestamp: string }> {
+    const response = await fetchImpl(new URL('/api/health', `${baseUrl}/`).toString(), {
+      headers: { Accept: 'application/json' },
     });
-
     if (!response.ok) {
       const error = await readApiError(response);
       throw new YtConvertApiError(error.error, response.status, error);
     }
-    return (await response.json()) as VideoInfo;
-  }
-
-  function getDownloadUrl(url: string, info: VideoInfo, downloadOptions: DownloadFromInfoOptions): string {
-    assertFormat(downloadOptions.format);
-    if (!info.convertTicket) {
-      throw new Error('YT Convert SDK: VideoInfo does not contain a convertTicket. Run lookup() first.');
-    }
-
-    return buildPath(baseUrl, '/api/convert', {
-      url: url.trim(),
-      format: downloadOptions.format,
-      quality: downloadOptions.quality ?? 'best',
-      ticket: info.convertTicket,
-      title: downloadOptions.title ?? info.title ?? '',
-    });
-  }
-
-  async function downloadFromInfo(
-    url: string,
-    info: VideoInfo,
-    downloadOptions: DownloadFromInfoOptions,
-  ): Promise<Response> {
-    const endpoint = getDownloadUrl(url, info, downloadOptions);
-    const response = await fetchImpl(endpoint, {
-      headers: { Accept: 'application/octet-stream, audio/*, video/*, application/json' },
-    });
-    if (!response.ok) {
-      const error = await readApiError(response);
-      throw new Error(error.error);
-    }
-    return response;
+    return (await response.json()) as { ok: boolean; service: string; status: string; timestamp: string };
   }
 
   return {
@@ -183,6 +154,9 @@ export function createYtConvertClient(options: ClientOptions): YtConvertClient {
     },
     downloadFromInfo: async (info, url, downloadOptions) => downloadFromInfo(url, info, downloadOptions),
     getDownloadUrl,
+    downloadBlob,
+    downloadArrayBuffer,
+    health,
   };
 }
 
