@@ -9,8 +9,8 @@ android {
         applicationId "io.github.rahmanjimmy504.ytconvert"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 2
-        versionName "1.1"
+        versionCode 3
+        versionName "1.2.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         // The runner image's default NDK; pinning avoids a multi-hundred-MB
         // SDK auto-download (and any license/network flake that comes with it).
