@@ -146,6 +146,7 @@ class InnertubeTest {
                     videoMime = "video/mp4; codecs=\"avc1.640028\"",
                     height = 1080,
                     qualityLabel = "1080p",
+                    audioItag = 140,
                 )
                 else -> error("The 1080p UI ceiling should stop client probing once it is found.")
             }
