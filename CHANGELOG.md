@@ -1,5 +1,33 @@
 # Changelog
 
+## YT Convert Android 1.2.0 — 2026-10-02
+
+### Highlights
+- Expanded Android release automation for signed APK and AAB publishing.
+- Improved YouTube extraction and quality selection so higher-quality compatible tracks are not silently capped by an earlier low-resolution client.
+- Strengthened media validation, regression coverage, provider diagnostics, and error handling.
+- Expanded browser-side conversion support, SDK tooling, documentation, and security checks.
+
+### Android
+- Improved Innertube client fallback and HD quality selection.
+- Continued on-device media processing and MP4 muxing improvements.
+- Added automated Android release intelligence and AI-generated release-note support.
+
+### Reliability and security
+- Added broader regression and malformed-media coverage.
+- Improved challenge-page and upstream-response validation.
+- Strengthened SSRF protections and media-host validation.
+- Improved retry and unsupported-media error handling.
+
+### Developer experience
+- Expanded the SDK with typed helpers and structured API errors.
+- Added SDK installation guidance and integration documentation.
+- Expanded release automation and Android changelog tooling.
+
+### Release
+- Android app version: **1.2.0**
+- Git tag: **v1.2.0**
+
 ## YT Convert Android 1.1 — 2026-10-02
 
 ### Fixed
