@@ -4,6 +4,9 @@
 name: Android release APK/AAB
 
 on:
+  push:
+    tags:
+      - 'v*'
   workflow_dispatch:
     inputs:
       version:
@@ -24,6 +27,8 @@ jobs:
     name: Build and publish signed release
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    env:
+      RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.version || github.ref_name }}
     defaults:
       run:
         working-directory: android-app
@@ -130,7 +135,7 @@ jobs:
       - name: Draft Android release notes with AI
         working-directory: .
         env:
-          RELEASE_VERSION: ${{ github.event.inputs.version }}
+          RELEASE_VERSION: ${{ env.RELEASE_VERSION }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           GITHUB_TOKEN: ${{ github.token }}
@@ -151,8 +156,8 @@ jobs:
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ github.event.inputs.version }}
-          name: YT Convert ${{ github.event.inputs.version }}
+          tag_name: v${{ env.RELEASE_VERSION }}
+          name: YT Convert ${{ env.RELEASE_VERSION }}
           body_path: android-release-notes.md
           files: |
             android-app/android/app/build/outputs/apk/release/app-release.apk
