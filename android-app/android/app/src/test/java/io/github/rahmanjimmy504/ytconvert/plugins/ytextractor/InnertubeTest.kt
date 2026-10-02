@@ -93,6 +93,70 @@ class InnertubeTest {
     }
 
     @Test
+    fun queryClientsDoesNotStopAtTheFirstLowResolutionPair() {
+        val calls = mutableListOf<String>()
+
+        fun response(
+            videoItag: Int? = null,
+            videoMime: String? = null,
+            height: Int = 0,
+            qualityLabel: String? = null,
+            audioItag: Int? = null,
+        ): JSONObject {
+            val formats = org.json.JSONArray()
+            if (videoItag != null && videoMime != null) {
+                formats.put(
+                    JSONObject()
+                        .put("itag", videoItag)
+                        .put("url", "https://rr---sn-test.googlevideo.com/videoplayback?itag=$videoItag")
+                        .put("mimeType", videoMime)
+                        .put("height", height)
+                        .put("qualityLabel", qualityLabel ?: "")
+                        .put("bitrate", 1_000_000),
+                )
+            }
+            if (audioItag != null) {
+                formats.put(
+                    JSONObject()
+                        .put("itag", audioItag)
+                        .put("url", "https://rr---sn-test.googlevideo.com/videoplayback?itag=$audioItag")
+                        .put("mimeType", "audio/mp4; codecs=\"mp4a.40.2\"")
+                        .put("audioQuality", "AUDIO_QUALITY_MEDIUM")
+                        .put("bitrate", 129_000),
+                )
+            }
+            return JSONObject()
+                .put("playabilityStatus", JSONObject().put("status", "OK"))
+                .put("videoDetails", JSONObject().put("title", "Quality test"))
+                .put("streamingData", JSONObject().put("formats", formats))
+        }
+
+        val result = Innertube.queryClients("dQw4w9WgXcQ") { request ->
+            calls += request.headers["X-YouTube-Client-Name"] ?: "unknown"
+            when (calls.size) {
+                1 -> response(
+                    videoItag = 18,
+                    videoMime = "video/mp4; codecs=\"avc1.42001E, mp4a.40.2\"",
+                    height = 360,
+                    qualityLabel = "360p",
+                    audioItag = 18,
+                )
+                2 -> response(
+                    videoItag = 137,
+                    videoMime = "video/mp4; codecs=\"avc1.640028\"",
+                    height = 1080,
+                    qualityLabel = "1080p",
+                )
+                else -> error("The 1080p UI ceiling should stop client probing once it is found.")
+            }
+        }
+
+        assertEquals(listOf("ANDROID_MUSIC", "IOS_MUSIC"), calls)
+        assertEquals(listOf(18, 137), result.formats.map { it.itag })
+        assertEquals(1080, result.formats.maxOf { it.height })
+    }
+
+    @Test
     fun botChallengeIsRecognisedFromTheReasonText() {
         assertTrue(Innertube.isBotChallenge("LOGIN_REQUIRED", "Sign in to confirm you're not a bot"))
         assertTrue(Innertube.isBotChallenge("ERROR", "unusual traffic from this network"))
