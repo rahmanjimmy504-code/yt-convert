@@ -1,9 +1,9 @@
 {
   "name": "yt-convert-android",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "license": "GPL-3.0-or-later",
-  "description": "Android companion shell for YT Convert (Capacitor). Scaffold only: the UI and native extraction land in follow-up PRs.",
+  "description": "Android companion shell for YT Convert.",
   "type": "module",
   "scripts": {
     "dev": "vite",
