@@ -285,6 +285,15 @@ object Innertube {
         return audio && video
     }
 
+    /** The Android UI's highest advertised video option is 1080p. */
+    private fun hasUiMaxVideoQuality(formats: List<PlayerFormat>): Boolean {
+        val hasAudio = formats.any { Regex("audio/", RegexOption.IGNORE_CASE).containsMatchIn(it.mimeType) }
+        val maxVideoHeight = formats
+            .filter { Regex("video/", RegexOption.IGNORE_CASE).containsMatchIn(it.mimeType) }
+            .maxOfOrNull { it.height } ?: 0
+        return hasAudio && maxVideoHeight >= 1080
+    }
+
     private fun dedupeByItag(formats: List<PlayerFormat>): List<PlayerFormat> {
         val seen = mutableSetOf<String>()
         val out = mutableListOf<PlayerFormat>()
@@ -326,7 +335,7 @@ object Innertube {
      * progressive-only client must not cap quality or break audio downloads),
      * then merges and de-duplicates by itag.
      */
-    fun queryClients(videoId: String): Result {
+    fun queryClients(videoId: String, request: (PlayerRequest) -> JSONObject? = ::postPlayer): Result {
         var lastStatus: String? = null
         var lastReason: String? = null
         var botChallenged = false
@@ -334,7 +343,7 @@ object Innertube {
         val collected = mutableListOf<PlayerFormat>()
 
         for (client in CLIENTS) {
-            val data = postPlayer(buildPlayerRequest(client, videoId)) ?: continue
+            val data = request(buildPlayerRequest(client, videoId)) ?: continue
             if (title == null) {
                 val t = data.optJSONObject("videoDetails")?.optString("title", "") ?: ""
                 if (t.isNotEmpty()) title = t
@@ -353,7 +362,12 @@ object Innertube {
             val formats = collectFormats(data, client.clientName)
             if (formats.isEmpty()) continue
             collected.addAll(formats)
-            if (hasAudioAndVideo(collected)) break
+            // Do not stop at the first playable 360p/720p pair. Different
+            // Innertube clients expose different quality ladders; stopping
+            // as soon as *any* video+audio exists can permanently cap the
+            // Android app at 360p. Keep querying until the highest UI option
+            // (1080p) is present, or all clients have been tried.
+            if (hasUiMaxVideoQuality(collected)) break
         }
 
         return Result(
