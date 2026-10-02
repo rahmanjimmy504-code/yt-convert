@@ -335,7 +335,7 @@ object Innertube {
      * progressive-only client must not cap quality or break audio downloads),
      * then merges and de-duplicates by itag.
      */
-    fun queryClients(videoId: String): Result {
+    fun queryClients(videoId: String, request: (PlayerRequest) -> JSONObject? = ::postPlayer): Result {
         var lastStatus: String? = null
         var lastReason: String? = null
         var botChallenged = false
@@ -343,7 +343,7 @@ object Innertube {
         val collected = mutableListOf<PlayerFormat>()
 
         for (client in CLIENTS) {
-            val data = postPlayer(buildPlayerRequest(client, videoId)) ?: continue
+            val data = request(buildPlayerRequest(client, videoId)) ?: continue
             if (title == null) {
                 val t = data.optJSONObject("videoDetails")?.optString("title", "") ?: ""
                 if (t.isNotEmpty()) title = t
