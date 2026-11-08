@@ -21,19 +21,19 @@
     "cf:deploy": "opennextjs-cloudflare deploy"
   },
   "dependencies": {
-    "@opennextjs/cloudflare": "^1.20.2",
-    "@tailwindcss/postcss": "^4.0.0",
-    "@types/node": "^20.0.0",
-    "@types/react": "^19.0.0",
-    "@types/react-dom": "^19.0.0",
-    "lucide-react": "^0.468.0",
-    "next": "15.5.22",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0",
+    "@opennextjs/cloudflare": "^1.20.16",
+    "@tailwindcss/postcss": "^4.3.4",
+    "@types/node": "^26.6.6",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "lucide-react": "^1.69.0",
+    "next": "16.4.5",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
     "tailwindcss": "^4.0.0",
-    "typescript": "^5.0.0",
+    "typescript": "^7.0.2",
     "undici": "^7.29.0",
-    "youtubei.js": "18.0.0"
+    "youtubei.js": "18.3.0"
   },
   "devDependencies": {
     "vite-node": "^6.0.0",
